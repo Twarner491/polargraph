@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>polargraph</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-status">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span class="status-text" id="statusText">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <!-- Connection Panel -->
+                <section class="panel">
+                    <div class="panel-header">
+                        <h2>Connection</h2>
+                    </div>
+                    <div class="panel-content">
+                        <div class="form-group">
+                            <label>Serial Port</label>
+                            <div class="input-group">
+                                <select id="portSelect" class="select">
+                                    <option value="">Select port...</option>
+                                </select>
+                                <button class="btn btn-icon" id="refreshPorts" title="Refresh">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+                                        <path d="M21 3v5h-5"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-full" id="connectBtn">Connect</button>
+                    </div>
+                </section>
+
+                <!-- Controls Panel -->
+                <section class="panel" id="controlsPanel">
+                    <div class="panel-header">
+                        <h2>Controls</h2>
+                    </div>
+                    <div class="panel-content">
+                        <div class="control-grid">
+                            <button class="btn btn-secondary" id="homeBtn" title="Find Home">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                                </svg>
+                                Home
+                            </button>
+                            <button class="btn btn-secondary" id="motorsBtn" title="Toggle Motors">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                                Motors
+                            </button>
+                            <button class="btn btn-secondary" id="penUpBtn" title="Pen Up">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 19V5M5 12l7-7 7 7"/>
+                                </svg>
+                                Pen Up
+                            </button>
+                            <button class="btn btn-secondary" id="penDownBtn" title="Pen Down">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                                </svg>
+                                Pen Down
+                            </button>
+                        </div>
+
+                        <!-- Jog Controls -->
+                        <div class="jog-controls">
+                            <div class="jog-label">Jog</div>
+                            <div class="jog-grid">
+                                <button class="jog-btn" data-dir="up-left">↖</button>
+                                <button class="jog-btn" data-dir="up">↑</button>
+                                <button class="jog-btn" data-dir="up-right">↗</button>
+                                <button class="jog-btn" data-dir="left">←</button>
+                                <button class="jog-btn jog-center" data-dir="center">⌖</button>
+                                <button class="jog-btn" data-dir="right">→</button>
+                                <button class="jog-btn" data-dir="down-left">↙</button>
+                                <button class="jog-btn" data-dir="down">↓</button>
+                                <button class="jog-btn" data-dir="down-right">↘</button>
+                            </div>
+                            <div class="jog-distance">
+                                <label>Distance</label>
+                                <div class="btn-group">
+                                    <button class="btn btn-sm" data-distance="1">1</button>
+                                    <button class="btn btn-sm active" data-distance="10">10</button>
+                                    <button class="btn btn-sm" data-distance="50">50</button>
+                                    <button class="btn btn-sm" data-distance="100">100</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-danger btn-full" id="emergencyStop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="15" y1="9" x2="9" y2="15"/>
+                                <line x1="9" y1="9" x2="15" y2="15"/>
+                            </svg>
+                            EMERGENCY STOP
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Plot Controls -->
+                <section class="panel" id="plotPanel">
+                    <div class="panel-header">
+                        <h2>Plot</h2>
+                    </div>
+                    <div class="panel-content">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                            <span class="progress-text" id="progressText">0%</span>
+                        </div>
+                        <div class="plot-controls">
+                            <button class="btn btn-icon" id="rewindBtn" title="Rewind">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                                </svg>
+                            </button>
+                            <button class="btn btn-icon btn-large btn-primary" id="playBtn" title="Play">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                            </button>
+                            <button class="btn btn-icon" id="pauseBtn" title="Pause">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                                </svg>
+                            </button>
+                            <button class="btn btn-icon" id="stepBtn" title="Step">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="plot-info">
+                            <span id="plotStatus">No drawing loaded</span>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+
+            <!-- Canvas Area -->
+            <div class="canvas-container">
+                <div class="canvas-toolbar">
+                    <div class="toolbar-group">
+                        <button class="btn btn-sm" id="zoomIn">+</button>
+                        <button class="btn btn-sm" id="zoomOut">-</button>
+                        <button class="btn btn-sm" id="zoomFit">Fit</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="btn btn-sm" id="resetPreview" title="Reset preview position/scale">Reset</button>
+                        <button class="btn btn-sm btn-primary" id="applyTransform" title="Apply current position/scale to paths">Apply</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <span class="toolbar-label" id="cursorPos">X: 0 Y: 0</span>
+                        <span class="toolbar-label" id="previewInfo" style="margin-left: 10px;">Drag to move, Shift+drag to scale</span>
+                    </div>
+                </div>
+                <canvas id="previewCanvas"></canvas>
+                <div class="canvas-stats" id="canvasStats">
+                    <span>Lines: <strong id="statLines">0</strong></span>
+                    <span>Draw: <strong id="statDraw">0</strong>mm</span>
+                    <span>Travel: <strong id="statTravel">0</strong>mm</span>
+                </div>
+            </div>
+
+            <!-- Right Panel (Tabs) -->
+            <aside class="sidebar sidebar-right">
+                <div class="tabs">
+                    <button class="tab active" data-tab="file">File</button>
+                    <button class="tab" data-tab="generate">Generate</button>
+                    <button class="tab" data-tab="convert">Convert</button>
+                    <button class="tab" data-tab="settings">Settings</button>
+                </div>
+
+                <!-- File Tab -->
+                <div class="tab-content active" id="tab-file">
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Load File</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="upload-zone" id="uploadZone">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                    <polyline points="17,8 12,3 7,8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                                <p>Drop files here or click to browse</p>
+                                <span class="upload-formats">SVG, DXF, G-code, PNG, JPG</span>
+                                <input type="file" id="fileInput" accept=".svg,.dxf,.gcode,.ngc,.nc,.png,.jpg,.jpeg,.gif,.bmp" hidden>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Export</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="btn-group-vertical">
+                                <button class="btn btn-secondary" id="exportGcode">Export G-code</button>
+                                <button class="btn btn-secondary" id="exportSvg">Export SVG</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Generate Tab -->
+                <div class="tab-content" id="tab-generate">
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Pattern Generator</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="form-group">
+                                <label>Pattern Type</label>
+                                <select id="generatorSelect" class="select"></select>
+                            </div>
+                            <div id="generatorOptions" class="options-container"></div>
+                            <button class="btn btn-primary btn-full" id="generateBtn">Generate</button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Convert Tab -->
+                <div class="tab-content" id="tab-convert">
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Image Converter</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="convert-preview" id="convertPreview">
+                                <span>Load an image first</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Algorithm</label>
+                                <select id="converterSelect" class="select"></select>
+                            </div>
+                            <div id="converterOptions" class="options-container"></div>
+                            <button class="btn btn-primary btn-full" id="convertBtn" disabled>Convert Image</button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Settings Tab -->
+                <div class="tab-content" id="tab-settings">
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Machine Settings</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="form-group">
+                                <label>Machine Width (mm)</label>
+                                <input type="number" id="machineWidth" class="input" value="1219.2">
+                            </div>
+                            <div class="form-group">
+                                <label>Machine Height (mm)</label>
+                                <input type="number" id="machineHeight" class="input" value="1524">
+                            </div>
+                            <div class="form-group">
+                                <label>Work Area Left (mm)</label>
+                                <input type="number" id="limitLeft" class="input" value="-420.5">
+                            </div>
+                            <div class="form-group">
+                                <label>Work Area Right (mm)</label>
+                                <input type="number" id="limitRight" class="input" value="420.5">
+                            </div>
+                            <div class="form-group">
+                                <label>Work Area Top (mm)</label>
+                                <input type="number" id="limitTop" class="input" value="594.5">
+                            </div>
+                            <div class="form-group">
+                                <label>Work Area Bottom (mm)</label>
+                                <input type="number" id="limitBottom" class="input" value="-594.5">
+                            </div>
+                        </div>
+                    </section>
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Pen Settings</h2>
+                        </div>
+                        <div class="panel-content">
+                            <div class="form-group">
+                                <label>Pen Up Angle (°)</label>
+                                <input type="number" id="penUpAngle" class="input" value="90">
+                            </div>
+                            <div class="form-group">
+                                <label>Pen Down Angle (°)</label>
+                                <input type="number" id="penDownAngle" class="input" value="25">
+                            </div>
+                            <div class="form-group">
+                                <label>Travel Speed (mm/min)</label>
+                                <input type="number" id="feedTravel" class="input" value="3000">
+                            </div>
+                            <div class="form-group">
+                                <label>Draw Speed (mm/min)</label>
+                                <input type="number" id="feedDraw" class="input" value="2000">
+                            </div>
+                            <button class="btn btn-primary btn-full" id="saveSettings">Save Settings</button>
+                        </div>
+                    </section>
+                    <section class="panel">
+                        <div class="panel-header">
+                            <h2>Cache</h2>
+                        </div>
+                        <div class="panel-content">
+                            <p style="margin-bottom: 12px; color: #6b7280; font-size: 13px;">Clear uploaded files and cached data.</p>
+                            <button class="btn btn-full" id="clearUploads" style="background: #ef4444; color: white;">Clear Uploads</button>
+                        </div>
+                    </section>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Console -->
+        <div class="console" id="console">
+            <div class="console-header">
+                <span>Console</span>
+                <button class="btn btn-sm btn-icon" id="clearConsole">Clear</button>
+            </div>
+            <div class="console-output" id="consoleOutput"></div>
+            <div class="console-input">
+                <input type="text" id="gcodeInput" placeholder="Enter G-code command..." class="input">
+                <button class="btn btn-primary" id="sendGcode">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
+

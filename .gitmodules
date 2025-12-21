@@ -1,0 +1,6 @@
+[submodule "submodules/Makelangelo-firmware"]
+	path = submodules/Makelangelo-firmware
+	url = https://github.com/Twarner491/Makelangelo-firmware
+[submodule "submodules/Makelangelo-software"]
+	path = submodules/Makelangelo-software
+	url = https://github.com/Twarner491/Makelangelo-software
