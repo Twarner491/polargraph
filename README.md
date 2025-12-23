@@ -143,7 +143,7 @@ git commit -m "Update static site"
 git push
 ```
 
-The site will be available at **https://plotter.onethreenine.net** via GitHub Pages + Cloudflare.
+The site will be available at **https://plotter.onethreenine.net** via GitHub Pages + Cloudflare. 
 
 ---
 
