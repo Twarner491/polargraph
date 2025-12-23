@@ -1,8 +1,12 @@
 /**
- * Polargraph Web Interface - Main Application JavaScript
+ * Polargraph Web Interface
  */
 
-// Global state
+// Home Assistant webhook URL - set by build_static.py for remote mode
+// When building static site, this gets overwritten with actual webhook URL
+// For local mode (plotter.local), leave as empty string
+var POLARGRAPH_WEBHOOK_URL = "";
+
 const state = {
     connected: false,
     plotting: false,
@@ -12,20 +16,23 @@ const state = {
     currentImagePath: null,
     preview: null,
     zoom: 1,
-    panX: 0,
-    panY: 0,
-    // Preview transform (separate from canvas pan/zoom)
+    minZoom: 0.2,
+    maxZoom: 5,
     previewOffsetX: 0,
     previewOffsetY: 0,
     previewScale: 1,
-    // Drag state
     isDragging: false,
-    isResizing: false,
     dragStartX: 0,
     dragStartY: 0,
-    dragMode: null,  // 'move', 'scale'
-    // Gondola position for visualization
-    gondola: { x: 0, y: 0, z: 90 }
+    gondola: { x: 0, y: 0, z: 90 },
+    openPanel: null,
+    mode: 'generate', // 'generate' or 'upload'
+    // Menu drag state
+    menuDragging: false,
+    menuStartX: 0,
+    menuStartY: 0,
+    menuOffsetX: 0,
+    menuOffsetY: 0
 };
 
 // Socket.IO connection
@@ -34,9 +41,52 @@ const socket = io();
 // DOM Elements
 const elements = {
     // Status
-    statusIndicator: document.getElementById('statusIndicator'),
-    statusText: document.getElementById('statusText'),
+    statusDot: document.getElementById('statusDot'),
+    statusLabel: document.getElementById('statusLabel'),
     
+    // Navigation
+    navItems: document.querySelectorAll('.nav-item'),
+    sidePanel: document.getElementById('sidePanel'),
+    
+    // Menu
+    createMenu: document.getElementById('createMenu'),
+    menuDragHandle: document.getElementById('menuDragHandle'),
+    
+    // Mode Toggle
+    modeGenerate: document.getElementById('modeGenerate'),
+    modeUpload: document.getElementById('modeUpload'),
+    menuContent: document.getElementById('menuContent'),
+    menuFooter: document.getElementById('menuFooter'),
+    
+    // Generate
+    generatorSelect: document.getElementById('generatorSelect'),
+    generatorOptions: document.getElementById('generatorOptions'),
+    generateBtn: document.getElementById('generateBtn'),
+    
+    // Upload/Convert
+    uploadZone: document.getElementById('uploadZone'),
+    fileInput: document.getElementById('fileInput'),
+    convertSection: document.getElementById('convertSection'),
+    convertPreview: document.getElementById('convertPreview'),
+    converterSelect: document.getElementById('converterSelect'),
+    converterOptions: document.getElementById('converterOptions'),
+    convertBtn: document.getElementById('convertBtn'),
+    
+    // Export
+    exportGcode: document.getElementById('exportGcode'),
+    exportSvg: document.getElementById('exportSvg'),
+
+    // Canvas
+    workspaceContainer: document.getElementById('workspaceContainer'),
+    workspaceTransform: document.getElementById('workspaceTransform'),
+    previewCanvas: document.getElementById('previewCanvas'),
+    cursorPos: document.getElementById('cursorPos'),
+    statLines: document.getElementById('statLines'),
+    zoomLevel: document.getElementById('zoomLevel'),
+    zoomIn: document.getElementById('zoomIn'),
+    zoomOut: document.getElementById('zoomOut'),
+    zoomFit: document.getElementById('zoomFit'),
+
     // Connection
     portSelect: document.getElementById('portSelect'),
     refreshPorts: document.getElementById('refreshPorts'),
@@ -58,38 +108,10 @@ const elements = {
     pauseBtn: document.getElementById('pauseBtn'),
     stepBtn: document.getElementById('stepBtn'),
     
-    // Canvas
-    previewCanvas: document.getElementById('previewCanvas'),
-    cursorPos: document.getElementById('cursorPos'),
-    statLines: document.getElementById('statLines'),
-    statDraw: document.getElementById('statDraw'),
-    statTravel: document.getElementById('statTravel'),
-    zoomIn: document.getElementById('zoomIn'),
-    zoomOut: document.getElementById('zoomOut'),
-    zoomFit: document.getElementById('zoomFit'),
-    
-    // File
-    uploadZone: document.getElementById('uploadZone'),
-    fileInput: document.getElementById('fileInput'),
-    exportGcode: document.getElementById('exportGcode'),
-    exportSvg: document.getElementById('exportSvg'),
-    
-    // Generate
-    generatorSelect: document.getElementById('generatorSelect'),
-    generatorOptions: document.getElementById('generatorOptions'),
-    generateBtn: document.getElementById('generateBtn'),
-    
-    // Convert
-    convertPreview: document.getElementById('convertPreview'),
-    converterSelect: document.getElementById('converterSelect'),
-    converterOptions: document.getElementById('converterOptions'),
-    convertBtn: document.getElementById('convertBtn'),
-    
     // Console
     consoleOutput: document.getElementById('consoleOutput'),
     gcodeInput: document.getElementById('gcodeInput'),
-    sendGcode: document.getElementById('sendGcode'),
-    clearConsole: document.getElementById('clearConsole')
+    sendGcode: document.getElementById('sendGcode')
 };
 
 // Canvas context
@@ -107,124 +129,79 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGenerators();
     loadConverters();
     loadSettings();
+    checkConnectionStatus();
+    setMode('generate');
 });
 
 function initCanvas() {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     
-    // Mouse events for preview manipulation
+    // Mouse events for canvas
     canvas.addEventListener('mousedown', onCanvasMouseDown);
     canvas.addEventListener('mousemove', onCanvasMouseMove);
     canvas.addEventListener('mouseup', onCanvasMouseUp);
     canvas.addEventListener('mouseleave', onCanvasMouseUp);
-    canvas.addEventListener('wheel', onCanvasWheel);
+    
+    // Zoom controls
+    elements.workspaceContainer.addEventListener('wheel', onContainerWheel);
     
     drawCanvas();
-}
-
-function onCanvasMouseDown(e) {
-    const rect = canvas.getBoundingClientRect();
-    state.dragStartX = e.clientX - rect.left;
-    state.dragStartY = e.clientY - rect.top;
-    
-    if (e.shiftKey) {
-        // Shift+drag = scale
-        state.dragMode = 'scale';
-        state.isResizing = true;
-    } else {
-        // Normal drag = move
-        state.dragMode = 'move';
-        state.isDragging = true;
-    }
-    canvas.style.cursor = state.dragMode === 'scale' ? 'nwse-resize' : 'grabbing';
-}
-
-function onCanvasMouseMove(e) {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Update cursor position display
-    const worldPos = screenToWorld(x, y);
-    elements.cursorPos.textContent = `X: ${worldPos.x.toFixed(1)} Y: ${worldPos.y.toFixed(1)}`;
-    
-    if (state.isDragging && state.dragMode === 'move') {
-        const dx = x - state.dragStartX;
-        const dy = y - state.dragStartY;
-        state.previewOffsetX += dx / getCanvasScale();
-        state.previewOffsetY -= dy / getCanvasScale();  // Invert Y
-        state.dragStartX = x;
-        state.dragStartY = y;
-        drawCanvas();
-    } else if (state.isResizing && state.dragMode === 'scale') {
-        const dy = state.dragStartY - y;  // Up = bigger
-        const scaleFactor = 1 + dy * 0.005;
-        state.previewScale = Math.max(0.1, Math.min(5, state.previewScale * scaleFactor));
-        state.dragStartY = y;
-        drawCanvas();
-    }
-}
-
-function onCanvasMouseUp() {
-    state.isDragging = false;
-    state.isResizing = false;
-    state.dragMode = null;
-    canvas.style.cursor = 'crosshair';
-}
-
-function onCanvasWheel(e) {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    if (e.shiftKey) {
-        // Shift+scroll = resize preview
-        state.previewScale = Math.max(0.1, Math.min(5, state.previewScale * delta));
-    } else {
-        // Normal scroll = zoom canvas
-        state.zoom = Math.max(0.1, Math.min(10, state.zoom * delta));
-    }
-    drawCanvas();
-}
-
-function getCanvasScale() {
-    // Calculate the scale factor from world to screen
-    const workWidth = window.plotterSettings?.work_width || 841;
-    const workHeight = window.plotterSettings?.work_height || 1189;
-    const scaleX = canvas.width / workWidth;
-    const scaleY = canvas.height / workHeight;
-    return Math.min(scaleX, scaleY) * 0.9 * state.zoom;
-}
-
-function screenToWorld(screenX, screenY) {
-    const workWidth = window.plotterSettings?.work_width || 841;
-    const workHeight = window.plotterSettings?.work_height || 1189;
-    const scale = getCanvasScale();
-    const offsetX = canvas.width / 2;
-    const offsetY = canvas.height / 2;
-    
-    return {
-        x: (screenX - offsetX) / scale,
-        y: -(screenY - offsetY) / scale  // Invert Y
-    };
 }
 
 function resizeCanvas() {
-    const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height - 72; // Subtract toolbar and stats height
+    // Get the paper element dimensions
+    const paper = document.querySelector('.paper-sheet');
+    if (paper) {
+        const baseWidth = paper.offsetWidth;
+        const baseHeight = paper.offsetHeight;
+        const dpr = window.devicePixelRatio;
+        
+        canvas.width = baseWidth * dpr;
+        canvas.height = baseHeight * dpr;
+        canvas.style.width = baseWidth + 'px';
+        canvas.style.height = baseHeight + 'px';
+    }
     drawCanvas();
 }
 
 function initEventListeners() {
+    // Navigation (Machine/Console/Settings)
+    elements.navItems.forEach(item => {
+        item.addEventListener('click', () => togglePanel(item.dataset.panel));
+    });
+
+    // Menu dragging
+    elements.menuDragHandle.addEventListener('mousedown', onMenuDragStart);
+    document.addEventListener('mousemove', onMenuDrag);
+    document.addEventListener('mouseup', onMenuDragEnd);
+    
+    // Position menu initially over left edge of frame
+    positionMenuOverFrame();
+    window.addEventListener('resize', positionMenuOverFrame);
+
+    // Mode toggle
+    elements.modeGenerate.addEventListener('click', () => setMode('generate'));
+    elements.modeUpload.addEventListener('click', () => setMode('upload'));
+
     // Connection
     elements.refreshPorts.addEventListener('click', loadPorts);
     elements.connectBtn.addEventListener('click', toggleConnection);
     
     // Controls
-    elements.homeBtn.addEventListener('click', () => sendCommand('/api/home', 'POST'));
+    elements.homeBtn.addEventListener('click', () => {
+        logConsole('Home', 'msg-out');
+        sendCommand('/api/home', 'POST');
+    });
     elements.motorsBtn.addEventListener('click', toggleMotors);
-    elements.penUpBtn.addEventListener('click', () => sendCommand('/api/pen', 'POST', { action: 'up' }));
-    elements.penDownBtn.addEventListener('click', () => sendCommand('/api/pen', 'POST', { action: 'down' }));
+    elements.penUpBtn.addEventListener('click', () => {
+        logConsole('Pen Up', 'msg-out');
+        sendCommand('/api/pen', 'POST', { action: 'up' });
+    });
+    elements.penDownBtn.addEventListener('click', () => {
+        logConsole('Pen Down', 'msg-out');
+        sendCommand('/api/pen', 'POST', { action: 'down' });
+    });
     elements.emergencyStop.addEventListener('click', emergencyStop);
     
     // Jog
@@ -232,30 +209,32 @@ function initEventListeners() {
         btn.addEventListener('click', () => jog(btn.dataset.dir));
     });
     
-    document.querySelectorAll('.jog-distance .btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.jog-distance .btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            state.jogDistance = parseInt(btn.dataset.distance);
+    document.querySelectorAll('.dist-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.dist-btn').forEach(b => b.classList.remove('active'));
+            e.currentTarget.classList.add('active');
+            state.jogDistance = parseInt(e.currentTarget.dataset.distance);
         });
     });
     
     // Plot controls
-    elements.rewindBtn.addEventListener('click', () => sendCommand('/api/plot/rewind', 'POST'));
+    elements.rewindBtn.addEventListener('click', () => {
+        logConsole('Rewind', 'msg-out');
+        sendCommand('/api/plot/rewind', 'POST');
+    });
     elements.playBtn.addEventListener('click', startPlot);
     elements.pauseBtn.addEventListener('click', pausePlot);
-    elements.stepBtn.addEventListener('click', () => sendCommand('/api/plot/step', 'POST'));
+    elements.stepBtn.addEventListener('click', () => {
+        logConsole('Step', 'msg-out');
+        sendCommand('/api/plot/step', 'POST');
+    });
     
-    // Canvas zoom
-    elements.zoomIn.addEventListener('click', () => { state.zoom *= 1.2; drawCanvas(); });
-    elements.zoomOut.addEventListener('click', () => { state.zoom /= 1.2; drawCanvas(); });
-    elements.zoomFit.addEventListener('click', () => { state.zoom = 1; state.panX = 0; state.panY = 0; drawCanvas(); });
+    // Zoom controls
+    elements.zoomIn.addEventListener('click', () => setZoom(state.zoom * 1.25));
+    elements.zoomOut.addEventListener('click', () => setZoom(state.zoom / 1.25));
+    elements.zoomFit.addEventListener('click', () => setZoom(1));
     
-    // Preview manipulation
-    document.getElementById('resetPreview')?.addEventListener('click', resetPreviewTransform);
-    document.getElementById('applyTransform')?.addEventListener('click', applyPreviewTransform);
-    
-    // File upload
+    // File upload - main drop zone
     elements.uploadZone.addEventListener('click', () => elements.fileInput.click());
     elements.uploadZone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -266,6 +245,17 @@ function initEventListeners() {
     });
     elements.uploadZone.addEventListener('drop', handleFileDrop);
     elements.fileInput.addEventListener('change', handleFileSelect);
+    
+    // File upload - convert preview as replacement drop zone
+    elements.convertPreview.addEventListener('click', () => elements.fileInput.click());
+    elements.convertPreview.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.convertPreview.classList.add('dragover');
+    });
+    elements.convertPreview.addEventListener('dragleave', () => {
+        elements.convertPreview.classList.remove('dragover');
+    });
+    elements.convertPreview.addEventListener('drop', handleFileDrop);
     
     // Export
     elements.exportGcode.addEventListener('click', exportGcode);
@@ -284,35 +274,204 @@ function initEventListeners() {
     elements.gcodeInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendGcodeCommand();
     });
-    elements.clearConsole.addEventListener('click', () => {
-        elements.consoleOutput.innerHTML = '';
-    });
-    
-    // Tabs
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            tab.classList.add('active');
-            document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
-        });
-    });
     
     // Settings
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
-    document.getElementById('clearUploads')?.addEventListener('click', clearUploads);
+    document.getElementById('clearUploads').addEventListener('click', clearUploads);
 }
 
-async function clearUploads() {
-    const result = await sendCommand('/api/clear_uploads', 'POST');
-    if (result.success) {
-        logConsole('Uploads cleared', 'msg-in');
-        // Clear the convert preview
-        if (elements.convertPreview) {
-            elements.convertPreview.innerHTML = '<p style="color: #9ca3af;">Upload an image to convert</p>';
+// ============================================================================
+// Mode Toggle
+// ============================================================================
+
+function setMode(mode) {
+    state.mode = mode;
+    
+    // Update toggle buttons
+    elements.modeGenerate.classList.toggle('active', mode === 'generate');
+    elements.modeUpload.classList.toggle('active', mode === 'upload');
+    
+    // Show/hide content
+    document.getElementById('content-generate').classList.toggle('active', mode === 'generate');
+    document.getElementById('content-upload').classList.toggle('active', mode === 'upload');
+}
+
+// ============================================================================
+// Panel Toggle
+// ============================================================================
+
+function togglePanel(panelId) {
+    const panelContent = document.getElementById(`panel-${panelId}`);
+    
+    if (state.openPanel === panelId) {
+        // Close
+        elements.sidePanel.classList.remove('open');
+        document.querySelector(`.nav-item[data-panel="${panelId}"]`).classList.remove('active');
+        if (panelContent) panelContent.classList.remove('active');
+        state.openPanel = null;
+    } else {
+        // Close previous
+        if (state.openPanel) {
+            const prevPanel = document.getElementById(`panel-${state.openPanel}`);
+            if (prevPanel) prevPanel.classList.remove('active');
+            document.querySelector(`.nav-item[data-panel="${state.openPanel}"]`).classList.remove('active');
         }
-        state.currentImagePath = null;
+        // Open new
+        elements.sidePanel.classList.add('open');
+        if (panelContent) panelContent.classList.add('active');
+        document.querySelector(`.nav-item[data-panel="${panelId}"]`).classList.add('active');
+        state.openPanel = panelId;
     }
+    // Resize canvas after panel transition
+    setTimeout(resizeCanvas, 280);
+}
+
+// ============================================================================
+// Menu Dragging
+// ============================================================================
+
+function positionMenuOverFrame() {
+    const frame = document.querySelector('.polargraph-frame');
+    const menu = elements.createMenu;
+    if (!frame || !menu) return;
+    
+    const frameRect = frame.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const bodyRect = document.querySelector('.body-panel').getBoundingClientRect();
+    
+    // Position menu further left, mostly outside the frame
+    const targetX = frameRect.left - bodyRect.left - menuRect.width * 0.7;
+    const targetY = frameRect.top - bodyRect.top + (frameRect.height - menuRect.height) / 2;
+    
+    menu.style.left = Math.max(16, targetX) + 'px';
+    menu.style.top = targetY + 'px';
+    menu.style.transform = 'none';
+}
+
+function onMenuDragStart(e) {
+    state.menuDragging = true;
+    const menu = elements.createMenu;
+    const rect = menu.getBoundingClientRect();
+    const bodyRect = document.querySelector('.body-panel').getBoundingClientRect();
+    
+    state.menuStartX = e.clientX;
+    state.menuStartY = e.clientY;
+    state.menuOffsetX = rect.left - bodyRect.left;
+    state.menuOffsetY = rect.top - bodyRect.top;
+    
+    menu.classList.add('dragging');
+    e.preventDefault();
+}
+
+function onMenuDrag(e) {
+    if (!state.menuDragging) return;
+    
+    const dx = e.clientX - state.menuStartX;
+    const dy = e.clientY - state.menuStartY;
+    
+    const menu = elements.createMenu;
+    menu.style.left = (state.menuOffsetX + dx) + 'px';
+    menu.style.top = (state.menuOffsetY + dy) + 'px';
+    menu.style.transform = 'none';
+}
+
+function onMenuDragEnd() {
+    if (!state.menuDragging) return;
+    state.menuDragging = false;
+    elements.createMenu.classList.remove('dragging');
+}
+
+// ============================================================================
+// Zoom / Transform
+// ============================================================================
+
+function setZoom(zoom) {
+    state.zoom = Math.max(state.minZoom, Math.min(state.maxZoom, zoom));
+    
+    // Frame scales subtly (sqrt for gentle scaling), content zooms fully
+    const frameScale = 1 + (state.zoom - 1) * 0.15; // Frame only scales 15% of the zoom
+    elements.workspaceTransform.style.transform = `scale(${frameScale})`;
+    
+    elements.zoomLevel.textContent = Math.round(state.zoom * 100) + '%';
+    // Redraw canvas at full zoom level for detail
+    drawCanvas();
+}
+
+function onContainerWheel(e) {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setZoom(state.zoom * delta);
+}
+
+// ============================================================================
+// Canvas Events
+// ============================================================================
+
+function onCanvasMouseDown(e) {
+    const rect = canvas.getBoundingClientRect();
+    state.dragStartX = e.clientX - rect.left;
+    state.dragStartY = e.clientY - rect.top;
+    
+    if (e.shiftKey) {
+        state.isDragging = true;
+        state.dragMode = 'scale';
+    } else {
+        state.isDragging = true;
+        state.dragMode = 'move';
+    }
+    canvas.style.cursor = 'grabbing';
+}
+
+function onCanvasMouseMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Update cursor position
+    const worldPos = screenToWorld(x, y);
+    elements.cursorPos.textContent = `X: ${worldPos.x.toFixed(1)} Y: ${worldPos.y.toFixed(1)}`;
+    
+    if (state.isDragging) {
+        if (state.dragMode === 'move') {
+            const dx = x - state.dragStartX;
+            const dy = y - state.dragStartY;
+            state.previewOffsetX += dx / getCanvasScale();
+            state.previewOffsetY -= dy / getCanvasScale();
+            state.dragStartX = x;
+            state.dragStartY = y;
+            drawCanvas();
+        } else if (state.dragMode === 'scale') {
+            const dy = state.dragStartY - y;
+            const scaleFactor = 1 + dy * 0.005;
+            state.previewScale = Math.max(0.1, Math.min(5, state.previewScale * scaleFactor));
+            state.dragStartY = y;
+            drawCanvas();
+        }
+    }
+}
+
+function onCanvasMouseUp() {
+    state.isDragging = false;
+    canvas.style.cursor = 'crosshair';
+}
+
+function getCanvasScale() {
+    const workWidth = 841; // A0 width mm
+    const workHeight = 1189; // A0 height mm
+    const scaleX = canvas.width / window.devicePixelRatio / workWidth;
+    const scaleY = canvas.height / window.devicePixelRatio / workHeight;
+    // Apply zoom to the content scale
+    return Math.min(scaleX, scaleY) * 0.9 * state.zoom;
+}
+
+function screenToWorld(screenX, screenY) {
+    const scale = getCanvasScale();
+    const cw = canvas.width / window.devicePixelRatio;
+    const ch = canvas.height / window.devicePixelRatio;
+    return {
+        x: (screenX - cw / 2) / scale,
+        y: -(screenY - ch / 2) / scale
+    };
 }
 
 // ============================================================================
@@ -321,6 +480,12 @@ async function clearUploads() {
 
 socket.on('connect', () => {
     logConsole('Connected to server', 'msg-in');
+    checkConnectionStatus();
+});
+
+socket.on('disconnect', () => {
+    logConsole('Disconnected from server', 'msg-error');
+    setConnectionStatus(false);
 });
 
 socket.on('serial_message', (data) => {
@@ -336,8 +501,6 @@ socket.on('serial_message', (data) => {
 
 socket.on('progress', (data) => {
     updateProgress(data.current, data.total, data.percent);
-    
-    // Update gondola position for visualization
     if (data.gondola) {
         state.gondola = data.gondola;
         drawCanvas();
@@ -349,6 +512,7 @@ socket.on('plot_complete', (data) => {
     state.paused = false;
     updatePlotButtons();
     logConsole(data.message, 'msg-in');
+    drawCanvas();
 });
 
 // ============================================================================
@@ -357,17 +521,71 @@ socket.on('plot_complete', (data) => {
 
 async function sendCommand(url, method = 'GET', data = null) {
     try {
+        // If webhook URL is set, route commands through Home Assistant
+        if (POLARGRAPH_WEBHOOK_URL && method === 'POST') {
+            return await sendViaWebhook(url, data);
+        }
+        
         const options = {
             method,
             headers: { 'Content-Type': 'application/json' }
         };
         if (data) options.body = JSON.stringify(data);
-        
         const response = await fetch(url, options);
         return await response.json();
     } catch (error) {
         logConsole(`Error: ${error.message}`, 'msg-error');
         return { success: false, error: error.message };
+    }
+}
+
+async function sendViaWebhook(endpoint, data = null) {
+    /**
+     * Send command via Home Assistant webhook -> MQTT -> plotter.local
+     * Maps API endpoints to MQTT commands
+     */
+    const commandMap = {
+        '/api/connect': 'connect',
+        '/api/disconnect': 'disconnect',
+        '/api/home': 'home',
+        '/api/emergency_stop': 'stop',
+        '/api/pen': data?.action === 'up' ? 'pen_up' : 'pen_down',
+        '/api/motors': data?.enable ? 'motors_on' : 'motors_off',
+        '/api/plot/start': 'start',
+        '/api/plot/pause': 'pause',
+        '/api/plot/resume': 'resume',
+        '/api/jog': 'jog',
+        '/api/goto': 'goto',
+    };
+    
+    const command = commandMap[endpoint] || endpoint.replace('/api/', '');
+    
+    try {
+        const response = await fetch(POLARGRAPH_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                command: command,
+                ...data
+            })
+        });
+        
+        if (response.ok) {
+            logConsole(`Sent via HA: ${command}`, 'msg-out');
+            return { success: true };
+        } else {
+            throw new Error(`Webhook returned ${response.status}`);
+        }
+    } catch (error) {
+        logConsole(`Webhook error: ${error.message}`, 'msg-error');
+        return { success: false, error: error.message };
+    }
+}
+
+async function checkConnectionStatus() {
+    const result = await sendCommand('/api/connection_status');
+    if (result.success !== false) {
+        setConnectionStatus(result.connected, result.port);
     }
 }
 
@@ -396,29 +614,31 @@ async function toggleConnection() {
         }
         const result = await sendCommand('/api/connect', 'POST', { port });
         if (result.success) {
-            setConnectionStatus(true);
+            setConnectionStatus(true, port);
         } else {
             logConsole(`Connection failed: ${result.error}`, 'msg-error');
         }
     }
 }
 
-function setConnectionStatus(connected) {
+function setConnectionStatus(connected, port = null) {
     state.connected = connected;
-    elements.statusIndicator.classList.toggle('connected', connected);
-    elements.statusText.textContent = connected ? 'Connected' : 'Disconnected';
+    elements.statusDot.classList.toggle('connected', connected);
+    elements.statusLabel.textContent = connected ? `Connected` : 'Disconnected';
     elements.connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     
-    // Enable/disable controls
     const controls = [elements.homeBtn, elements.motorsBtn, elements.penUpBtn, 
-                      elements.penDownBtn, elements.emergencyStop];
+                      elements.penDownBtn, elements.emergencyStop, elements.playBtn,
+                      elements.rewindBtn, elements.stepBtn, elements.pauseBtn];
     controls.forEach(btn => btn.disabled = !connected);
     
     document.querySelectorAll('.jog-btn').forEach(btn => btn.disabled = !connected);
+    updatePlotButtons();
 }
 
 async function toggleMotors() {
     state.motorsEnabled = !state.motorsEnabled;
+    logConsole(`Motors ${state.motorsEnabled ? 'Enable' : 'Disable'}`, 'msg-out');
     await sendCommand('/api/motors', 'POST', { enable: state.motorsEnabled });
     elements.motorsBtn.classList.toggle('active', state.motorsEnabled);
 }
@@ -429,13 +649,11 @@ async function emergencyStop() {
     state.paused = false;
     updatePlotButtons();
     logConsole('EMERGENCY STOP', 'msg-error');
+    drawCanvas();
 }
 
 function jog(direction) {
-    if (!state.connected) {
-        logConsole('Not connected - cannot jog', 'msg-error');
-        return;
-    }
+    if (!state.connected) return;
     
     const d = state.jogDistance;
     let x = 0, y = 0;
@@ -450,12 +668,12 @@ function jog(direction) {
         case 'down-left': x = -d; y = -d; break;
         case 'down-right': x = d; y = -d; break;
         case 'center': 
-            logConsole(`Jog to center`, 'msg-out');
+            logConsole('Goto center (0, 0)', 'msg-out');
             sendCommand('/api/goto', 'POST', { x: 0, y: 0 });
             return;
     }
     
-    logConsole(`Jog ${direction}: X=${x} Y=${y}`, 'msg-out');
+    logConsole(`Jog X:${x} Y:${y}`, 'msg-out');
     sendCommand('/api/jog', 'POST', { x, y });
 }
 
@@ -464,9 +682,12 @@ function jog(direction) {
 // ============================================================================
 
 async function startPlot() {
+    if (!state.connected) return;
     if (state.paused) {
+        logConsole('Resume Plot', 'msg-out');
         await sendCommand('/api/plot/resume', 'POST');
     } else {
+        logConsole('Start Plot', 'msg-out');
         await sendCommand('/api/plot/start', 'POST');
     }
     state.plotting = true;
@@ -475,6 +696,8 @@ async function startPlot() {
 }
 
 async function pausePlot() {
+    if (!state.plotting) return;
+    logConsole('Pause Plot', 'msg-out');
     await sendCommand('/api/plot/pause', 'POST');
     state.paused = true;
     updatePlotButtons();
@@ -489,7 +712,7 @@ function updatePlotButtons() {
 
 function updateProgress(current, total, percent) {
     elements.progressFill.style.width = `${percent}%`;
-    elements.progressText.textContent = `${percent}% (${current}/${total})`;
+    elements.progressText.textContent = `${percent}%`;
     elements.plotStatus.textContent = `Line ${current} of ${total}`;
 }
 
@@ -500,7 +723,7 @@ function updateProgress(current, total, percent) {
 function handleFileDrop(e) {
     e.preventDefault();
     elements.uploadZone.classList.remove('dragover');
-    
+    elements.convertPreview.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
     if (file) uploadFile(file);
 }
@@ -524,21 +747,17 @@ async function uploadFile(file) {
         
         if (result.success) {
             if (result.type === 'image') {
-                // Image needs conversion
                 state.currentImagePath = result.filepath;
                 elements.convertPreview.innerHTML = `<img src="/uploads/${encodeURIComponent(file.name)}" alt="Preview">`;
+                elements.convertSection.style.display = 'block';
+                elements.uploadZone.style.display = 'none'; // Hide drop zone, use preview for replacement
                 elements.convertBtn.disabled = false;
-                
-                // Switch to convert tab
-                document.querySelector('[data-tab="convert"]').click();
-                logConsole(result.message, 'msg-in');
             } else {
-                // Vector or G-code loaded
                 state.preview = result.preview;
                 updatePreview(result.preview);
                 elements.plotStatus.textContent = `${result.lines} lines loaded`;
-                logConsole(result.message, 'msg-in');
             }
+            elements.menuFooter.style.display = 'block';
         } else {
             logConsole(`Upload failed: ${result.error}`, 'msg-error');
         }
@@ -578,6 +797,7 @@ function downloadFile(filename, content, type) {
 async function loadGenerators() {
     const result = await sendCommand('/api/generators');
     if (result.generators) {
+        elements.generatorSelect.innerHTML = '';
         result.generators.forEach(gen => {
             const option = document.createElement('option');
             option.value = gen.id;
@@ -601,7 +821,7 @@ function updateGeneratorOptions() {
         group.className = 'form-group';
         
         const label = document.createElement('label');
-        label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        label.textContent = key.replace(/_/g, ' ');
         
         let input;
         if (config.type === 'bool') {
@@ -612,7 +832,6 @@ function updateGeneratorOptions() {
             input = document.createElement('input');
             input.type = 'text';
             input.value = config.default;
-            input.className = 'input';
         } else {
             input = document.createElement('input');
             input.type = 'number';
@@ -620,7 +839,6 @@ function updateGeneratorOptions() {
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
             input.step = config.type === 'int' ? 1 : 0.1;
-            input.className = 'input';
         }
         input.id = `gen_${key}`;
         
@@ -651,7 +869,7 @@ async function generatePattern() {
         state.preview = result.preview;
         updatePreview(result.preview);
         elements.plotStatus.textContent = `${result.lines} lines generated`;
-        logConsole(result.message, 'msg-in');
+        elements.menuFooter.style.display = 'block';
     } else {
         logConsole(`Generate failed: ${result.error}`, 'msg-error');
     }
@@ -664,6 +882,7 @@ async function generatePattern() {
 async function loadConverters() {
     const result = await sendCommand('/api/converters');
     if (result.converters) {
+        elements.converterSelect.innerHTML = '';
         result.converters.forEach(conv => {
             const option = document.createElement('option');
             option.value = conv.id;
@@ -687,7 +906,7 @@ function updateConverterOptions() {
         group.className = 'form-group';
         
         const label = document.createElement('label');
-        label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        label.textContent = key.replace(/_/g, ' ');
         
         let input;
         if (config.type === 'bool') {
@@ -701,7 +920,6 @@ function updateConverterOptions() {
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
             input.step = config.type === 'int' ? 1 : 0.1;
-            input.className = 'input';
         }
         input.id = `conv_${key}`;
         
@@ -712,10 +930,7 @@ function updateConverterOptions() {
 }
 
 async function convertImage() {
-    if (!state.currentImagePath) {
-        alert('Please upload an image first');
-        return;
-    }
+    if (!state.currentImagePath) return;
     
     const algorithm = elements.converterSelect.value;
     const options = {};
@@ -739,14 +954,14 @@ async function convertImage() {
         state.preview = result.preview;
         updatePreview(result.preview);
         elements.plotStatus.textContent = `${result.lines} lines converted`;
-        logConsole(result.message, 'msg-in');
+        elements.menuFooter.style.display = 'block';
     } else {
         logConsole(`Convert failed: ${result.error}`, 'msg-error');
     }
 }
 
 // ============================================================================
-// Settings Functions
+// Settings
 // ============================================================================
 
 async function loadSettings() {
@@ -759,9 +974,9 @@ async function loadSettings() {
         document.getElementById('limitTop').value = result.limit_top || 594.5;
         document.getElementById('limitBottom').value = result.limit_bottom || -594.5;
         document.getElementById('penUpAngle').value = result.pen_angle_up || 90;
-        document.getElementById('penDownAngle').value = result.pen_angle_down || 25;
-        document.getElementById('feedTravel').value = result.feed_rate_travel || 3000;
-        document.getElementById('feedDraw').value = result.feed_rate_draw || 2000;
+        document.getElementById('penDownAngle').value = result.pen_angle_down || 40;
+        document.getElementById('feedTravel').value = result.feed_rate_travel || 1000;
+        document.getElementById('feedDraw').value = result.feed_rate_draw || 500;
     }
 }
 
@@ -785,8 +1000,19 @@ async function saveSettings() {
     }
 }
 
+async function clearUploads() {
+    const result = await sendCommand('/api/clear_uploads', 'POST');
+    if (result.success) {
+        logConsole('Uploads cleared', 'msg-in');
+        elements.convertPreview.innerHTML = '';
+        elements.convertSection.style.display = 'none';
+        elements.uploadZone.style.display = 'block'; // Show drop zone again
+        state.currentImagePath = null;
+    }
+}
+
 // ============================================================================
-// Console Functions
+// Console
 // ============================================================================
 
 function logConsole(message, className = '') {
@@ -807,20 +1033,28 @@ async function sendGcodeCommand() {
 }
 
 // ============================================================================
-// Canvas Functions
+// Canvas Drawing
 // ============================================================================
 
 function drawCanvas() {
-    const w = canvas.width;
-    const h = canvas.height;
+    const dpr = window.devicePixelRatio;
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
     
-    ctx.fillStyle = '#fafafa';
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    
+    // Background
+    ctx.fillStyle = '#fafaf8';
     ctx.fillRect(0, 0, w, h);
     
-    // Transform for zoom and pan
-    ctx.save();
-    ctx.translate(w / 2 + state.panX, h / 2 + state.panY);
-    ctx.scale(state.zoom, -state.zoom); // Flip Y
+    // Transform to center origin
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(1, -1); // Flip Y
+    
+    const scale = getCanvasScale();
+    ctx.scale(scale, scale);
     
     // Draw work area grid
     drawGrid();
@@ -828,60 +1062,28 @@ function drawCanvas() {
     // Draw work area boundary
     drawWorkArea();
     
-    // Draw polargraph machine (motors, belts, gondola)
-    drawMachine();
-    
-    // Draw preview paths with preview transform applied
+    // Draw preview paths
     if (state.preview && state.preview.paths) {
         ctx.save();
-        // Apply preview offset and scale
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
         ctx.scale(state.previewScale, state.previewScale);
         drawPaths(state.preview.paths);
         ctx.restore();
     }
     
-    // Draw gondola on top
-    drawGondola();
+    // Draw gondola indicator
+    if (state.plotting) {
+        drawGondola();
+    }
     
     ctx.restore();
 }
 
-function drawMachine() {
-    // Minimal machine visualization - just work area boundary markers
-    // No motors, belts, or counterweights for a cleaner look
-}
-
-function drawGondola() {
-    // Only show gondola indicator while plotting
-    if (!state.plotting || !state.gondola) return;
-    
-    const gx = state.gondola.x || 0;
-    const gy = state.gondola.y || 0;
-    const penDown = (state.gondola.z || 90) < 50;
-    
-    // Simple small indicator dot
-    const dotSize = 6 / state.zoom;
-    
-    // Outer ring
-    ctx.strokeStyle = penDown ? '#ef4444' : '#3b82f6';
-    ctx.lineWidth = 2 / state.zoom;
-    ctx.beginPath();
-    ctx.arc(gx, gy, dotSize, 0, Math.PI * 2);
-    ctx.stroke();
-    
-    // Inner dot (only when pen down)
-    if (penDown) {
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(gx, gy, dotSize * 0.4, 0, Math.PI * 2);
-        ctx.fill();
-    }
-}
-
 function drawGrid() {
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1 / state.zoom;
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    
+    ctx.strokeStyle = '#e8e8e8';
+    ctx.lineWidth = 0.5 * lineScale;
     
     const gridSize = 50;
     
@@ -900,8 +1102,8 @@ function drawGrid() {
     }
     
     // Axes
-    ctx.strokeStyle = '#9ca3af';
-    ctx.lineWidth = 2 / state.zoom;
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1 * lineScale;
     
     ctx.beginPath();
     ctx.moveTo(-500, 0);
@@ -915,41 +1117,32 @@ function drawGrid() {
 }
 
 function drawWorkArea() {
-    // Default A0 work area
     const left = -420.5;
     const right = 420.5;
     const top = 594.5;
     const bottom = -594.5;
     
-    ctx.strokeStyle = '#0066cc';
-    ctx.lineWidth = 2 / state.zoom;
-    ctx.setLineDash([10 / state.zoom, 5 / state.zoom]);
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 0.5 * lineScale;
+    ctx.setLineDash([5 * lineScale, 5 * lineScale]);
     
     ctx.beginPath();
     ctx.rect(left, bottom, right - left, top - bottom);
     ctx.stroke();
     
     ctx.setLineDash([]);
-    
-    // Machine attachment points (simplified polargraph)
-    ctx.fillStyle = '#6366f1';
-    const machineWidth = 609.6; // Half of 48 inches
-    
-    ctx.beginPath();
-    ctx.arc(-machineWidth, 700, 8 / state.zoom, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.beginPath();
-    ctx.arc(machineWidth, 700, 8 / state.zoom, 0, Math.PI * 2);
-    ctx.fill();
 }
 
 function drawPaths(paths) {
     paths.forEach(path => {
         if (path.points.length < 2) return;
         
-        ctx.strokeStyle = path.color || '#1a1a1a';
-        ctx.lineWidth = (path.diameter || 0.8) / state.zoom;
+        ctx.strokeStyle = path.color || '#222';
+        // Line width gets thinner as you zoom in for detail visibility
+        const baseWidth = (path.diameter || 0.5) * 2;
+        ctx.lineWidth = baseWidth / Math.sqrt(state.zoom);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         
@@ -964,52 +1157,36 @@ function drawPaths(paths) {
     });
 }
 
+function drawGondola() {
+    const gx = state.gondola.x || 0;
+    const gy = state.gondola.y || 0;
+    const penDown = (state.gondola.z || 90) < 50;
+    
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    const dotSize = 4 * lineScale;
+    
+    ctx.strokeStyle = penDown ? '#c44' : '#48a';
+    ctx.lineWidth = 1.5 * lineScale;
+    ctx.beginPath();
+    ctx.arc(gx, gy, dotSize, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    if (penDown) {
+        ctx.fillStyle = '#c44';
+        ctx.beginPath();
+        ctx.arc(gx, gy, dotSize * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
 function updatePreview(preview) {
     if (!preview) return;
     
     state.preview = preview;
     
-    // Update stats
     if (preview.stats) {
         elements.statLines.textContent = preview.stats.lines || 0;
-        elements.statDraw.textContent = Math.round(preview.stats.draw_distance || 0);
-        elements.statTravel.textContent = Math.round(preview.stats.travel_distance || 0);
     }
     
     drawCanvas();
 }
-
-function resetPreviewTransform() {
-    state.previewOffsetX = 0;
-    state.previewOffsetY = 0;
-    state.previewScale = 1;
-    drawCanvas();
-    logConsole('Preview reset', 'msg-in');
-}
-
-async function applyPreviewTransform() {
-    if (!state.preview || !state.preview.paths) {
-        logConsole('No preview to transform', 'msg-error');
-        return;
-    }
-    
-    const result = await sendCommand('/api/transform', 'POST', {
-        offsetX: state.previewOffsetX,
-        offsetY: state.previewOffsetY,
-        scale: state.previewScale
-    });
-    
-    if (result.success) {
-        // Update preview with transformed paths
-        state.preview = result.preview;
-        // Reset transform state since it's now baked in
-        state.previewOffsetX = 0;
-        state.previewOffsetY = 0;
-        state.previewScale = 1;
-        drawCanvas();
-        logConsole('Transform applied to paths', 'msg-in');
-    } else {
-        logConsole(`Transform failed: ${result.error}`, 'msg-error');
-    }
-}
-

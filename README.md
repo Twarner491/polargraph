@@ -1,107 +1,149 @@
 # Polargraph
 
-Web-based control interface for a custom 60" × 48" polargraph pen plotter. Runs on Raspberry Pi 5, accessible at `plotter.local`.
+*Have a hard time deciding what to hang on your walls? Boy, do I have the solution for you.*
 
-Full project writeup at [teddywarner.org/Projects/Polargraph](https://teddywarner.org/Projects/Polargraph/).
+Wall mounted, web accessible polargraph pen plotter. Full project writeup at [teddywarner.org/Projects/Polargraph](https://teddywarner.org/Projects/Polargraph/).
 
-## Hardware
+---
 
-- **Controller**: Arduino Mega 2560 + RAMPS 1.4 shield
-- **Motors**: 2× NEMA 17 (X/Y for left/right belt control)
-- **Pen**: Servo on servo0 port
-- **Endstops**: X min (left) and Y min (right)
-- **Work Area**: A0 paper (841 × 1189 mm)
+## BOM
 
-## Pi Setup
+| Qty | Description | Price | Link |
+|-----|-------------|-------|------|
+| 1 | thingy| $XXX | [Amazon](link) |
 
-### Quick Install
+---
+
+## 1. Raspberry Pi Setup
+
+Flash Raspberry Pi OS Lite (64-bit) and configure WiFi. SSH in:
 
 ```bash
-# Flash Raspberry Pi OS Lite (64-bit) to SD card
-# Enable SSH and configure WiFi in Imager
-
-# SSH into Pi
 ssh pi@raspberrypi.local
+sudo apt update && sudo apt upgrade -y
+```
 
-# Clone and install
-git clone https://github.com/Twarner491/polargraph.git
-cd polargraph
-sudo bash setup.sh
+Set hostname to `plotter`:
+
+```bash
+sudo hostnamectl set-hostname plotter
+sudo nano /etc/hosts  # Change 127.0.1.1 to plotter
 sudo reboot
 ```
 
-### Manual Install
+Install dependencies:
 
 ```bash
-# Install dependencies
-sudo apt update && sudo apt install -y python3-pip python3-venv avahi-daemon
+sudo apt install -y python3-pip python3-venv avahi-daemon git
+sudo systemctl enable avahi-daemon
+```
 
-# Setup Python environment
+---
+
+## 2. Clone Repository
+
+```bash
+git clone https://github.com/Twarner491/polargraph.git ~/polargraph
+cd ~/polargraph
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-
-# Run manually
-cd src
-python app.py
 ```
 
-### Access
+---
 
-After setup: **http://plotter.local** or `http://<pi-ip-address>`
+## 3. USB Permissions
 
-## Features
+Set permissions for the plotter's USB serial connection:
 
-- **Control**: Home, jog, pen up/down, motor enable/disable
-- **Generate**: Spirograph, maze, dragon curve, Hilbert curve, fractals, flow fields
-- **Convert Images**: Spiral, crosshatch, pulse lines, stipple, squares, random walk
-- **File Support**: SVG, DXF, G-code, PNG, JPG, GIF, BMP
-- **Export**: G-code, SVG
-- **Real-time**: WebSocket console, progress tracking
-
-## G-code Reference
-
-| Command | Description |
-|---------|-------------|
-| `G28 X Y` | Home both axes |
-| `G0 X_ Y_ F_` | Rapid move (pen up) |
-| `G1 X_ Y_ F_` | Linear move (pen down) |
-| `M280 P0 S_ T_` | Servo angle (S=degrees, T=delay ms) |
-| `M17` / `M18` | Enable / disable motors |
-| `M112` | Emergency stop |
-
-## Project Structure
-
-```
-polargraph/
-├── src/
-│   ├── app.py              # Flask application
-│   ├── modules/            # Backend modules
-│   │   ├── serial_handler.py
-│   │   ├── gcode_generator.py
-│   │   ├── image_converter.py
-│   │   ├── turtle_generator.py
-│   │   ├── file_handler.py
-│   │   └── plotter_settings.py
-│   ├── static/             # CSS, JS
-│   └── templates/          # HTML
-├── system-config/          # Systemd services
-├── submodules/
-│   ├── Makelangelo-firmware/
-│   └── Makelangelo-software/
-├── setup.sh
-└── requirements.txt
+```bash
+sudo cp system-config/99-polargraph.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo usermod -a -G dialout pi
 ```
 
-## Configuration
+---
 
-Machine settings adjustable via web UI → Settings tab:
-- Machine dimensions
-- Work area limits  
-- Pen servo angles (up: 90°, down: 25°)
-- Feed rates (travel: 3000, draw: 2000 mm/min)
+## 4. Start Flask Server
 
-Settings saved to `src/config/settings.json`
+Enable the service to auto-start on boot:
+
+```bash
+sudo cp system-config/polargraph.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polargraph.service
+```
+
+Access at **http://plotter.local**
+
+---
+
+## 5. Home Assistant Integration (Optional)
+
+For remote access via `plotter.onethreenine.net` → Home Assistant → MQTT → Pi.
+
+### Home Assistant Automation
+
+Add to `automations.yaml`:
+
+```yaml
+alias: "Polargraph Command"
+trigger:
+  - platform: webhook
+    webhook_id: polargraph_command
+    allowed_methods: [POST]
+    local_only: false
+action:
+  - service: mqtt.publish
+    data:
+      topic: "home/polargraph/command"
+      payload_template: "{{ trigger.json | tojson }}"
+```
+
+### Enable CORS
+
+Add to `configuration.yaml`:
+
+```yaml
+http:
+  cors_allowed_origins:
+    - https://plotter.onethreenine.net
+```
+
+### Pi MQTT Setup
+
+Edit `src/mqtt_subscriber.py` with your MQTT broker IP:
+
+```python
+MQTT_BROKER = "192.168.1.XXX"  # Your Home Assistant IP
+```
+
+Then enable the MQTT service:
+
+```bash
+sudo cp system-config/polargraph-mqtt.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polargraph-mqtt.service
+```
+
+### Frontend Configuration
+
+Edit `build_static.py` and set your webhook URL:
+
+```python
+HA_WEBHOOK_URL = "https://your-ha-instance.duckdns.org/api/webhook/polargraph_command"
+```
+
+Then build and deploy:
+
+```bash
+python build_static.py
+git add docs/
+git commit -m "Update static site"
+git push
+```
+
+The site will be available at **https://plotter.onethreenine.net** via GitHub Pages + Cloudflare.
 
 ---
 

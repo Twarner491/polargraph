@@ -1,0 +1,17 @@
+[Unit]
+Description=Polargraph MQTT Subscriber
+After=network.target polargraph.service
+Requires=polargraph.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/polargraph/src
+ExecStart=/home/pi/polargraph/venv/bin/python mqtt_subscriber.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
