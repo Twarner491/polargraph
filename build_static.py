@@ -46,7 +46,7 @@ def build():
     # Process JavaScript to inject webhook URL
     js_src = os.path.join(DOCS_DIR, 'static', 'js', 'app.js')
     if os.path.exists(js_src):
-        with open(js_src, 'r') as f:
+        with open(js_src, 'r', encoding='utf-8') as f:
             js_content = f.read()
         
         # Replace the webhook URL placeholder with actual value
@@ -55,7 +55,7 @@ def build():
             f'var POLARGRAPH_WEBHOOK_URL = "{HA_WEBHOOK_URL}";'
         )
         
-        with open(js_src, 'w') as f:
+        with open(js_src, 'w', encoding='utf-8') as f:
             f.write(js_content)
     
     # Generate static index.html
@@ -63,7 +63,7 @@ def build():
     index_output = os.path.join(DOCS_DIR, 'index.html')
     
     if os.path.exists(index_template):
-        with open(index_template, 'r') as f:
+        with open(index_template, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Change header title for static site
@@ -88,13 +88,13 @@ def build():
         
         content = content.replace('</body>', f'{mode_notice}</body>')
         
-        with open(index_output, 'w') as f:
+        with open(index_output, 'w', encoding='utf-8') as f:
             f.write(content)
     
     # Ensure CNAME exists
     cname_path = os.path.join(DOCS_DIR, 'CNAME')
     if not os.path.exists(cname_path):
-        with open(cname_path, 'w') as f:
+        with open(cname_path, 'w', encoding='utf-8') as f:
             f.write('plotter.onethreenine.net')
     
     print(f"Static files built to {DOCS_DIR}/")

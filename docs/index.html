@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>polargraph</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="outer-frame">
+        <!-- Grey Header Bar -->
+        <div class="header-bar">
+            <div class="header-left">
+                <span class="header-title">plotter.onethreenine.net</span>
+            </div>
+            <div class="header-right">
+                <button class="nav-item" data-panel="machine">Machine</button>
+                <button class="nav-item" data-panel="console">Console</button>
+                <button class="nav-item" data-panel="settings">Settings</button>
+                <span class="status-dot" id="statusDot"></span>
+                <span class="status-label" id="statusLabel">Disconnected</span>
+            </div>
+        </div>
+
+        <!-- Main Container -->
+        <div class="main-container">
+            <!-- White Body (Canvas Area) -->
+            <div class="body-panel">
+                <!-- Zoomable workspace container -->
+                <div class="workspace-container" id="workspaceContainer">
+                    <div class="workspace-transform" id="workspaceTransform">
+                        <!-- Polargraph Frame (vertical: 48x60) -->
+                        <div class="polargraph-frame">
+                            <!-- A0 Paper -->
+                            <div class="paper-sheet">
+                                <canvas id="previewCanvas"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Create Menu -->
+                <div class="create-menu" id="createMenu">
+                    <!-- Drag Handle -->
+                    <div class="menu-header" id="menuDragHandle">
+                        <div class="drag-handle"></div>
+                    </div>
+                    
+                    <!-- Mode Toggle -->
+                    <div class="mode-toggle">
+                        <button class="mode-btn active" data-mode="generate" id="modeGenerate">Generate</button>
+                        <button class="mode-btn" data-mode="upload" id="modeUpload">Upload</button>
+                    </div>
+
+                    <!-- Dynamic Content Area -->
+                    <div class="menu-content" id="menuContent">
+                        <!-- Generate Mode Content -->
+                        <div class="mode-content active" id="content-generate">
+                            <select id="generatorSelect" class="menu-select"></select>
+                            <div id="generatorOptions" class="menu-options"></div>
+                            <button class="menu-btn primary" id="generateBtn">Generate</button>
+                        </div>
+
+                        <!-- Upload Mode Content -->
+                        <div class="mode-content" id="content-upload">
+                            <div class="upload-drop" id="uploadZone">
+                                <span>Drop file or click</span>
+                                <input type="file" id="fileInput" accept=".svg,.dxf,.gcode,.ngc,.nc,.png,.jpg,.jpeg,.gif,.bmp" hidden>
+                            </div>
+                            
+                            <!-- Shows when image uploaded -->
+                            <div class="convert-section" id="convertSection" style="display:none;">
+                                <div class="convert-preview" id="convertPreview"></div>
+                                <select id="converterSelect" class="menu-select"></select>
+                                <div id="converterOptions" class="menu-options"></div>
+                                <button class="menu-btn primary" id="convertBtn">Convert</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Export buttons (always visible when content exists) -->
+                    <div class="menu-footer" id="menuFooter" style="display:none;">
+                        <div class="menu-divider"></div>
+                        <div class="export-row">
+                            <button class="menu-btn" id="exportGcode">G-code</button>
+                            <button class="menu-btn" id="exportSvg">SVG</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Zoom Controls -->
+                <div class="zoom-controls">
+                    <button class="zoom-btn" id="zoomOut">−</button>
+                    <span class="zoom-level" id="zoomLevel">100%</span>
+                    <button class="zoom-btn" id="zoomIn">+</button>
+                    <button class="zoom-btn" id="zoomFit">Fit</button>
+                </div>
+
+                <!-- Canvas Info -->
+                <div class="canvas-info">
+                    <span id="cursorPos">X: 0 Y: 0</span>
+                    <span class="info-sep">|</span>
+                    <span>Lines: <strong id="statLines">0</strong></span>
+                </div>
+            </div>
+
+            <!-- Expandable Side Panel -->
+            <div class="side-panel" id="sidePanel">
+                <!-- Machine Panel -->
+                <div class="panel-content" id="panel-machine">
+                    <div class="panel-section">
+                        <div class="section-title">Connection</div>
+                        <div class="row">
+                            <select id="portSelect" class="input-select">
+                                <option value="">Select port...</option>
+                            </select>
+                            <button class="btn-icon" id="refreshPorts" title="Refresh ports">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                            </button>
+                        </div>
+                        <button class="btn full icon-btn" id="connectBtn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                            Connect
+                        </button>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Controls</div>
+                        <div class="grid-2">
+                            <button class="btn icon-btn" id="homeBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                                Home
+                            </button>
+                            <button class="btn icon-btn" id="motorsBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                                Motors
+                            </button>
+                            <button class="btn icon-btn" id="penUpBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                                Pen Up
+                            </button>
+                            <button class="btn icon-btn" id="penDownBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                                Pen Down
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Jog</div>
+                        <div class="jog-grid">
+                            <button class="jog-btn" data-dir="up-left">↖</button>
+                            <button class="jog-btn" data-dir="up">↑</button>
+                            <button class="jog-btn" data-dir="up-right">↗</button>
+                            <button class="jog-btn" data-dir="left">←</button>
+                            <button class="jog-btn jog-center" data-dir="center">⌖</button>
+                            <button class="jog-btn" data-dir="right">→</button>
+                            <button class="jog-btn" data-dir="down-left">↙</button>
+                            <button class="jog-btn" data-dir="down">↓</button>
+                            <button class="jog-btn" data-dir="down-right">↘</button>
+                        </div>
+                        <div class="dist-row">
+                            <button class="dist-btn" data-distance="1">1</button>
+                            <button class="dist-btn active" data-distance="10">10</button>
+                            <button class="dist-btn" data-distance="50">50</button>
+                            <button class="dist-btn" data-distance="100">100</button>
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Plot</div>
+                        <div class="progress-row">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <span class="progress-text" id="progressText">0%</span>
+                        </div>
+                        <div class="plot-btns">
+                            <button class="btn-icon" id="rewindBtn" title="Rewind">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+                            </button>
+                            <button class="btn-icon play-btn" id="playBtn" title="Play">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                            </button>
+                            <button class="btn-icon" id="pauseBtn" title="Pause">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                            </button>
+                            <button class="btn-icon" id="stepBtn" title="Step">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                            </button>
+                        </div>
+                        <div class="plot-status" id="plotStatus">No drawing loaded</div>
+                    </div>
+
+                    <div class="panel-section estop-section">
+                        <button class="btn estop full icon-btn" id="emergencyStop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                            STOP
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Console Panel -->
+                <div class="panel-content" id="panel-console">
+                    <div class="console-box" id="consoleOutput"></div>
+                    <div class="console-row">
+                        <input type="text" id="gcodeInput" placeholder="G-code..." class="input-text">
+                        <button class="btn" id="sendGcode">Send</button>
+                    </div>
+                </div>
+
+                <!-- Settings Panel -->
+                <div class="panel-content" id="panel-settings">
+                    <div class="panel-section">
+                        <div class="section-title">Machine</div>
+                        <div class="setting-row">
+                            <label>Width (mm)</label>
+                            <input type="number" id="machineWidth" class="input-num" value="1219.2">
+                        </div>
+                        <div class="setting-row">
+                            <label>Height (mm)</label>
+                            <input type="number" id="machineHeight" class="input-num" value="1524">
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Work Area</div>
+                        <div class="setting-row">
+                            <label>Left</label>
+                            <input type="number" id="limitLeft" class="input-num" value="-420.5">
+                        </div>
+                        <div class="setting-row">
+                            <label>Right</label>
+                            <input type="number" id="limitRight" class="input-num" value="420.5">
+                        </div>
+                        <div class="setting-row">
+                            <label>Top</label>
+                            <input type="number" id="limitTop" class="input-num" value="594.5">
+                        </div>
+                        <div class="setting-row">
+                            <label>Bottom</label>
+                            <input type="number" id="limitBottom" class="input-num" value="-594.5">
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Pen</div>
+                        <div class="setting-row">
+                            <label>Up Angle</label>
+                            <input type="number" id="penUpAngle" class="input-num" value="90">
+                        </div>
+                        <div class="setting-row">
+                            <label>Down Angle</label>
+                            <input type="number" id="penDownAngle" class="input-num" value="40">
+                        </div>
+                        <div class="setting-row">
+                            <label>Travel Speed</label>
+                            <input type="number" id="feedTravel" class="input-num" value="1000">
+                        </div>
+                        <div class="setting-row">
+                            <label>Draw Speed</label>
+                            <input type="number" id="feedDraw" class="input-num" value="500">
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <button class="btn full" id="saveSettings">Save Settings</button>
+                        <button class="btn full" id="clearUploads" style="margin-top:8px;">Clear Uploads</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/static/js/app.js"></script>
+
+            <div id="demo-mode-notice" style="position:fixed;bottom:12px;left:12px;background:rgba(255,196,0,0.9);color:#000;padding:6px 12px;border-radius:4px;font-size:11px;font-weight:500;z-index:9999;">
+                Demo Mode – Configure HA webhook for remote control
+            </div>
+            </body>
+</html>
+
