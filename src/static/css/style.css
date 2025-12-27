@@ -131,6 +131,10 @@ html, body {
     background: #4aba6a;
 }
 
+.status-dot.status-warning {
+    background: #e6a23c;
+}
+
 .status-label {
     font-family: var(--font);
     font-size: 12px;

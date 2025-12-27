@@ -8,7 +8,8 @@
 var POLARGRAPH_WEBHOOK_URL = "";
 
 // Check if we're in client-side mode (static site or server unreachable)
-let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL;
+// In static deployment, we detect by checking if we're on the static domain or if webhook is set
+let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL || window.location.hostname === 'plotter.onethreenine.net' || window.location.protocol === 'file:';
 
 const state = {
     connected: false,
@@ -41,7 +42,8 @@ const state = {
 };
 
 // Socket.IO connection
-const socket = io();
+// Only connect to socket.io if not in client-side mode
+const socket = CLIENT_SIDE_MODE ? null : io();
 
 // DOM Elements
 const elements = {
@@ -130,13 +132,46 @@ const ctx = canvas.getContext('2d');
 document.addEventListener('DOMContentLoaded', () => {
     initCanvas();
     initEventListeners();
-    loadPorts();
-    loadGenerators();
-    loadConverters();
-    loadSettings();
-    checkConnectionStatus();
+    
+    if (CLIENT_SIDE_MODE) {
+        // In client-side mode, use local data instead of server calls
+        initClientSideMode();
+    } else {
+        loadPorts();
+        loadGenerators();
+        loadConverters();
+        loadSettings();
+        checkConnectionStatus();
+    }
+    
     setMode('generate');
 });
+
+function initClientSideMode() {
+    console.log('Running in client-side mode');
+    
+    // Populate generators from PatternGenerator
+    const generators = Object.entries(PatternGenerator.GENERATORS).map(([id, v]) => ({ id, ...v }));
+    populateGeneratorSelect(generators);
+    
+    // Populate converters from ImageConverter  
+    const converters = Object.entries(ImageConverter.CONVERTERS).map(([id, v]) => ({ id, ...v }));
+    populateConverterSelect(converters);
+    
+    // Use default settings
+    state.settings = { ...DEFAULT_SETTINGS };
+    
+    // Update UI for client-side mode (no connection, but functional)
+    elements.statusText.textContent = 'Remote Mode';
+    elements.statusDot.className = 'status-dot status-warning';
+    
+    // Hide connect button in client-side mode
+    const connectBtn = document.getElementById('connectBtn');
+    if (connectBtn) connectBtn.style.display = 'none';
+    
+    logConsole('Client-side mode: All generation happens in browser', 'msg-info');
+    logConsole('Set HA_WEBHOOK_URL in build for remote plotting', 'msg-info');
+}
 
 function initCanvas() {
     resizeCanvas();
@@ -480,45 +515,47 @@ function screenToWorld(screenX, screenY) {
 }
 
 // ============================================================================
-// Socket Events
+// Socket Events (only if socket is available)
 // ============================================================================
 
-socket.on('connect', () => {
-    logConsole('Connected to server', 'msg-in');
-    checkConnectionStatus();
-});
+if (socket) {
+    socket.on('connect', () => {
+        logConsole('Connected to server', 'msg-in');
+        checkConnectionStatus();
+    });
 
-socket.on('disconnect', () => {
-    logConsole('Disconnected from server', 'msg-error');
-    setConnectionStatus(false);
-});
+    socket.on('disconnect', () => {
+        logConsole('Disconnected from server', 'msg-error');
+        setConnectionStatus(false);
+    });
 
-socket.on('serial_message', (data) => {
-    const msg = data.message;
-    if (msg.startsWith('TX:')) {
-        logConsole(msg.substring(4), 'msg-out');
-    } else if (msg.startsWith('ERROR:')) {
-        logConsole(msg, 'msg-error');
-    } else {
-        logConsole(msg, 'msg-in');
-    }
-});
+    socket.on('serial_message', (data) => {
+        const msg = data.message;
+        if (msg.startsWith('TX:')) {
+            logConsole(msg.substring(4), 'msg-out');
+        } else if (msg.startsWith('ERROR:')) {
+            logConsole(msg, 'msg-error');
+        } else {
+            logConsole(msg, 'msg-in');
+        }
+    });
 
-socket.on('progress', (data) => {
-    updateProgress(data.current, data.total, data.percent);
-    if (data.gondola) {
-        state.gondola = data.gondola;
+    socket.on('progress', (data) => {
+        updateProgress(data.current, data.total, data.percent);
+        if (data.gondola) {
+            state.gondola = data.gondola;
+            drawCanvas();
+        }
+    });
+
+    socket.on('plot_complete', (data) => {
+        state.plotting = false;
+        state.paused = false;
+        updatePlotButtons();
+        logConsole(data.message, 'msg-in');
         drawCanvas();
-    }
-});
-
-socket.on('plot_complete', (data) => {
-    state.plotting = false;
-    state.paused = false;
-    updatePlotButtons();
-    logConsole(data.message, 'msg-in');
-    drawCanvas();
-});
+    });
+}
 
 // ============================================================================
 // API Functions
@@ -898,16 +935,20 @@ function generateSvgFromPaths(paths) {
 async function loadGenerators() {
     const result = await sendCommand('/api/generators');
     if (result.generators) {
-        elements.generatorSelect.innerHTML = '';
-        result.generators.forEach(gen => {
-            const option = document.createElement('option');
-            option.value = gen.id;
-            option.textContent = gen.name;
-            option.dataset.options = JSON.stringify(gen.options || {});
-            elements.generatorSelect.appendChild(option);
-        });
-        updateGeneratorOptions();
+        populateGeneratorSelect(result.generators);
     }
+}
+
+function populateGeneratorSelect(generators) {
+    elements.generatorSelect.innerHTML = '';
+    generators.forEach(gen => {
+        const option = document.createElement('option');
+        option.value = gen.id;
+        option.textContent = gen.name;
+        option.dataset.options = JSON.stringify(gen.options || {});
+        elements.generatorSelect.appendChild(option);
+    });
+    updateGeneratorOptions();
 }
 
 function updateGeneratorOptions() {
@@ -1002,16 +1043,20 @@ async function generatePattern() {
 async function loadConverters() {
     const result = await sendCommand('/api/converters');
     if (result.converters) {
-        elements.converterSelect.innerHTML = '';
-        result.converters.forEach(conv => {
-            const option = document.createElement('option');
-            option.value = conv.id;
-            option.textContent = conv.name;
-            option.dataset.options = JSON.stringify(conv.options || {});
-            elements.converterSelect.appendChild(option);
-        });
-        updateConverterOptions();
+        populateConverterSelect(result.converters);
     }
+}
+
+function populateConverterSelect(converters) {
+    elements.converterSelect.innerHTML = '';
+    converters.forEach(conv => {
+        const option = document.createElement('option');
+        option.value = conv.id;
+        option.textContent = conv.name;
+        option.dataset.options = JSON.stringify(conv.options || {});
+        elements.converterSelect.appendChild(option);
+    });
+    updateConverterOptions();
 }
 
 function updateConverterOptions() {
