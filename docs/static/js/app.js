@@ -1246,11 +1246,13 @@ function drawCanvas() {
     drawWorkArea();
     
     // Draw preview paths
-    if (state.preview && state.preview.paths) {
+    // state.preview can be either an array of paths or an object with .paths property
+    const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
+    if (paths && paths.length > 0) {
         ctx.save();
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
         ctx.scale(state.previewScale, state.previewScale);
-        drawPaths(state.preview.paths);
+        drawPaths(paths);
         ctx.restore();
     }
     
