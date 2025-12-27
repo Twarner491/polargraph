@@ -83,6 +83,24 @@ def build():
         with open(index_output, 'w', encoding='utf-8') as f:
             f.write(content)
     
+    # Create about page (same content, JS detects /about path)
+    about_dir = os.path.join(DOCS_DIR, 'about')
+    os.makedirs(about_dir, exist_ok=True)
+    about_output = os.path.join(about_dir, 'index.html')
+    
+    if os.path.exists(index_output):
+        with open(index_output, 'r', encoding='utf-8') as f:
+            about_content = f.read()
+        
+        # Update title for about page
+        about_content = about_content.replace(
+            '<title>polargraph</title>',
+            '<title>polargraph - about</title>'
+        )
+        
+        with open(about_output, 'w', encoding='utf-8') as f:
+            f.write(about_content)
+    
     # Ensure CNAME exists
     cname_path = os.path.join(DOCS_DIR, 'CNAME')
     if not os.path.exists(cname_path):

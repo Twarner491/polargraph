@@ -1219,6 +1219,17 @@ async function sendGcodeCommand() {
 // Canvas Drawing
 // ============================================================================
 
+// Check if we're on the about page
+const IS_ABOUT_PAGE = window.location.pathname.includes('/about');
+
+// Hide floating menu on about page
+if (IS_ABOUT_PAGE) {
+    document.addEventListener('DOMContentLoaded', () => {
+        const menu = document.getElementById('createMenu');
+        if (menu) menu.style.display = 'none';
+    });
+}
+
 function drawCanvas() {
     if (!ctx) {
         console.error('drawCanvas: no context!');
@@ -1254,6 +1265,11 @@ function drawCanvas() {
     // Draw work area boundary
     drawWorkArea();
     
+    // Draw about page content if on /about
+    if (IS_ABOUT_PAGE && !state.preview) {
+        drawAboutContent(scale);
+    }
+    
     // Draw preview paths
     // state.preview can be either an array of paths or an object with .paths property
     const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
@@ -1269,6 +1285,32 @@ function drawCanvas() {
     if (state.plotting) {
         drawGondola();
     }
+    
+    ctx.restore();
+}
+
+function drawAboutContent(scale) {
+    ctx.save();
+    // Flip Y back for text rendering (text draws upside down otherwise)
+    ctx.scale(1, -1);
+    
+    const lineScale = 1 / scale;
+    
+    // Main title
+    ctx.fillStyle = '#222';
+    ctx.font = `${18 * lineScale}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('A wall mounted, web accessible polargraph pen plotter.', 0, -60 * lineScale);
+    
+    // Author
+    ctx.font = `500 ${24 * lineScale}px Inter, sans-serif`;
+    ctx.fillText('by Teddy', 0, 20 * lineScale);
+    
+    // Link
+    ctx.fillStyle = '#666';
+    ctx.font = `${12 * lineScale}px Inter, sans-serif`;
+    ctx.fillText('teddywarner.org/Projects/Polargraph/', 0, 80 * lineScale);
     
     ctx.restore();
 }
