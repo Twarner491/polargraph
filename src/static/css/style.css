@@ -131,7 +131,7 @@ html, body {
     background: #4aba6a;
 }
 
-.status-dot.status-warning {
+.status-dot.remote {
     background: #e6a23c;
 }
 

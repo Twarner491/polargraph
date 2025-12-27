@@ -43,7 +43,7 @@ def build():
             else:
                 shutil.copy2(src_path, dst_path)
     
-    # Process JavaScript to inject webhook URL
+    # Process JavaScript for static build
     js_src = os.path.join(DOCS_DIR, 'static', 'js', 'app.js')
     if os.path.exists(js_src):
         with open(js_src, 'r', encoding='utf-8') as f:
@@ -53,6 +53,12 @@ def build():
         js_content = js_content.replace(
             'var POLARGRAPH_WEBHOOK_URL = "";',
             f'var POLARGRAPH_WEBHOOK_URL = "{HA_WEBHOOK_URL}";'
+        )
+        
+        # Force client-side mode for static build
+        js_content = js_content.replace(
+            "let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL || window.location.hostname === 'plotter.onethreenine.net' || window.location.protocol === 'file:';",
+            "let CLIENT_SIDE_MODE = true; // Static build - always client-side"
         )
         
         with open(js_src, 'w', encoding='utf-8') as f:
@@ -72,21 +78,7 @@ def build():
             '<span class="header-title">plotter.onethreenine.net</span>'
         )
         
-        # Add remote mode indicator if webhook is configured
-        if HA_WEBHOOK_URL:
-            mode_notice = '''
-            <div id="remote-mode-notice" style="position:fixed;bottom:12px;left:12px;background:rgba(0,0,0,0.7);color:#fff;padding:6px 12px;border-radius:4px;font-size:11px;z-index:9999;">
-                Remote Mode via Home Assistant
-            </div>
-            '''
-        else:
-            mode_notice = '''
-            <div id="demo-mode-notice" style="position:fixed;bottom:12px;left:12px;background:rgba(255,196,0,0.9);color:#000;padding:6px 12px;border-radius:4px;font-size:11px;font-weight:500;z-index:9999;">
-                Demo Mode – Configure HA webhook for remote control
-            </div>
-            '''
-        
-        content = content.replace('</body>', f'{mode_notice}</body>')
+        # No extra notices needed - status shown in header
         
         with open(index_output, 'w', encoding='utf-8') as f:
             f.write(content)

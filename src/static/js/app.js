@@ -161,16 +161,15 @@ function initClientSideMode() {
     // Use default settings
     state.settings = { ...DEFAULT_SETTINGS };
     
-    // Update UI for client-side mode (no connection, but functional)
-    elements.statusText.textContent = 'Remote Mode';
-    elements.statusDot.className = 'status-dot status-warning';
+    // Update UI for remote mode
+    elements.statusLabel.textContent = 'Remote';
+    elements.statusDot.className = 'status-dot remote';
     
     // Hide connect button in client-side mode
     const connectBtn = document.getElementById('connectBtn');
     if (connectBtn) connectBtn.style.display = 'none';
     
-    logConsole('Client-side mode: All generation happens in browser', 'msg-info');
-    logConsole('Set HA_WEBHOOK_URL in build for remote plotting', 'msg-info');
+    logConsole('Remote mode: Generation happens in browser', 'msg-info');
 }
 
 function initCanvas() {
