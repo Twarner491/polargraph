@@ -95,7 +95,7 @@ def build():
         # Update title for about page
         about_content = about_content.replace(
             '<title>polargraph</title>',
-            '<title>polargraph - about</title>'
+            '<title>about polargraph</title>'
         )
         
         with open(about_output, 'w', encoding='utf-8') as f:
