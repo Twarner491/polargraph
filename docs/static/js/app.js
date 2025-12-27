@@ -168,6 +168,13 @@ function initClientSideMode() {
     const connectBtn = document.getElementById('connectBtn');
     if (connectBtn) connectBtn.style.display = 'none';
     
+    // Load about pattern if on about page
+    if (IS_ABOUT_PAGE) {
+        state.preview = generateAboutPattern();
+        elements.plotStatus.textContent = 'About this project';
+        drawCanvas();
+    }
+    
     logConsole('Remote mode: Generation happens in browser', 'msg-info');
 }
 
@@ -1257,10 +1264,6 @@ function drawCanvas() {
     // Draw work area boundary
     drawWorkArea();
     
-    // Draw about page content if on /about (always show, behind any generated content)
-    if (IS_ABOUT_PAGE) {
-        drawAboutContent(scale);
-    }
     
     // Draw preview paths
     // state.preview can be either an array of paths or an object with .paths property
@@ -1281,34 +1284,126 @@ function drawCanvas() {
     ctx.restore();
 }
 
-function drawAboutContent(scale) {
-    ctx.save();
-    // Flip Y back for text rendering (text draws upside down otherwise)
-    ctx.scale(1, -1);
+function generateAboutPattern() {
+    // Generate about text as vector paths using the text generator
+    const turtle = new Turtle();
     
-    // Use fixed font sizes that work well at default zoom
-    const baseFontSize = 14 / scale;
-    const titleFontSize = 20 / scale;
-    const linkFontSize = 10 / scale;
+    // Line 1: Description
+    const line1 = "A wall mounted, web accessible";
+    const line2 = "polargraph pen plotter.";
+    const line3 = "by Teddy";
+    const line4 = "teddywarner.org/Projects/Polargraph/";
     
-    // Main description
-    ctx.fillStyle = '#333';
-    ctx.font = `300 ${baseFontSize}px Inter, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('A wall mounted, web accessible polargraph pen plotter.', 0, -50 / scale);
+    // Draw each line centered
+    drawTextLine(turtle, line1, 0, 120, 8);
+    drawTextLine(turtle, line2, 0, 60, 8);
+    drawTextLine(turtle, line3, 0, -40, 14);
+    drawTextLine(turtle, line4, 0, -140, 5);
     
-    // Author - larger and bolder
-    ctx.fillStyle = '#111';
-    ctx.font = `500 ${titleFontSize}px Inter, sans-serif`;
-    ctx.fillText('by Teddy', 0, 10 / scale);
+    return turtle.getPaths();
+}
+
+function drawTextLine(turtle, text, centerX, y, size) {
+    // Simple single-stroke font for pen plotter
+    const FONT = {
+        ' ': [],
+        'A': [[0,0],[2.5,8],[5,0],[-1,-1],[1,3],[4,3]],
+        'B': [[0,0],[0,8],[3,8],[4,7],[4,5],[3,4],[0,4],[-1,-1],[3,4],[4,3],[4,1],[3,0],[0,0]],
+        'C': [[5,2],[4,0],[1,0],[0,2],[0,6],[1,8],[4,8],[5,6]],
+        'D': [[0,0],[0,8],[3,8],[5,6],[5,2],[3,0],[0,0]],
+        'E': [[5,0],[0,0],[0,8],[5,8],[-1,-1],[0,4],[3,4]],
+        'F': [[0,0],[0,8],[5,8],[-1,-1],[0,4],[3,4]],
+        'G': [[5,6],[4,8],[1,8],[0,6],[0,2],[1,0],[4,0],[5,2],[5,4],[3,4]],
+        'H': [[0,0],[0,8],[-1,-1],[5,0],[5,8],[-1,-1],[0,4],[5,4]],
+        'I': [[1,0],[4,0],[-1,-1],[2.5,0],[2.5,8],[-1,-1],[1,8],[4,8]],
+        'J': [[0,2],[1,0],[3,0],[4,2],[4,8]],
+        'K': [[0,0],[0,8],[-1,-1],[5,8],[0,4],[5,0]],
+        'L': [[0,8],[0,0],[5,0]],
+        'M': [[0,0],[0,8],[2.5,4],[5,8],[5,0]],
+        'N': [[0,0],[0,8],[5,0],[5,8]],
+        'O': [[1,0],[4,0],[5,2],[5,6],[4,8],[1,8],[0,6],[0,2],[1,0]],
+        'P': [[0,0],[0,8],[4,8],[5,7],[5,5],[4,4],[0,4]],
+        'Q': [[1,0],[4,0],[5,2],[5,6],[4,8],[1,8],[0,6],[0,2],[1,0],[-1,-1],[3,2],[5,0]],
+        'R': [[0,0],[0,8],[4,8],[5,7],[5,5],[4,4],[0,4],[-1,-1],[3,4],[5,0]],
+        'S': [[5,7],[4,8],[1,8],[0,7],[0,5],[1,4],[4,4],[5,3],[5,1],[4,0],[1,0],[0,1]],
+        'T': [[0,8],[5,8],[-1,-1],[2.5,8],[2.5,0]],
+        'U': [[0,8],[0,2],[1,0],[4,0],[5,2],[5,8]],
+        'V': [[0,8],[2.5,0],[5,8]],
+        'W': [[0,8],[1,0],[2.5,4],[4,0],[5,8]],
+        'X': [[0,0],[5,8],[-1,-1],[0,8],[5,0]],
+        'Y': [[0,8],[2.5,4],[5,8],[-1,-1],[2.5,4],[2.5,0]],
+        'Z': [[0,8],[5,8],[0,0],[5,0]],
+        'a': [[1,0],[4,0],[5,1],[5,5],[4,6],[1,6],[0,5],[0,4],[1,3],[5,3],[-1,-1],[5,3],[5,0]],
+        'b': [[0,0],[0,8],[-1,-1],[0,5],[1,6],[4,6],[5,5],[5,1],[4,0],[1,0],[0,1]],
+        'c': [[5,1],[4,0],[1,0],[0,1],[0,5],[1,6],[4,6],[5,5]],
+        'd': [[5,0],[5,8],[-1,-1],[5,5],[4,6],[1,6],[0,5],[0,1],[1,0],[4,0],[5,1]],
+        'e': [[0,3],[5,3],[5,5],[4,6],[1,6],[0,5],[0,1],[1,0],[4,0],[5,1]],
+        'f': [[1,0],[1,8],[2,8],[3,8],[-1,-1],[0,5],[3,5]],
+        'g': [[5,6],[5,-2],[4,-3],[1,-3],[0,-2],[-1,-1],[5,5],[4,6],[1,6],[0,5],[0,1],[1,0],[4,0],[5,1]],
+        'h': [[0,0],[0,8],[-1,-1],[0,4],[2,6],[4,6],[5,5],[5,0]],
+        'i': [[2,0],[3,0],[-1,-1],[2.5,0],[2.5,6],[-1,-1],[2.5,7.5],[2.5,8]],
+        'j': [[0,-2],[1,-3],[2,-3],[3,-2],[3,6],[-1,-1],[3,7.5],[3,8]],
+        'k': [[0,0],[0,8],[-1,-1],[4,6],[0,3],[4,0]],
+        'l': [[2,0],[3,0],[-1,-1],[2.5,0],[2.5,8]],
+        'm': [[0,0],[0,6],[1,6],[2,5],[2.5,4],[3,5],[4,6],[5,6],[5,0]],
+        'n': [[0,0],[0,6],[-1,-1],[0,4],[2,6],[4,6],[5,5],[5,0]],
+        'o': [[1,0],[4,0],[5,1],[5,5],[4,6],[1,6],[0,5],[0,1],[1,0]],
+        'p': [[0,-3],[0,6],[-1,-1],[0,5],[1,6],[4,6],[5,5],[5,1],[4,0],[1,0],[0,1]],
+        'q': [[5,-3],[5,6],[-1,-1],[5,5],[4,6],[1,6],[0,5],[0,1],[1,0],[4,0],[5,1]],
+        'r': [[0,0],[0,6],[-1,-1],[0,4],[2,6],[4,6],[5,5]],
+        's': [[5,5],[4,6],[1,6],[0,5],[1,4],[4,2],[5,1],[4,0],[1,0],[0,1]],
+        't': [[2.5,8],[2.5,1],[3,0],[4,0],[5,1],[-1,-1],[1,6],[4,6]],
+        'u': [[0,6],[0,1],[1,0],[4,0],[5,1],[5,6],[-1,-1],[5,0],[5,1]],
+        'v': [[0,6],[2.5,0],[5,6]],
+        'w': [[0,6],[1,0],[2.5,3],[4,0],[5,6]],
+        'x': [[0,0],[5,6],[-1,-1],[0,6],[5,0]],
+        'y': [[0,6],[2.5,0],[-1,-1],[5,6],[2.5,0],[1,-2],[0,-3]],
+        'z': [[0,6],[5,6],[0,0],[5,0]],
+        '.': [[2,0],[3,0],[3,1],[2,1],[2,0]],
+        ',': [[2.5,0],[2,-1]],
+        '/': [[0,0],[5,8]],
+        ':': [[2,2],[3,2],[3,3],[2,3],[2,2],[-1,-1],[2,5],[3,5],[3,6],[2,6],[2,5]],
+        '-': [[1,3],[4,3]],
+        '0': [[1,0],[4,0],[5,2],[5,6],[4,8],[1,8],[0,6],[0,2],[1,0]],
+        '1': [[1,6],[2.5,8],[2.5,0],[-1,-1],[1,0],[4,0]],
+        '2': [[0,6],[1,8],[4,8],[5,6],[5,5],[0,0],[5,0]],
+        '3': [[0,7],[1,8],[4,8],[5,7],[5,5],[4,4],[2,4],[-1,-1],[4,4],[5,3],[5,1],[4,0],[1,0],[0,1]],
+        '4': [[4,0],[4,8],[0,3],[5,3]],
+        '5': [[5,8],[0,8],[0,5],[4,5],[5,4],[5,1],[4,0],[1,0],[0,1]],
+        '6': [[4,8],[1,8],[0,6],[0,1],[1,0],[4,0],[5,1],[5,3],[4,4],[0,4]],
+        '7': [[0,8],[5,8],[2,0]],
+        '8': [[1,4],[0,5],[0,7],[1,8],[4,8],[5,7],[5,5],[4,4],[1,4],[0,3],[0,1],[1,0],[4,0],[5,1],[5,3],[4,4]],
+        '9': [[1,0],[4,0],[5,2],[5,7],[4,8],[1,8],[0,7],[0,5],[1,4],[5,4]],
+    };
     
-    // Link - smaller
-    ctx.fillStyle = '#888';
-    ctx.font = `300 ${linkFontSize}px Inter, sans-serif`;
-    ctx.fillText('teddywarner.org/Projects/Polargraph/', 0, 60 / scale);
+    const charWidth = 6 * size;
+    const totalWidth = text.length * charWidth;
+    let x = centerX - totalWidth / 2;
     
-    ctx.restore();
+    for (const char of text) {
+        const glyph = FONT[char] || FONT[char.toUpperCase()] || [];
+        let penDown = false;
+        
+        for (const pt of glyph) {
+            if (pt[0] === -1 && pt[1] === -1) {
+                turtle.penUpCmd();
+                penDown = false;
+            } else {
+                const px = x + pt[0] * size;
+                const py = y + pt[1] * size;
+                if (!penDown) {
+                    turtle.penUpCmd();
+                    turtle.moveTo(px, py);
+                    turtle.penDown();
+                    penDown = true;
+                } else {
+                    turtle.moveTo(px, py);
+                }
+            }
+        }
+        turtle.penUpCmd();
+        x += charWidth;
+    }
 }
 
 function drawGrid() {
