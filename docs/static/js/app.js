@@ -123,7 +123,8 @@ const elements = {
 
 // Canvas context
 const canvas = elements.previewCanvas;
-const ctx = canvas.getContext('2d');
+const ctx = canvas ? canvas.getContext('2d') : null;
+console.log('Canvas init:', canvas ? 'found' : 'NOT FOUND', 'ctx:', ctx ? 'ok' : 'FAILED');
 
 // ============================================================================
 // Initialization
@@ -1012,12 +1013,15 @@ async function generatePattern() {
             const gcodeGen = new GCodeGenerator();
             
             state.currentGcode = gcodeGen.turtleToGcode(turtle);
-            state.preview = turtle.getPaths();
-            updatePreview(state.preview);
-            elements.plotStatus.textContent = `${turtle.getPaths().length} lines generated (client-side)`;
+            const paths = turtle.getPaths();
+            console.log('Generated paths:', paths.length, 'sample:', paths[0]);
+            state.preview = paths;
+            updatePreview(paths);
+            elements.plotStatus.textContent = `${paths.length} lines generated (client-side)`;
             elements.menuFooter.style.display = 'block';
             logConsole(`Generated ${generator} pattern (client-side)`, 'msg-info');
         } catch (err) {
+            console.error('Generate error:', err);
             logConsole(`Generate failed: ${err.message}`, 'msg-error');
         }
         return;
@@ -1248,6 +1252,7 @@ function drawCanvas() {
     // Draw preview paths
     // state.preview can be either an array of paths or an object with .paths property
     const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
+    console.log('drawCanvas: paths count =', paths ? paths.length : 0, 'first path points:', paths?.[0]?.points?.length);
     if (paths && paths.length > 0) {
         ctx.save();
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
@@ -1365,6 +1370,7 @@ function drawGondola() {
 }
 
 function updatePreview(preview) {
+    console.log('updatePreview called with:', preview ? (Array.isArray(preview) ? preview.length + ' paths' : 'object') : 'null');
     if (!preview) return;
     
     state.preview = preview;
