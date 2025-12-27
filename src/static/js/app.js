@@ -1288,17 +1288,25 @@ function generateAboutPattern() {
     // Generate about text as vector paths using the text generator
     const turtle = new Turtle();
     
-    // Line 1: Description
-    const line1 = "A wall mounted, web accessible";
-    const line2 = "polargraph pen plotter.";
-    const line3 = "by Teddy";
-    const line4 = "teddywarner.org/Projects/Polargraph/";
+    // Text lines with proper breaks to fit work area
+    const lines = [
+        { text: "A wall mounted,", size: 6, y: 350 },
+        { text: "web accessible", size: 6, y: 280 },
+        { text: "polargraph", size: 6, y: 210 },
+        { text: "pen plotter.", size: 6, y: 140 },
+        { text: "", size: 6, y: 70 },  // spacer
+        { text: "by Teddy", size: 10, y: -20 },
+        { text: "", size: 6, y: -90 },  // spacer
+        { text: "teddywarner.org", size: 4, y: -180 },
+        { text: "/Projects/Polargraph/", size: 4, y: -230 },
+    ];
     
     // Draw each line centered
-    drawTextLine(turtle, line1, 0, 120, 8);
-    drawTextLine(turtle, line2, 0, 60, 8);
-    drawTextLine(turtle, line3, 0, -40, 14);
-    drawTextLine(turtle, line4, 0, -140, 5);
+    for (const line of lines) {
+        if (line.text) {
+            drawTextLine(turtle, line.text, 0, line.y, line.size);
+        }
+    }
     
     return turtle.getPaths();
 }
