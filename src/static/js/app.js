@@ -124,7 +124,6 @@ const elements = {
 // Canvas context
 const canvas = elements.previewCanvas;
 const ctx = canvas ? canvas.getContext('2d') : null;
-console.log('Canvas init:', canvas ? 'found' : 'NOT FOUND', 'ctx:', ctx ? 'ok' : 'FAILED');
 
 // ============================================================================
 // Initialization
@@ -149,7 +148,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initClientSideMode() {
-    console.log('Running in client-side mode');
     
     // Populate generators from PatternGenerator
     const generators = Object.entries(PatternGenerator.GENERATORS).map(([id, v]) => ({ id, ...v }));
@@ -196,8 +194,6 @@ function resizeCanvas() {
         const baseWidth = paper.offsetWidth;
         const baseHeight = paper.offsetHeight;
         const dpr = window.devicePixelRatio;
-        
-        console.log('resizeCanvas: paper size =', baseWidth, 'x', baseHeight, 'dpr =', dpr);
         
         canvas.width = baseWidth * dpr;
         canvas.height = baseHeight * dpr;
@@ -1016,14 +1012,12 @@ async function generatePattern() {
             
             state.currentGcode = gcodeGen.turtleToGcode(turtle);
             const paths = turtle.getPaths();
-            console.log('Generated paths:', paths.length, 'sample:', paths[0]);
             state.preview = paths;
             updatePreview(paths);
-            elements.plotStatus.textContent = `${paths.length} lines generated (client-side)`;
+            elements.plotStatus.textContent = `${paths.length} lines generated`;
             elements.menuFooter.style.display = 'block';
-            logConsole(`Generated ${generator} pattern (client-side)`, 'msg-info');
+            logConsole(`Generated ${generator} pattern`, 'msg-info');
         } catch (err) {
-            console.error('Generate error:', err);
             logConsole(`Generate failed: ${err.message}`, 'msg-error');
         }
         return;
@@ -1263,20 +1257,12 @@ function drawCanvas() {
     // Draw preview paths
     // state.preview can be either an array of paths or an object with .paths property
     const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
-    console.log('drawCanvas: paths count =', paths ? paths.length : 0, 'scale =', scale);
     if (paths && paths.length > 0) {
         ctx.save();
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
         ctx.scale(state.previewScale, state.previewScale);
         drawPaths(paths);
         ctx.restore();
-    }
-    
-    // Debug: draw a test rectangle to verify canvas is working
-    if (paths && paths.length > 0) {
-        ctx.strokeStyle = 'red';
-        ctx.lineWidth = 2 / scale;
-        ctx.strokeRect(-100, -100, 200, 200);
     }
     
     // Draw gondola indicator
@@ -1344,14 +1330,8 @@ function drawWorkArea() {
 }
 
 function drawPaths(paths) {
-    console.log('drawPaths called with', paths.length, 'paths');
-    let drawnCount = 0;
-    paths.forEach((path, idx) => {
+    paths.forEach(path => {
         if (path.points.length < 2) return;
-        
-        if (idx === 0) {
-            console.log('First path: start=', path.points[0], 'end=', path.points[path.points.length-1]);
-        }
         
         ctx.strokeStyle = path.color || '#222';
         // Line width gets thinner as you zoom in for detail visibility
@@ -1368,9 +1348,7 @@ function drawPaths(paths) {
         }
         
         ctx.stroke();
-        drawnCount++;
     });
-    console.log('Drew', drawnCount, 'paths');
 }
 
 function drawGondola() {
@@ -1396,7 +1374,6 @@ function drawGondola() {
 }
 
 function updatePreview(preview) {
-    console.log('updatePreview called with:', preview ? (Array.isArray(preview) ? preview.length + ' paths' : 'object') : 'null');
     if (!preview) return;
     
     state.preview = preview;
