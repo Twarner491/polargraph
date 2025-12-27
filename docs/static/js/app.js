@@ -1222,14 +1222,6 @@ async function sendGcodeCommand() {
 // Check if we're on the about page
 const IS_ABOUT_PAGE = window.location.pathname.includes('/about');
 
-// Hide floating menu on about page
-if (IS_ABOUT_PAGE) {
-    document.addEventListener('DOMContentLoaded', () => {
-        const menu = document.getElementById('createMenu');
-        if (menu) menu.style.display = 'none';
-    });
-}
-
 function drawCanvas() {
     if (!ctx) {
         console.error('drawCanvas: no context!');
@@ -1265,8 +1257,8 @@ function drawCanvas() {
     // Draw work area boundary
     drawWorkArea();
     
-    // Draw about page content if on /about
-    if (IS_ABOUT_PAGE && !state.preview) {
+    // Draw about page content if on /about (always show, behind any generated content)
+    if (IS_ABOUT_PAGE) {
         drawAboutContent(scale);
     }
     
@@ -1294,23 +1286,27 @@ function drawAboutContent(scale) {
     // Flip Y back for text rendering (text draws upside down otherwise)
     ctx.scale(1, -1);
     
-    const lineScale = 1 / scale;
+    // Use fixed font sizes that work well at default zoom
+    const baseFontSize = 14 / scale;
+    const titleFontSize = 20 / scale;
+    const linkFontSize = 10 / scale;
     
-    // Main title
-    ctx.fillStyle = '#222';
-    ctx.font = `${18 * lineScale}px Inter, sans-serif`;
+    // Main description
+    ctx.fillStyle = '#333';
+    ctx.font = `300 ${baseFontSize}px Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('A wall mounted, web accessible polargraph pen plotter.', 0, -60 * lineScale);
+    ctx.fillText('A wall mounted, web accessible polargraph pen plotter.', 0, -50 / scale);
     
-    // Author
-    ctx.font = `500 ${24 * lineScale}px Inter, sans-serif`;
-    ctx.fillText('by Teddy', 0, 20 * lineScale);
+    // Author - larger and bolder
+    ctx.fillStyle = '#111';
+    ctx.font = `500 ${titleFontSize}px Inter, sans-serif`;
+    ctx.fillText('by Teddy', 0, 10 / scale);
     
-    // Link
-    ctx.fillStyle = '#666';
-    ctx.font = `${12 * lineScale}px Inter, sans-serif`;
-    ctx.fillText('teddywarner.org/Projects/Polargraph/', 0, 80 * lineScale);
+    // Link - smaller
+    ctx.fillStyle = '#888';
+    ctx.font = `300 ${linkFontSize}px Inter, sans-serif`;
+    ctx.fillText('teddywarner.org/Projects/Polargraph/', 0, 60 / scale);
     
     ctx.restore();
 }
