@@ -197,6 +197,8 @@ function resizeCanvas() {
         const baseHeight = paper.offsetHeight;
         const dpr = window.devicePixelRatio;
         
+        console.log('resizeCanvas: paper size =', baseWidth, 'x', baseHeight, 'dpr =', dpr);
+        
         canvas.width = baseWidth * dpr;
         canvas.height = baseHeight * dpr;
         canvas.style.width = baseWidth + 'px';
@@ -1224,9 +1226,18 @@ async function sendGcodeCommand() {
 // ============================================================================
 
 function drawCanvas() {
+    if (!ctx) {
+        console.error('drawCanvas: no context!');
+        return;
+    }
     const dpr = window.devicePixelRatio;
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
+    
+    if (w === 0 || h === 0) {
+        console.warn('drawCanvas: canvas has zero size', w, h);
+        return;
+    }
     
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
