@@ -7,6 +7,9 @@
 // For local mode (plotter.local), leave as empty string
 var POLARGRAPH_WEBHOOK_URL = "";
 
+// Check if we're in client-side mode (static site or server unreachable)
+let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL;
+
 const state = {
     connected: false,
     plotting: false,
@@ -14,7 +17,9 @@ const state = {
     motorsEnabled: true,
     jogDistance: 10,
     currentImagePath: null,
+    currentImageElement: null,  // For client-side conversion
     preview: null,
+    currentGcode: [],  // Store generated G-code for client-side mode
     zoom: 1,
     minZoom: 0.2,
     maxZoom: 5,
@@ -682,13 +687,17 @@ function jog(direction) {
 // ============================================================================
 
 async function startPlot() {
-    if (!state.connected) return;
     if (state.paused) {
         logConsole('Resume Plot', 'msg-out');
         await sendCommand('/api/plot/resume', 'POST');
     } else {
         logConsole('Start Plot', 'msg-out');
-        await sendCommand('/api/plot/start', 'POST');
+        // In client-side mode, send the G-code with the start command
+        if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
+            await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode });
+        } else {
+            await sendCommand('/api/plot/start', 'POST');
+        }
     }
     state.plotting = true;
     state.paused = false;
@@ -734,6 +743,30 @@ function handleFileSelect(e) {
 }
 
 async function uploadFile(file) {
+    // Check if it's an image file
+    const isImage = file.type.startsWith('image/');
+    
+    // In client-side mode, handle images locally
+    if (CLIENT_SIDE_MODE && isImage) {
+        try {
+            const img = await loadImageFromFile(file);
+            state.currentImageElement = img;
+            state.currentImagePath = file.name;  // Just for display
+            
+            // Show preview
+            const dataUrl = await fileToDataUrl(file);
+            elements.convertPreview.innerHTML = `<img src="${dataUrl}" alt="Preview">`;
+            elements.convertSection.style.display = 'block';
+            elements.uploadZone.style.display = 'none';
+            elements.convertBtn.disabled = false;
+            elements.menuFooter.style.display = 'block';
+            logConsole(`Image loaded for client-side conversion`, 'msg-info');
+        } catch (error) {
+            logConsole(`Image load error: ${error.message}`, 'msg-error');
+        }
+        return;
+    }
+    
     const formData = new FormData();
     formData.append('file', file);
     
@@ -766,7 +799,33 @@ async function uploadFile(file) {
     }
 }
 
+// Helper: Load image from file
+function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+    });
+}
+
+// Helper: Convert file to data URL
+function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
 async function exportGcode() {
+    // In client-side mode, export from local state
+    if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
+        downloadFile('drawing.gcode', state.currentGcode.join('\n'), 'text/plain');
+        return;
+    }
+    
     const result = await sendCommand('/api/export/gcode');
     if (result.success) {
         downloadFile('drawing.gcode', result.gcode, 'text/plain');
@@ -774,6 +833,13 @@ async function exportGcode() {
 }
 
 async function exportSvg() {
+    // In client-side mode, generate SVG from preview paths
+    if (CLIENT_SIDE_MODE && state.preview && state.preview.length > 0) {
+        const svg = generateSvgFromPaths(state.preview);
+        downloadFile('drawing.svg', svg, 'image/svg+xml');
+        return;
+    }
+    
     const result = await sendCommand('/api/export/svg');
     if (result.success) {
         downloadFile('drawing.svg', result.svg, 'image/svg+xml');
@@ -788,6 +854,41 @@ function downloadFile(filename, content, type) {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+function generateSvgFromPaths(paths) {
+    // Calculate bounds
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const path of paths) {
+        for (const p of path.points) {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        }
+    }
+    
+    const width = maxX - minX || 100;
+    const height = maxY - minY || 100;
+    const margin = 10;
+    
+    let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    svg += `<svg xmlns="http://www.w3.org/2000/svg" `;
+    svg += `width="${width + 2*margin}mm" height="${height + 2*margin}mm" `;
+    svg += `viewBox="${minX - margin} ${-maxY - margin} ${width + 2*margin} ${height + 2*margin}">\n`;
+    svg += `  <g stroke="black" fill="none" stroke-width="0.5">\n`;
+    
+    for (const path of paths) {
+        if (path.points.length >= 2) {
+            const d = path.points.map((p, i) => 
+                `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`
+            ).join(' ');
+            svg += `    <path d="${d}" />\n`;
+        }
+    }
+    
+    svg += `  </g>\n</svg>`;
+    return svg;
 }
 
 // ============================================================================
@@ -863,6 +964,25 @@ async function generatePattern() {
         }
     });
     
+    // Use client-side generation if in remote mode
+    if (CLIENT_SIDE_MODE) {
+        try {
+            const patternGen = new PatternGenerator();
+            const turtle = patternGen.generate(generator, options);
+            const gcodeGen = new GCodeGenerator();
+            
+            state.currentGcode = gcodeGen.turtleToGcode(turtle);
+            state.preview = turtle.getPaths();
+            updatePreview(state.preview);
+            elements.plotStatus.textContent = `${turtle.getPaths().length} lines generated (client-side)`;
+            elements.menuFooter.style.display = 'block';
+            logConsole(`Generated ${generator} pattern (client-side)`, 'msg-info');
+        } catch (err) {
+            logConsole(`Generate failed: ${err.message}`, 'msg-error');
+        }
+        return;
+    }
+    
     const result = await sendCommand('/api/generate', 'POST', { generator, options });
     
     if (result.success) {
@@ -930,7 +1050,7 @@ function updateConverterOptions() {
 }
 
 async function convertImage() {
-    if (!state.currentImagePath) return;
+    if (!state.currentImagePath && !state.currentImageElement) return;
     
     const algorithm = elements.converterSelect.value;
     const options = {};
@@ -943,6 +1063,25 @@ async function convertImage() {
             options[key] = parseFloat(input.value);
         }
     });
+    
+    // Use client-side conversion if in remote mode
+    if (CLIENT_SIDE_MODE && state.currentImageElement) {
+        try {
+            const imgConverter = new ImageConverter();
+            const turtle = await imgConverter.convert(state.currentImageElement, algorithm, options);
+            const gcodeGen = new GCodeGenerator();
+            
+            state.currentGcode = gcodeGen.turtleToGcode(turtle);
+            state.preview = turtle.getPaths();
+            updatePreview(state.preview);
+            elements.plotStatus.textContent = `${turtle.getPaths().length} lines converted (client-side)`;
+            elements.menuFooter.style.display = 'block';
+            logConsole(`Converted image with ${algorithm} (client-side)`, 'msg-info');
+        } catch (err) {
+            logConsole(`Convert failed: ${err.message}`, 'msg-error');
+        }
+        return;
+    }
     
     const result = await sendCommand('/api/convert_image', 'POST', {
         filepath: state.currentImagePath,
