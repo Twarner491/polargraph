@@ -1263,13 +1263,20 @@ function drawCanvas() {
     // Draw preview paths
     // state.preview can be either an array of paths or an object with .paths property
     const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
-    console.log('drawCanvas: paths count =', paths ? paths.length : 0, 'first path points:', paths?.[0]?.points?.length);
+    console.log('drawCanvas: paths count =', paths ? paths.length : 0, 'scale =', scale);
     if (paths && paths.length > 0) {
         ctx.save();
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
         ctx.scale(state.previewScale, state.previewScale);
         drawPaths(paths);
         ctx.restore();
+    }
+    
+    // Debug: draw a test rectangle to verify canvas is working
+    if (paths && paths.length > 0) {
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 2 / scale;
+        ctx.strokeRect(-100, -100, 200, 200);
     }
     
     // Draw gondola indicator
@@ -1337,8 +1344,14 @@ function drawWorkArea() {
 }
 
 function drawPaths(paths) {
-    paths.forEach(path => {
+    console.log('drawPaths called with', paths.length, 'paths');
+    let drawnCount = 0;
+    paths.forEach((path, idx) => {
         if (path.points.length < 2) return;
+        
+        if (idx === 0) {
+            console.log('First path: start=', path.points[0], 'end=', path.points[path.points.length-1]);
+        }
         
         ctx.strokeStyle = path.color || '#222';
         // Line width gets thinner as you zoom in for detail visibility
@@ -1355,7 +1368,9 @@ function drawPaths(paths) {
         }
         
         ctx.stroke();
+        drawnCount++;
     });
+    console.log('Drew', drawnCount, 'paths');
 }
 
 function drawGondola() {
