@@ -56,6 +56,14 @@
                         <button class="mode-btn" data-mode="upload" id="modeUpload">Upload</button>
                     </div>
 
+                    <!-- Color Picker -->
+                    <div class="color-picker-section">
+                        <div class="section-label">Pen Color</div>
+                        <div class="color-picker" id="colorPicker">
+                            <!-- Colors populated by JS -->
+                        </div>
+                    </div>
+
                     <!-- Dynamic Content Area -->
                     <div class="menu-content" id="menuContent">
                         <!-- Generate Mode Content -->
@@ -82,6 +90,15 @@
                         </div>
                     </div>
 
+                    <!-- Entity List -->
+                    <div class="entity-list-section" id="entityListSection" style="display:none;">
+                        <div class="menu-divider"></div>
+                        <div class="section-label">Elements</div>
+                        <div class="entity-list" id="entityList">
+                            <!-- Entity items populated by JS -->
+                        </div>
+                    </div>
+
                     <!-- Export buttons (always visible when content exists) -->
                     <div class="menu-footer" id="menuFooter" style="display:none;">
                         <div class="menu-divider"></div>
@@ -89,7 +106,67 @@
                             <button class="menu-btn" id="exportGcode">G-code</button>
                             <button class="menu-btn" id="exportSvg">SVG</button>
                         </div>
+                        <div class="export-info" id="exportInfo"></div>
                     </div>
+                </div>
+
+                <!-- Context Menu (right-click) -->
+                <div class="context-menu" id="contextMenu" style="display:none;">
+                    <button class="context-item" data-action="duplicate">
+                        <span class="context-icon">⊕</span> Duplicate
+                        <span class="context-shortcut">Ctrl+D</span>
+                    </button>
+                    <button class="context-item" data-action="copy">
+                        <span class="context-icon">⧉</span> Copy
+                        <span class="context-shortcut">Ctrl+C</span>
+                    </button>
+                    <button class="context-item" data-action="cut">
+                        <span class="context-icon">✂</span> Cut
+                        <span class="context-shortcut">Ctrl+X</span>
+                    </button>
+                    <div class="context-divider"></div>
+                    <div class="context-submenu">
+                        <span class="context-label">Transform</span>
+                        <div class="transform-controls">
+                            <button class="context-item" data-action="rotateLeft">
+                                <span class="context-icon">↺</span> Rotate -15°
+                            </button>
+                            <button class="context-item" data-action="rotateRight">
+                                <span class="context-icon">↻</span> Rotate +15°
+                                <span class="context-shortcut">R</span>
+                            </button>
+                            <button class="context-item" data-action="scaleUp">
+                                <span class="context-icon">+</span> Scale Up
+                                <span class="context-shortcut">]</span>
+                            </button>
+                            <button class="context-item" data-action="scaleDown">
+                                <span class="context-icon">−</span> Scale Down
+                                <span class="context-shortcut">[</span>
+                            </button>
+                            <button class="context-item" data-action="resetTransform">
+                                <span class="context-icon">⟲</span> Reset Transform
+                            </button>
+                        </div>
+                    </div>
+                    <div class="context-divider"></div>
+                    <div class="context-submenu">
+                        <span class="context-label">Change Color</span>
+                        <div class="context-colors" id="contextColors">
+                            <!-- Colors populated by JS -->
+                        </div>
+                    </div>
+                    <div class="context-divider"></div>
+                    <button class="context-item" data-action="bringToFront">
+                        <span class="context-icon">↑</span> Bring to Front
+                    </button>
+                    <button class="context-item" data-action="sendToBack">
+                        <span class="context-icon">↓</span> Send to Back
+                    </button>
+                    <div class="context-divider"></div>
+                    <button class="context-item context-delete" data-action="delete">
+                        <span class="context-icon">✕</span> Delete
+                        <span class="context-shortcut">Del</span>
+                    </button>
                 </div>
 
                 <!-- Zoom Controls -->

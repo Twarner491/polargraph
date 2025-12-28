@@ -983,3 +983,287 @@ html, body {
     height: 20px;
     accent-color: var(--text-dark);
 }
+
+/* ============================================
+   Color Picker
+   ============================================ */
+
+.color-picker-section {
+    margin-bottom: 14px;
+}
+
+.section-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-light);
+    margin-bottom: 8px;
+}
+
+.color-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.15s;
+    position: relative;
+}
+
+.color-swatch:hover {
+    transform: scale(1.1);
+}
+
+.color-swatch.active {
+    border-color: var(--text-dark);
+    box-shadow: 0 0 0 2px rgba(255,255,255,1), 0 0 0 4px rgba(0,0,0,0.15);
+}
+
+.color-swatch::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+/* ============================================
+   Entity List
+   ============================================ */
+
+.entity-list-section {
+    margin-top: 8px;
+}
+
+.entity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.entity-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.12s;
+    border: 2px solid transparent;
+}
+
+.entity-item:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.entity-item.selected {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: var(--text-dark);
+}
+
+.entity-color {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.entity-name {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-dark);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.entity-info {
+    font-size: 10px;
+    color: var(--text-light);
+    font-family: var(--font-mono);
+}
+
+.entity-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.entity-item:hover .entity-actions {
+    opacity: 1;
+}
+
+.entity-action-btn {
+    width: 22px;
+    height: 22px;
+    background: rgba(0,0,0,0.06);
+    border: none;
+    border-radius: 5px;
+    font-size: 11px;
+    color: var(--text-mid);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+}
+
+.entity-action-btn:hover {
+    background: rgba(0,0,0,0.12);
+    color: var(--text-dark);
+}
+
+.entity-action-btn.delete:hover {
+    background: rgba(180, 60, 60, 0.15);
+    color: var(--danger-text);
+}
+
+/* ============================================
+   Context Menu (Right-click)
+   ============================================ */
+
+.context-menu {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 12px;
+    box-shadow: 
+        0 12px 40px rgba(0, 0, 0, 0.15),
+        0 4px 12px rgba(0, 0, 0, 0.08);
+    padding: 6px;
+    z-index: 1000;
+    min-width: 180px;
+}
+
+.context-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--text-dark);
+    cursor: pointer;
+    transition: all 0.12s;
+    text-align: left;
+}
+
+.context-item:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.context-item.context-delete:hover {
+    background: rgba(180, 60, 60, 0.1);
+    color: var(--danger-text);
+}
+
+.context-icon {
+    width: 18px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--text-mid);
+}
+
+.context-delete .context-icon {
+    color: inherit;
+}
+
+.context-divider {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.08);
+    margin: 4px 8px;
+}
+
+.context-submenu {
+    padding: 8px 12px;
+}
+
+.context-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-light);
+    margin-bottom: 8px;
+    display: block;
+}
+
+.context-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.context-color {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.12s;
+    position: relative;
+}
+
+.context-color:hover {
+    transform: scale(1.15);
+}
+
+.context-color.active {
+    border-color: var(--text-dark);
+}
+
+.context-color::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+.context-shortcut {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-light);
+    font-family: var(--font-mono);
+}
+
+.transform-controls {
+    display: flex;
+    flex-direction: column;
+}
+
+.transform-controls .context-item {
+    padding: 8px 12px;
+}
+
+/* Export info */
+.export-info {
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--text-light);
+    text-align: center;
+}
+
+/* ============================================
+   Entity Selection Highlight on Canvas
+   ============================================ */
+
+.entity-selected-indicator {
+    pointer-events: none;
+    position: absolute;
+}

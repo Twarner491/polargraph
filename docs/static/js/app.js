@@ -11,6 +11,197 @@ var POLARGRAPH_WEBHOOK_URL = "";
 // In static deployment, we detect by checking if we're on the static domain or if webhook is set
 let CLIENT_SIDE_MODE = true; // Static build - always client-side
 
+// Available pen colors
+const PEN_COLORS = {
+    brown:  { name: 'Brown',  hex: '#544548' },
+    black:  { name: 'Black',  hex: '#3b363c' },
+    blue:   { name: 'Blue',   hex: '#5989e7' },
+    green:  { name: 'Green',  hex: '#3fada9' },
+    purple: { name: 'Purple', hex: '#653d7d' },
+    pink:   { name: 'Pink',   hex: '#ee9bb5' },
+    red:    { name: 'Red',    hex: '#f45d4e' },
+    orange: { name: 'Orange', hex: '#b06451' },
+    yellow: { name: 'Yellow', hex: '#f7a515' }
+};
+
+// Entity counter for unique IDs
+let entityIdCounter = 0;
+
+// Undo/Redo history
+const history = {
+    undoStack: [],
+    redoStack: [],
+    maxSize: 50
+};
+
+// Clipboard for copy/paste
+let clipboard = null;
+
+// Create a new entity object
+function createEntity(paths, options = {}) {
+    return {
+        id: ++entityIdCounter,
+        paths: paths,
+        color: options.color || 'black',
+        algorithm: options.algorithm || null,
+        algorithmOptions: options.algorithmOptions || {},
+        offsetX: options.offsetX || 0,
+        offsetY: options.offsetY || 0,
+        scale: options.scale || 1,
+        rotation: options.rotation || 0,  // Rotation in degrees
+        visible: true,
+        locked: false,
+        name: options.name || `Element ${entityIdCounter}`
+    };
+}
+
+// ============================================================================
+// Undo/Redo System
+// ============================================================================
+
+function saveHistoryState() {
+    // Deep copy current entities and selection
+    const snapshot = JSON.stringify({
+        entities: state.entities,
+        selectedIds: Array.from(state.selectedEntityIds)
+    });
+    
+    history.undoStack.push(snapshot);
+    if (history.undoStack.length > history.maxSize) {
+        history.undoStack.shift();
+    }
+    
+    // Clear redo stack on new action
+    history.redoStack = [];
+}
+
+function undo() {
+    if (history.undoStack.length === 0) {
+        logConsole('Nothing to undo', 'msg-info');
+        return;
+    }
+    
+    // Save current state to redo stack
+    const currentState = JSON.stringify({
+        entities: state.entities,
+        selectedIds: Array.from(state.selectedEntityIds)
+    });
+    history.redoStack.push(currentState);
+    
+    // Restore previous state
+    const prevState = JSON.parse(history.undoStack.pop());
+    state.entities = prevState.entities;
+    state.selectedEntityIds = new Set(prevState.selectedIds || []);
+    
+    // Restore entity counter
+    entityIdCounter = state.entities.length > 0 ? Math.max(...state.entities.map(e => e.id)) : 0;
+    
+    // Remove invalid selections
+    state.selectedEntityIds = new Set(
+        Array.from(state.selectedEntityIds).filter(id => 
+            state.entities.some(e => e.id === id)
+        )
+    );
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    logConsole('Undo', 'msg-info');
+}
+
+function redo() {
+    if (history.redoStack.length === 0) {
+        logConsole('Nothing to redo', 'msg-info');
+        return;
+    }
+    
+    // Save current state to undo stack
+    const currentState = JSON.stringify({
+        entities: state.entities,
+        selectedIds: Array.from(state.selectedEntityIds)
+    });
+    history.undoStack.push(currentState);
+    
+    // Restore next state
+    const nextState = JSON.parse(history.redoStack.pop());
+    state.entities = nextState.entities;
+    state.selectedEntityIds = new Set(nextState.selectedIds || []);
+    
+    // Restore entity counter
+    entityIdCounter = state.entities.length > 0 ? Math.max(...state.entities.map(e => e.id)) : 0;
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    logConsole('Redo', 'msg-info');
+}
+
+// ============================================================================
+// Clipboard Operations
+// ============================================================================
+
+function copyEntity() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) {
+        logConsole('Nothing selected to copy', 'msg-info');
+        return;
+    }
+    
+    clipboard = JSON.stringify(selected);
+    logConsole(`Copied ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+}
+
+function cutEntity() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) {
+        logConsole('Nothing selected to cut', 'msg-info');
+        return;
+    }
+    
+    clipboard = JSON.stringify(selected);
+    saveHistoryState();
+    deleteSelectedEntities();
+    logConsole(`Cut ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+}
+
+function pasteEntity() {
+    if (!clipboard) {
+        logConsole('Nothing to paste', 'msg-info');
+        return;
+    }
+    
+    saveHistoryState();
+    
+    const items = JSON.parse(clipboard);
+    const newIds = [];
+    
+    items.forEach((original, index) => {
+        const newEntity = createEntity(
+            JSON.parse(JSON.stringify(original.paths)),
+            {
+                color: original.color,
+                algorithm: original.algorithm,
+                algorithmOptions: { ...original.algorithmOptions },
+                offsetX: original.offsetX + 20,
+                offsetY: original.offsetY - 20,
+                scale: original.scale,
+                rotation: original.rotation,
+                name: `${original.name} copy`
+            }
+        );
+        state.entities.push(newEntity);
+        newIds.push(newEntity.id);
+    });
+    
+    state.selectedEntityIds.clear();
+    newIds.forEach(id => state.selectedEntityIds.add(id));
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    logConsole(`Pasted ${items.length} element${items.length > 1 ? 's' : ''}`, 'msg-info');
+}
+
 const state = {
     connected: false,
     plotting: false,
@@ -21,6 +212,12 @@ const state = {
     currentImageElement: null,  // For client-side conversion
     preview: null,
     currentGcode: [],  // Store generated G-code for client-side mode
+    
+    // Multi-entity system
+    entities: [],  // Array of entity objects
+    selectedEntityIds: new Set(),  // Set of selected entity IDs (supports multi-select)
+    activeColor: 'black',  // Currently selected pen color
+    
     zoom: 1,
     minZoom: 0.2,
     maxZoom: 5,
@@ -30,6 +227,7 @@ const state = {
     isDragging: false,
     dragStartX: 0,
     dragStartY: 0,
+    dragMode: null,  // 'move', 'scale', 'entity-move'
     gondola: { x: 0, y: 0, z: 90 },
     openPanel: null,
     mode: 'generate', // 'generate' or 'upload'
@@ -38,7 +236,11 @@ const state = {
     menuStartX: 0,
     menuStartY: 0,
     menuOffsetX: 0,
-    menuOffsetY: 0
+    menuOffsetY: 0,
+    // Context menu
+    contextMenuVisible: false,
+    // Entity drag (multi-select)
+    entityDragStarts: {}  // {entityId: {offsetX, offsetY}}
 };
 
 // Socket.IO connection
@@ -64,6 +266,18 @@ const elements = {
     modeUpload: document.getElementById('modeUpload'),
     menuContent: document.getElementById('menuContent'),
     menuFooter: document.getElementById('menuFooter'),
+    
+    // Color Picker
+    colorPicker: document.getElementById('colorPicker'),
+    
+    // Entity List
+    entityListSection: document.getElementById('entityListSection'),
+    entityList: document.getElementById('entityList'),
+    exportInfo: document.getElementById('exportInfo'),
+    
+    // Context Menu
+    contextMenu: document.getElementById('contextMenu'),
+    contextColors: document.getElementById('contextColors'),
     
     // Generate
     generatorSelect: document.getElementById('generatorSelect'),
@@ -131,6 +345,9 @@ const ctx = canvas ? canvas.getContext('2d') : null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initCanvas();
+    initColorPicker();
+    initContextMenu();
+    initKeyboardShortcuts();
     initEventListeners();
     
     if (CLIENT_SIDE_MODE) {
@@ -146,6 +363,627 @@ document.addEventListener('DOMContentLoaded', () => {
     
     setMode('generate');
 });
+
+// ============================================================================
+// Color Picker
+// ============================================================================
+
+function initColorPicker() {
+    // Main color picker in menu
+    if (elements.colorPicker) {
+        elements.colorPicker.innerHTML = '';
+        Object.entries(PEN_COLORS).forEach(([id, color]) => {
+            const swatch = document.createElement('div');
+            swatch.className = `color-swatch${id === state.activeColor ? ' active' : ''}`;
+            swatch.style.backgroundColor = color.hex;
+            swatch.dataset.color = id;
+            swatch.title = color.name;
+            swatch.addEventListener('click', () => setActiveColor(id));
+            elements.colorPicker.appendChild(swatch);
+        });
+    }
+    
+    // Context menu colors
+    if (elements.contextColors) {
+        elements.contextColors.innerHTML = '';
+        Object.entries(PEN_COLORS).forEach(([id, color]) => {
+            const swatch = document.createElement('div');
+            swatch.className = 'context-color';
+            swatch.style.backgroundColor = color.hex;
+            swatch.dataset.color = id;
+            swatch.title = color.name;
+            swatch.addEventListener('click', () => {
+                const firstSelected = getFirstSelectedEntity();
+                if (firstSelected) changeEntityColor(firstSelected.id, id);
+            });
+            elements.contextColors.appendChild(swatch);
+        });
+    }
+}
+
+function setActiveColor(colorId) {
+    state.activeColor = colorId;
+    
+    // Update color picker UI
+    document.querySelectorAll('.color-swatch').forEach(swatch => {
+        swatch.classList.toggle('active', swatch.dataset.color === colorId);
+    });
+}
+
+// ============================================================================
+// Context Menu
+// ============================================================================
+
+function initContextMenu() {
+    // Close context menu on click outside
+    document.addEventListener('click', (e) => {
+        if (state.contextMenuVisible && !elements.contextMenu.contains(e.target)) {
+            hideContextMenu();
+        }
+    });
+    
+    // Context menu actions
+    elements.contextMenu.querySelectorAll('.context-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const action = item.dataset.action;
+            handleContextAction(action);
+            hideContextMenu();
+        });
+    });
+}
+
+// ============================================================================
+// Keyboard Shortcuts
+// ============================================================================
+
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ignore if typing in an input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            return;
+        }
+        
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+        
+        // Delete / Backspace - delete selected entities
+        if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedEntityIds.size > 0) {
+            e.preventDefault();
+            saveHistoryState();
+            deleteSelectedEntities();
+            return;
+        }
+        
+        // Ctrl+Z - Undo
+        if (cmdKey && !e.shiftKey && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            undo();
+            return;
+        }
+        
+        // Ctrl+Shift+Z or Ctrl+Y - Redo
+        if ((cmdKey && e.shiftKey && e.key.toLowerCase() === 'z') || 
+            (cmdKey && e.key.toLowerCase() === 'y')) {
+            e.preventDefault();
+            redo();
+            return;
+        }
+        
+        // Ctrl+C - Copy
+        if (cmdKey && e.key.toLowerCase() === 'c') {
+            e.preventDefault();
+            copyEntity();
+            return;
+        }
+        
+        // Ctrl+X - Cut
+        if (cmdKey && e.key.toLowerCase() === 'x') {
+            e.preventDefault();
+            cutEntity();
+            return;
+        }
+        
+        // Ctrl+V - Paste
+        if (cmdKey && e.key.toLowerCase() === 'v') {
+            e.preventDefault();
+            pasteEntity();
+            return;
+        }
+        
+        // Ctrl+D - Duplicate
+        if (cmdKey && e.key.toLowerCase() === 'd' && state.selectedEntityIds.size > 0) {
+            e.preventDefault();
+            saveHistoryState();
+            duplicateSelectedEntities();
+            return;
+        }
+        
+        // Ctrl+A - Select all
+        if (cmdKey && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            selectAllEntities();
+            return;
+        }
+        
+        // Escape - Deselect
+        if (e.key === 'Escape') {
+            clearSelection();
+            hideContextMenu();
+            return;
+        }
+        
+        // Arrow keys - nudge selected entities
+        if (state.selectedEntityIds.size > 0 && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault();
+            const selected = getSelectedEntities();
+            if (selected.length > 0) {
+                const step = e.shiftKey ? 10 : 1;  // Shift for larger steps
+                saveHistoryState();
+                
+                selected.forEach(entity => {
+                    switch (e.key) {
+                        case 'ArrowUp': entity.offsetY += step; break;
+                        case 'ArrowDown': entity.offsetY -= step; break;
+                        case 'ArrowLeft': entity.offsetX -= step; break;
+                        case 'ArrowRight': entity.offsetX += step; break;
+                    }
+                });
+                drawCanvas();
+            }
+            return;
+        }
+        
+        // R - Rotate selected entities (hold shift for larger steps)
+        if (e.key.toLowerCase() === 'r' && state.selectedEntityIds.size > 0 && !cmdKey) {
+            const selected = getSelectedEntities();
+            if (selected.length > 0) {
+                saveHistoryState();
+                const step = e.shiftKey ? 45 : 15;
+                selected.forEach(entity => {
+                    entity.rotation = (entity.rotation + step) % 360;
+                });
+                drawCanvas();
+                logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} +${step}°`, 'msg-info');
+            }
+            return;
+        }
+        
+        // [ and ] - Scale selected entities
+        if ((e.key === '[' || e.key === ']') && state.selectedEntityIds.size > 0) {
+            const selected = getSelectedEntities();
+            if (selected.length > 0) {
+                saveHistoryState();
+                const factor = e.key === ']' ? 1.1 : 0.9;
+                selected.forEach(entity => {
+                    entity.scale = Math.max(0.1, Math.min(10, entity.scale * factor));
+                });
+                drawCanvas();
+                logConsole(`Scaled ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+            }
+            return;
+        }
+    });
+}
+
+function showContextMenu(x, y, entityId) {
+    // Add to selection if not already selected
+    if (!state.selectedEntityIds.has(entityId)) {
+        state.selectedEntityIds.clear();
+        state.selectedEntityIds.add(entityId);
+    }
+    state.contextMenuVisible = true;
+    
+    const entity = state.entities.find(e => e.id === entityId);
+    if (!entity) return;
+    
+    // Update context menu color indicators (show first selected entity's color)
+    document.querySelectorAll('.context-color').forEach(swatch => {
+        swatch.classList.toggle('active', swatch.dataset.color === entity.color);
+    });
+    
+    // Position context menu
+    const menu = elements.contextMenu;
+    menu.style.display = 'block';
+    
+    // Adjust position to stay in viewport
+    const rect = menu.getBoundingClientRect();
+    const bodyRect = document.querySelector('.body-panel').getBoundingClientRect();
+    
+    let menuX = x - bodyRect.left;
+    let menuY = y - bodyRect.top;
+    
+    if (menuX + rect.width > bodyRect.width) {
+        menuX = bodyRect.width - rect.width - 10;
+    }
+    if (menuY + rect.height > bodyRect.height) {
+        menuY = bodyRect.height - rect.height - 10;
+    }
+    
+    menu.style.left = menuX + 'px';
+    menu.style.top = menuY + 'px';
+    
+    // Update entity list selection
+    updateEntityList();
+    drawCanvas();
+}
+
+function hideContextMenu() {
+    state.contextMenuVisible = false;
+    elements.contextMenu.style.display = 'none';
+}
+
+function handleContextAction(action) {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    switch (action) {
+        case 'duplicate':
+            saveHistoryState();
+            duplicateSelectedEntities();
+            break;
+        case 'copy':
+            copyEntity();
+            break;
+        case 'cut':
+            cutEntity();
+            break;
+        case 'offset':
+            promptSelectedEntitiesOffset();
+            break;
+        case 'rotateLeft':
+            saveHistoryState();
+            selected.forEach(entity => {
+                entity.rotation = (entity.rotation - 15 + 360) % 360;
+            });
+            drawCanvas();
+            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} -15°`, 'msg-info');
+            break;
+        case 'rotateRight':
+            saveHistoryState();
+            selected.forEach(entity => {
+                entity.rotation = (entity.rotation + 15) % 360;
+            });
+            drawCanvas();
+            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} +15°`, 'msg-info');
+            break;
+        case 'scaleUp':
+            saveHistoryState();
+            selected.forEach(entity => {
+                entity.scale = Math.min(10, entity.scale * 1.1);
+            });
+            drawCanvas();
+            logConsole(`Scaled up ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+            break;
+        case 'scaleDown':
+            saveHistoryState();
+            selected.forEach(entity => {
+                entity.scale = Math.max(0.1, entity.scale * 0.9);
+            });
+            drawCanvas();
+            logConsole(`Scaled down ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+            break;
+        case 'resetTransform':
+            saveHistoryState();
+            selected.forEach(entity => {
+                entity.scale = 1;
+                entity.rotation = 0;
+                entity.offsetX = 0;
+                entity.offsetY = 0;
+            });
+            drawCanvas();
+            logConsole(`Reset transform on ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+            break;
+        case 'bringToFront':
+            saveHistoryState();
+            selected.forEach(entity => bringEntityToFront(entity.id));
+            break;
+        case 'sendToBack':
+            saveHistoryState();
+            selected.reverse().forEach(entity => sendEntityToBack(entity.id));
+            break;
+        case 'delete':
+            saveHistoryState();
+            deleteSelectedEntities();
+            break;
+    }
+}
+
+// ============================================================================
+// Entity Management
+// ============================================================================
+
+function addEntity(paths, options = {}) {
+    saveHistoryState();
+    const entity = createEntity(paths, {
+        ...options,
+        color: options.color || state.activeColor
+    });
+    state.entities.push(entity);
+    state.selectedEntityIds.clear();
+    state.selectedEntityIds.add(entity.id);
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    return entity;
+}
+
+function deleteEntity(entityId) {
+    const index = state.entities.findIndex(e => e.id === entityId);
+    if (index !== -1) {
+        state.entities.splice(index, 1);
+        state.selectedEntityIds.delete(entityId);
+        updateEntityList();
+        updateExportInfo();
+        drawCanvas();
+        logConsole(`Deleted element`, 'msg-info');
+    }
+}
+
+function deleteSelectedEntities() {
+    if (state.selectedEntityIds.size === 0) return;
+    
+    const count = state.selectedEntityIds.size;
+    state.entities = state.entities.filter(e => !state.selectedEntityIds.has(e.id));
+    state.selectedEntityIds.clear();
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    logConsole(`Deleted ${count} element${count > 1 ? 's' : ''}`, 'msg-info');
+}
+
+function duplicateEntity(entityId, offsetX = 20, offsetY = -20) {
+    const original = state.entities.find(e => e.id === entityId);
+    if (!original) return null;
+    
+    const newEntity = createEntity(
+        JSON.parse(JSON.stringify(original.paths)),  // Deep copy paths
+        {
+            color: original.color,
+            algorithm: original.algorithm,
+            algorithmOptions: { ...original.algorithmOptions },
+            offsetX: original.offsetX + offsetX,
+            offsetY: original.offsetY + offsetY,
+            scale: original.scale,
+            rotation: original.rotation,
+            name: `${original.name} copy`
+        }
+    );
+    
+    state.entities.push(newEntity);
+    return newEntity;
+}
+
+function duplicateSelectedEntities() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    const newIds = [];
+    selected.forEach(entity => {
+        const newEntity = duplicateEntity(entity.id);
+        if (newEntity) newIds.push(newEntity.id);
+    });
+    
+    // Select the new duplicates
+    state.selectedEntityIds.clear();
+    newIds.forEach(id => state.selectedEntityIds.add(id));
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    logConsole(`Duplicated ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+}
+
+function promptEntityOffset(entityId) {
+    const entity = state.entities.find(e => e.id === entityId);
+    if (!entity) return;
+    
+    const offsetX = prompt('Offset X (mm):', '0');
+    const offsetY = prompt('Offset Y (mm):', '0');
+    
+    if (offsetX !== null && offsetY !== null) {
+        saveHistoryState();
+        entity.offsetX += parseFloat(offsetX) || 0;
+        entity.offsetY += parseFloat(offsetY) || 0;
+        drawCanvas();
+        logConsole(`Offset element by (${offsetX}, ${offsetY})`, 'msg-info');
+    }
+}
+
+function promptSelectedEntitiesOffset() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    const offsetX = prompt('Offset X (mm):', '0');
+    const offsetY = prompt('Offset Y (mm):', '0');
+    
+    if (offsetX !== null && offsetY !== null) {
+        saveHistoryState();
+        const dx = parseFloat(offsetX) || 0;
+        const dy = parseFloat(offsetY) || 0;
+        selected.forEach(entity => {
+            entity.offsetX += dx;
+            entity.offsetY += dy;
+        });
+        drawCanvas();
+        logConsole(`Offset ${selected.length} element${selected.length > 1 ? 's' : ''} by (${offsetX}, ${offsetY})`, 'msg-info');
+    }
+}
+
+function changeEntityColor(entityId, colorId) {
+    // If entityId is provided and is selected, change all selected
+    // Otherwise just change the single entity
+    const selected = getSelectedEntities();
+    
+    if (selected.length > 0 && state.selectedEntityIds.has(entityId)) {
+        saveHistoryState();
+        selected.forEach(entity => {
+            entity.color = colorId;
+        });
+        logConsole(`Changed color of ${selected.length} element${selected.length > 1 ? 's' : ''} to ${PEN_COLORS[colorId].name}`, 'msg-info');
+    } else {
+        const entity = state.entities.find(e => e.id === entityId);
+        if (!entity) return;
+        saveHistoryState();
+        entity.color = colorId;
+        logConsole(`Changed color to ${PEN_COLORS[colorId].name}`, 'msg-info');
+    }
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    hideContextMenu();
+}
+
+function bringEntityToFront(entityId) {
+    const index = state.entities.findIndex(e => e.id === entityId);
+    if (index !== -1 && index < state.entities.length - 1) {
+        const entity = state.entities.splice(index, 1)[0];
+        state.entities.push(entity);
+        updateEntityList();
+        drawCanvas();
+    }
+}
+
+function sendEntityToBack(entityId) {
+    const index = state.entities.findIndex(e => e.id === entityId);
+    if (index > 0) {
+        const entity = state.entities.splice(index, 1)[0];
+        state.entities.unshift(entity);
+        updateEntityList();
+        drawCanvas();
+    }
+}
+
+function selectEntity(entityId, addToSelection = false, toggleSelection = false) {
+    if (toggleSelection) {
+        // Ctrl+click: toggle selection
+        if (state.selectedEntityIds.has(entityId)) {
+            state.selectedEntityIds.delete(entityId);
+        } else {
+            state.selectedEntityIds.add(entityId);
+        }
+    } else if (addToSelection) {
+        // Shift+click: add to selection
+        state.selectedEntityIds.add(entityId);
+    } else {
+        // Regular click: select only this one
+        state.selectedEntityIds.clear();
+        state.selectedEntityIds.add(entityId);
+    }
+    updateEntityList();
+    drawCanvas();
+}
+
+function getSelectedEntities() {
+    return state.entities.filter(e => state.selectedEntityIds.has(e.id));
+}
+
+function getFirstSelectedEntity() {
+    for (const entity of state.entities) {
+        if (state.selectedEntityIds.has(entity.id)) {
+            return entity;
+        }
+    }
+    return null;
+}
+
+function isEntitySelected(entityId) {
+    return state.selectedEntityIds.has(entityId);
+}
+
+function clearSelection() {
+    state.selectedEntityIds.clear();
+    updateEntityList();
+    drawCanvas();
+}
+
+function selectAllEntities() {
+    state.entities.forEach(e => state.selectedEntityIds.add(e.id));
+    updateEntityList();
+    drawCanvas();
+    logConsole(`Selected ${state.entities.length} elements`, 'msg-info');
+}
+
+function updateEntityList() {
+    if (!elements.entityList) return;
+    
+    if (state.entities.length === 0) {
+        elements.entityListSection.style.display = 'none';
+        elements.menuFooter.style.display = 'none';
+        return;
+    }
+    
+    elements.entityListSection.style.display = 'block';
+    elements.menuFooter.style.display = 'block';
+    
+    elements.entityList.innerHTML = '';
+    
+    state.entities.forEach(entity => {
+        const color = PEN_COLORS[entity.color] || PEN_COLORS.black;
+        const lineCount = entity.paths.length;
+        
+        // Build info string
+        let info = `${lineCount}`;
+        if (entity.scale !== 1) info += ` · ${Math.round(entity.scale * 100)}%`;
+        if (entity.rotation !== 0) info += ` · ${entity.rotation}°`;
+        
+        const item = document.createElement('div');
+        item.className = `entity-item${state.selectedEntityIds.has(entity.id) ? ' selected' : ''}`;
+        item.innerHTML = `
+            <div class="entity-color" style="background-color: ${color.hex}"></div>
+            <span class="entity-name">${entity.name}</span>
+            <span class="entity-info">${info}</span>
+            <div class="entity-actions">
+                <button class="entity-action-btn" data-action="duplicate" title="Duplicate">⊕</button>
+                <button class="entity-action-btn delete" data-action="delete" title="Delete">✕</button>
+            </div>
+        `;
+        
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.entity-action-btn')) {
+                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+                selectEntity(entity.id, e.shiftKey, cmdKey);
+            }
+        });
+        
+        item.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showContextMenu(e.clientX, e.clientY, entity.id);
+        });
+        
+        item.querySelectorAll('.entity-action-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                saveHistoryState();
+                const action = btn.dataset.action;
+                if (action === 'duplicate') duplicateEntity(entity.id);
+                if (action === 'delete') deleteEntity(entity.id);
+            });
+        });
+        
+        elements.entityList.appendChild(item);
+    });
+}
+
+function updateExportInfo() {
+    if (!elements.exportInfo) return;
+    
+    if (state.entities.length === 0) {
+        elements.exportInfo.textContent = '';
+        return;
+    }
+    
+    // Count colors used
+    const colorsUsed = new Set(state.entities.map(e => e.color));
+    const colorNames = Array.from(colorsUsed).map(c => PEN_COLORS[c]?.name || c);
+    
+    if (colorsUsed.size > 1) {
+        elements.exportInfo.textContent = `${colorsUsed.size} colors: ${colorNames.join(', ')}`;
+    } else {
+        elements.exportInfo.textContent = `Color: ${colorNames[0]}`;
+    }
+}
 
 function initClientSideMode() {
     
@@ -170,9 +1008,12 @@ function initClientSideMode() {
     
     // Load about pattern if on about page
     if (IS_ABOUT_PAGE) {
-        state.preview = generateAboutPattern();
+        const aboutPaths = generateAboutPattern();
+        addEntity(aboutPaths, {
+            name: 'About',
+            color: 'black'
+        });
         elements.plotStatus.textContent = 'About this project';
-        drawCanvas();
     }
     
     logConsole('Remote mode: Generation happens in browser', 'msg-info');
@@ -187,6 +1028,7 @@ function initCanvas() {
     canvas.addEventListener('mousemove', onCanvasMouseMove);
     canvas.addEventListener('mouseup', onCanvasMouseUp);
     canvas.addEventListener('mouseleave', onCanvasMouseUp);
+    canvas.addEventListener('contextmenu', onCanvasRightClick);
     
     // Zoom controls
     elements.workspaceContainer.addEventListener('wheel', onContainerWheel);
@@ -453,18 +1295,65 @@ function onContainerWheel(e) {
 // ============================================================================
 
 function onCanvasMouseDown(e) {
-    const rect = canvas.getBoundingClientRect();
-    state.dragStartX = e.clientX - rect.left;
-    state.dragStartY = e.clientY - rect.top;
+    // Ignore right-clicks
+    if (e.button === 2) return;
     
-    if (e.shiftKey) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    state.dragStartX = x;
+    state.dragStartY = y;
+    
+    // Check if clicking on an entity
+    const worldPos = screenToWorld(x, y);
+    const clickedEntity = findEntityAtPoint(worldPos.x, worldPos.y);
+    
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+    
+    if (clickedEntity) {
+        if (cmdKey) {
+            // Ctrl+click: toggle selection
+            selectEntity(clickedEntity.id, false, true);
+        } else if (e.shiftKey) {
+            // Shift+click: add to selection
+            selectEntity(clickedEntity.id, true, false);
+        } else {
+            // Regular click
+            if (!state.selectedEntityIds.has(clickedEntity.id)) {
+                // Click on unselected entity - select it
+                selectEntity(clickedEntity.id);
+            }
+            // Start dragging all selected entities
+            state.isDragging = true;
+            state.dragMode = 'entity-move';
+            
+            // Store initial positions for all selected entities
+            state.entityDragStarts = {};
+            getSelectedEntities().forEach(entity => {
+                state.entityDragStarts[entity.id] = {
+                    offsetX: entity.offsetX,
+                    offsetY: entity.offsetY
+                };
+            });
+            canvas.style.cursor = 'move';
+        }
+    } else if (e.shiftKey && !clickedEntity) {
+        // Shift+drag on empty space: scale view
         state.isDragging = true;
         state.dragMode = 'scale';
+        canvas.style.cursor = 'grabbing';
     } else {
+        // Click/drag on empty space: pan view
         state.isDragging = true;
         state.dragMode = 'move';
+        canvas.style.cursor = 'grabbing';
+        
+        // Deselect if clicking on empty space without modifier
+        if (!cmdKey) {
+            clearSelection();
+        }
     }
-    canvas.style.cursor = 'grabbing';
 }
 
 function onCanvasMouseMove(e) {
@@ -477,7 +1366,20 @@ function onCanvasMouseMove(e) {
     elements.cursorPos.textContent = `X: ${worldPos.x.toFixed(1)} Y: ${worldPos.y.toFixed(1)}`;
     
     if (state.isDragging) {
-        if (state.dragMode === 'move') {
+        if (state.dragMode === 'entity-move') {
+            // Move all selected entities
+            const dx = (x - state.dragStartX) / getCanvasScale();
+            const dy = -(y - state.dragStartY) / getCanvasScale();
+            
+            getSelectedEntities().forEach(entity => {
+                const start = state.entityDragStarts[entity.id];
+                if (start) {
+                    entity.offsetX = start.offsetX + dx;
+                    entity.offsetY = start.offsetY + dy;
+                }
+            });
+            drawCanvas();
+        } else if (state.dragMode === 'move') {
             const dx = x - state.dragStartX;
             const dy = y - state.dragStartY;
             state.previewOffsetX += dx / getCanvasScale();
@@ -498,6 +1400,56 @@ function onCanvasMouseMove(e) {
 function onCanvasMouseUp() {
     state.isDragging = false;
     canvas.style.cursor = 'crosshair';
+}
+
+function onCanvasRightClick(e) {
+    e.preventDefault();
+    
+    if (state.entities.length === 0) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const worldPos = screenToWorld(x, y);
+    
+    // Find entity under cursor
+    const clickedEntity = findEntityAtPoint(worldPos.x, worldPos.y);
+    
+    if (clickedEntity) {
+        showContextMenu(e.clientX, e.clientY, clickedEntity.id);
+    } else {
+        hideContextMenu();
+    }
+}
+
+function findEntityAtPoint(worldX, worldY) {
+    // Check entities in reverse order (top to bottom)
+    for (let i = state.entities.length - 1; i >= 0; i--) {
+        const entity = state.entities[i];
+        if (!entity.visible) continue;
+        
+        // Calculate entity bounds
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        entity.paths.forEach(path => {
+            path.points.forEach(p => {
+                const px = p.x * entity.scale + entity.offsetX;
+                const py = p.y * entity.scale + entity.offsetY;
+                minX = Math.min(minX, px);
+                minY = Math.min(minY, py);
+                maxX = Math.max(maxX, px);
+                maxY = Math.max(maxY, py);
+            });
+        });
+        
+        // Add some padding for easier clicking
+        const padding = 10;
+        if (worldX >= minX - padding && worldX <= maxX + padding &&
+            worldY >= minY - padding && worldY <= maxY + padding) {
+            return entity;
+        }
+    }
+    
+    return null;
 }
 
 function getCanvasScale() {
@@ -862,30 +1814,135 @@ function fileToDataUrl(file) {
 }
 
 async function exportGcode() {
-    // In client-side mode, export from local state
-    if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
-        downloadFile('drawing.gcode', state.currentGcode.join('\n'), 'text/plain');
+    if (state.entities.length === 0) {
+        logConsole('No elements to export', 'msg-error');
         return;
     }
     
-    const result = await sendCommand('/api/export/gcode');
-    if (result.success) {
-        downloadFile('drawing.gcode', result.gcode, 'text/plain');
+    // Group entities by color
+    const colorGroups = {};
+    state.entities.forEach(entity => {
+        if (!colorGroups[entity.color]) {
+            colorGroups[entity.color] = [];
+        }
+        colorGroups[entity.color].push(entity);
+    });
+    
+    const colors = Object.keys(colorGroups);
+    
+    if (colors.length === 1) {
+        // Single color - export as single file
+        const gcode = generateGcodeForEntities(state.entities);
+        const colorName = PEN_COLORS[colors[0]]?.name || colors[0];
+        downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
+        logConsole(`Exported G-code (${colorName})`, 'msg-info');
+    } else {
+        // Multiple colors - export as ZIP or separate files
+        logConsole(`Exporting ${colors.length} G-code files (one per color)...`, 'msg-info');
+        
+        // Export each color as separate file
+        for (const colorId of colors) {
+            const entities = colorGroups[colorId];
+            const gcode = generateGcodeForEntities(entities);
+            const colorName = PEN_COLORS[colorId]?.name || colorId;
+            
+            // Small delay between downloads for browser compatibility
+            await new Promise(resolve => setTimeout(resolve, 100));
+            downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
+        }
+        
+        logConsole(`Exported ${colors.length} G-code files`, 'msg-info');
     }
 }
 
+function transformPoint(x, y, entity, centerX, centerY) {
+    // Apply scale
+    let px = x * entity.scale;
+    let py = y * entity.scale;
+    
+    // Apply rotation around center
+    if (entity.rotation !== 0) {
+        const rad = entity.rotation * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        
+        const cx = centerX * entity.scale;
+        const cy = centerY * entity.scale;
+        
+        const rx = px - cx;
+        const ry = py - cy;
+        
+        px = rx * cos - ry * sin + cx;
+        py = rx * sin + ry * cos + cy;
+    }
+    
+    // Apply offset
+    px += entity.offsetX;
+    py += entity.offsetY;
+    
+    return { x: px, y: py };
+}
+
+function generateGcodeForEntities(entities) {
+    const gcodeGen = new GCodeGenerator();
+    const turtle = new Turtle();
+    
+    entities.forEach(entity => {
+        // Calculate center for rotation
+        const bounds = getEntityBounds(entity.paths);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+        
+        entity.paths.forEach(path => {
+            if (path.points.length < 2) return;
+            
+            turtle.penUpCmd();
+            const firstPoint = transformPoint(path.points[0].x, path.points[0].y, entity, centerX, centerY);
+            turtle.moveTo(firstPoint.x, firstPoint.y);
+            turtle.penDown();
+            
+            for (let i = 1; i < path.points.length; i++) {
+                const p = transformPoint(path.points[i].x, path.points[i].y, entity, centerX, centerY);
+                turtle.moveTo(p.x, p.y);
+            }
+        });
+    });
+    
+    turtle.penUpCmd();
+    return gcodeGen.turtleToGcode(turtle);
+}
+
 async function exportSvg() {
-    // In client-side mode, generate SVG from preview paths
-    if (CLIENT_SIDE_MODE && state.preview && state.preview.length > 0) {
-        const svg = generateSvgFromPaths(state.preview);
-        downloadFile('drawing.svg', svg, 'image/svg+xml');
+    if (state.entities.length === 0) {
+        logConsole('No elements to export', 'msg-error');
         return;
     }
     
-    const result = await sendCommand('/api/export/svg');
-    if (result.success) {
-        downloadFile('drawing.svg', result.svg, 'image/svg+xml');
-    }
+    // Collect all paths with their colors, applying transforms
+    const allPaths = [];
+    state.entities.forEach(entity => {
+        const color = PEN_COLORS[entity.color]?.hex || '#000';
+        const bounds = getEntityBounds(entity.paths);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+        
+        entity.paths.forEach(path => {
+            if (path.points.length >= 2) {
+                // Apply transforms including rotation
+                const transformedPoints = path.points.map(p => 
+                    transformPoint(p.x, p.y, entity, centerX, centerY)
+                );
+                allPaths.push({
+                    points: transformedPoints,
+                    color: color
+                });
+            }
+        });
+    });
+    
+    const svg = generateSvgFromPaths(allPaths);
+    downloadFile('drawing.svg', svg, 'image/svg+xml');
+    logConsole('Exported SVG', 'msg-info');
 }
 
 function downloadFile(filename, content, type) {
@@ -918,18 +1975,32 @@ function generateSvgFromPaths(paths) {
     svg += `<svg xmlns="http://www.w3.org/2000/svg" `;
     svg += `width="${width + 2*margin}mm" height="${height + 2*margin}mm" `;
     svg += `viewBox="${minX - margin} ${-maxY - margin} ${width + 2*margin} ${height + 2*margin}">\n`;
-    svg += `  <g stroke="black" fill="none" stroke-width="0.5">\n`;
     
+    // Group paths by color
+    const colorGroups = {};
     for (const path of paths) {
-        if (path.points.length >= 2) {
-            const d = path.points.map((p, i) => 
-                `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`
-            ).join(' ');
-            svg += `    <path d="${d}" />\n`;
+        const color = path.color || '#000000';
+        if (!colorGroups[color]) {
+            colorGroups[color] = [];
         }
+        colorGroups[color].push(path);
     }
     
-    svg += `  </g>\n</svg>`;
+    // Output each color group
+    for (const [color, colorPaths] of Object.entries(colorGroups)) {
+        svg += `  <g stroke="${color}" fill="none" stroke-width="0.5">\n`;
+        for (const path of colorPaths) {
+            if (path.points.length >= 2) {
+                const d = path.points.map((p, i) => 
+                    `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`
+                ).join(' ');
+                svg += `    <path d="${d}" />\n`;
+            }
+        }
+        svg += `  </g>\n`;
+    }
+    
+    svg += `</svg>`;
     return svg;
 }
 
@@ -1015,15 +2086,18 @@ async function generatePattern() {
         try {
             const patternGen = new PatternGenerator();
             const turtle = patternGen.generate(generator, options);
-            const gcodeGen = new GCodeGenerator();
-            
-            state.currentGcode = gcodeGen.turtleToGcode(turtle);
             const paths = turtle.getPaths();
-            state.preview = paths;
-            updatePreview(paths);
+            
+            // Create entity instead of just preview
+            const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
+            addEntity(paths, {
+                algorithm: generator,
+                algorithmOptions: options,
+                name: generatorName
+            });
+            
             elements.plotStatus.textContent = `${paths.length} lines generated`;
-            elements.menuFooter.style.display = 'block';
-            logConsole(`Generated ${generator} pattern`, 'msg-info');
+            logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
         } catch (err) {
             logConsole(`Generate failed: ${err.message}`, 'msg-error');
         }
@@ -1033,10 +2107,15 @@ async function generatePattern() {
     const result = await sendCommand('/api/generate', 'POST', { generator, options });
     
     if (result.success) {
-        state.preview = result.preview;
-        updatePreview(result.preview);
+        // Create entity from server result
+        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+        const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
+        addEntity(paths, {
+            algorithm: generator,
+            algorithmOptions: options,
+            name: generatorName
+        });
         elements.plotStatus.textContent = `${result.lines} lines generated`;
-        elements.menuFooter.style.display = 'block';
     } else {
         logConsole(`Generate failed: ${result.error}`, 'msg-error');
     }
@@ -1120,14 +2199,18 @@ async function convertImage() {
         try {
             const imgConverter = new ImageConverter();
             const turtle = await imgConverter.convert(state.currentImageElement, algorithm, options);
-            const gcodeGen = new GCodeGenerator();
+            const paths = turtle.getPaths();
             
-            state.currentGcode = gcodeGen.turtleToGcode(turtle);
-            state.preview = turtle.getPaths();
-            updatePreview(state.preview);
-            elements.plotStatus.textContent = `${turtle.getPaths().length} lines converted (client-side)`;
-            elements.menuFooter.style.display = 'block';
-            logConsole(`Converted image with ${algorithm} (client-side)`, 'msg-info');
+            // Create entity instead of just preview
+            const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
+            addEntity(paths, {
+                algorithm: algorithm,
+                algorithmOptions: options,
+                name: `Image (${converterName})`
+            });
+            
+            elements.plotStatus.textContent = `${paths.length} lines converted`;
+            logConsole(`Converted image with ${algorithm} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
         } catch (err) {
             logConsole(`Convert failed: ${err.message}`, 'msg-error');
         }
@@ -1141,10 +2224,15 @@ async function convertImage() {
     });
     
     if (result.success) {
-        state.preview = result.preview;
-        updatePreview(result.preview);
+        // Create entity from server result
+        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+        const converterName = elements.converterSelect.selectedOptions[0]?.textContent || algorithm;
+        addEntity(paths, {
+            algorithm: algorithm,
+            algorithmOptions: options,
+            name: `Image (${converterName})`
+        });
         elements.plotStatus.textContent = `${result.lines} lines converted`;
-        elements.menuFooter.style.display = 'block';
     } else {
         logConsole(`Convert failed: ${result.error}`, 'msg-error');
     }
@@ -1264,11 +2352,45 @@ function drawCanvas() {
     // Draw work area boundary
     drawWorkArea();
     
+    // Draw all entities
+    state.entities.forEach(entity => {
+        if (!entity.visible || entity.paths.length === 0) return;
+        
+        const color = PEN_COLORS[entity.color] || PEN_COLORS.black;
+        const isSelected = state.selectedEntityIds.has(entity.id);
+        
+        // Calculate entity center for rotation
+        const bounds = getEntityBounds(entity.paths);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+        
+        ctx.save();
+        
+        // Apply transforms: translate to offset, then rotate around center
+        ctx.translate(entity.offsetX, entity.offsetY);
+        
+        if (entity.rotation !== 0) {
+            ctx.translate(centerX * entity.scale, centerY * entity.scale);
+            ctx.rotate(entity.rotation * Math.PI / 180);
+            ctx.translate(-centerX * entity.scale, -centerY * entity.scale);
+        }
+        
+        ctx.scale(entity.scale, entity.scale);
+        
+        // Draw paths with entity color
+        drawEntityPaths(entity.paths, color.hex, isSelected);
+        
+        // Draw selection indicator
+        if (isSelected) {
+            drawEntityBounds(entity.paths, entity.rotation);
+        }
+        
+        ctx.restore();
+    });
     
-    // Draw preview paths
-    // state.preview can be either an array of paths or an object with .paths property
+    // Legacy: also draw preview if set (for backwards compatibility)
     const paths = Array.isArray(state.preview) ? state.preview : (state.preview?.paths || null);
-    if (paths && paths.length > 0) {
+    if (paths && paths.length > 0 && state.entities.length === 0) {
         ctx.save();
         ctx.translate(state.previewOffsetX, state.previewOffsetY);
         ctx.scale(state.previewScale, state.previewScale);
@@ -1282,6 +2404,80 @@ function drawCanvas() {
     }
     
     ctx.restore();
+    
+    // Update stats
+    const totalLines = state.entities.reduce((sum, e) => sum + e.paths.length, 0);
+    if (elements.statLines) {
+        elements.statLines.textContent = totalLines;
+    }
+}
+
+function drawEntityPaths(paths, color, isSelected) {
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    
+    paths.forEach(path => {
+        if (path.points.length < 2) return;
+        
+        ctx.strokeStyle = color;
+        const baseWidth = (path.diameter || 0.5) * 2;
+        ctx.lineWidth = baseWidth * lineScale;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        ctx.beginPath();
+        ctx.moveTo(path.points[0].x, path.points[0].y);
+        
+        for (let i = 1; i < path.points.length; i++) {
+            ctx.lineTo(path.points[i].x, path.points[i].y);
+        }
+        
+        ctx.stroke();
+    });
+}
+
+function getEntityBounds(paths) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    paths.forEach(path => {
+        path.points.forEach(p => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+    });
+    return { minX, minY, maxX, maxY };
+}
+
+function drawEntityBounds(paths, rotation = 0) {
+    if (paths.length === 0) return;
+    
+    const bounds = getEntityBounds(paths);
+    const { minX, minY, maxX, maxY } = bounds;
+    
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    const padding = 10 * lineScale;
+    
+    ctx.strokeStyle = 'rgba(89, 137, 231, 0.6)';
+    ctx.lineWidth = 1.5 * lineScale;
+    ctx.setLineDash([4 * lineScale, 4 * lineScale]);
+    
+    ctx.beginPath();
+    ctx.rect(minX - padding, minY - padding, (maxX - minX) + 2 * padding, (maxY - minY) + 2 * padding);
+    ctx.stroke();
+    
+    // Draw rotation indicator if rotated
+    if (rotation !== 0) {
+        const centerX = (minX + maxX) / 2;
+        const topY = maxY + padding + 5 * lineScale;
+        
+        ctx.fillStyle = 'rgba(89, 137, 231, 0.8)';
+        ctx.font = `${10 * lineScale}px Inter`;
+        ctx.scale(1, -1);  // Flip for text
+        ctx.fillText(`${rotation}°`, centerX - 10 * lineScale, -topY);
+        ctx.scale(1, -1);  // Flip back
+    }
+    
+    ctx.setLineDash([]);
 }
 
 function generateAboutPattern() {
