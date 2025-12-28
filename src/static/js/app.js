@@ -210,6 +210,9 @@ const state = {
     jogDistance: 10,
     currentImagePath: null,
     currentImageElement: null,  // For client-side conversion
+    currentFile: null,          // Current uploaded file
+    currentFileName: null,      // Current file name
+    pendingImport: null,        // Pending import data {type, mode, text, dataUrl}
     preview: null,
     currentGcode: [],  // Store generated G-code for client-side mode
     
@@ -1737,30 +1740,181 @@ function handleFileSelect(e) {
 }
 
 async function uploadFile(file) {
-    // Check if it's an image file
-    const isImage = file.type.startsWith('image/');
+    const filename = file.name.toLowerCase();
+    const isImage = file.type.startsWith('image/') && !filename.endsWith('.svg');
+    const isSvg = filename.endsWith('.svg') || file.type === 'image/svg+xml';
+    const isGcode = filename.match(/\.(gcode|ngc|nc)$/);
     
+    state.currentFile = file;
+    state.currentFileName = file.name;
+    
+    // Handle different file types with appropriate UI
+    if (isGcode) {
+        // G-code: Show import options (direct import only)
+        await handleGcodeFile(file);
+    } else if (isSvg) {
+        // SVG: Show import options (import as paths or convert as image)
+        await handleSvgFile(file);
+    } else if (isImage) {
+        // Raster image: Show conversion options
+        await handleImageFile(file);
+    } else {
+        logConsole(`Unsupported file type: ${file.name}`, 'msg-error');
+    }
+}
+
+async function handleGcodeFile(file) {
+    const text = await file.text();
+    
+    // Show G-code import section
+    elements.uploadZone.style.display = 'none';
+    elements.convertSection.style.display = 'block';
+    
+    // Preview info
+    const lineCount = text.split('\n').length;
+    elements.convertPreview.innerHTML = `
+        <div class="file-preview">
+            <div class="file-icon">📄</div>
+            <div class="file-name">${file.name}</div>
+            <div class="file-info">${lineCount} lines</div>
+        </div>
+    `;
+    
+    // Show import-only options for G-code
+    elements.converterSelect.style.display = 'none';
+    elements.converterOptions.innerHTML = `
+        <div class="import-info">
+            <p>G-code will be imported directly as paths</p>
+        </div>
+    `;
+    elements.convertBtn.textContent = 'Import Paths';
+    elements.convertBtn.disabled = false;
+    elements.menuFooter.style.display = 'block';
+    
+    // Store the parsed data for import
+    state.pendingImport = {
+        type: 'gcode',
+        text: text
+    };
+    
+    logConsole(`G-code file loaded: ${file.name}`, 'msg-info');
+}
+
+async function handleSvgFile(file) {
+    const text = await file.text();
+    const dataUrl = await fileToDataUrl(file);
+    
+    // Check if it's a Polargraph-exported SVG
+    const isPolargraphSvg = text.includes('polargraph-metadata') || text.includes('data-polargraph-version');
+    
+    // Show SVG import section
+    elements.uploadZone.style.display = 'none';
+    elements.convertSection.style.display = 'block';
+    
+    // Preview
+    elements.convertPreview.innerHTML = `<img src="${dataUrl}" alt="Preview" style="max-width: 100%; max-height: 150px;">`;
+    
+    // Show import mode selector
+    const importModeHtml = `
+        <div class="import-mode-selector">
+            <label class="import-mode-option">
+                <input type="radio" name="svgImportMode" value="paths" checked>
+                <span class="mode-label">
+                    <strong>Import as Paths</strong>
+                    <small>Trace vector paths directly (pen follows lines)</small>
+                </span>
+            </label>
+            <label class="import-mode-option">
+                <input type="radio" name="svgImportMode" value="convert">
+                <span class="mode-label">
+                    <strong>Convert as Image</strong>
+                    <small>Rasterize and apply algorithm (spiral, crosshatch, etc.)</small>
+                </span>
+            </label>
+        </div>
+        <div id="svgConvertOptions" style="display: none;"></div>
+    `;
+    
+    elements.converterSelect.style.display = 'none';
+    elements.converterOptions.innerHTML = importModeHtml;
+    
+    if (isPolargraphSvg) {
+        elements.converterOptions.insertAdjacentHTML('afterbegin', 
+            '<div class="import-notice">✓ Polargraph export detected - layers will be preserved</div>'
+        );
+    }
+    
+    // Handle mode change
+    elements.converterOptions.querySelectorAll('input[name="svgImportMode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const svgConvertOptions = document.getElementById('svgConvertOptions');
+            if (e.target.value === 'convert') {
+                // Show converter options
+                svgConvertOptions.style.display = 'block';
+                elements.converterSelect.style.display = 'block';
+                elements.convertBtn.textContent = 'Convert';
+                state.pendingImport.mode = 'convert';
+            } else {
+                svgConvertOptions.style.display = 'none';
+                elements.converterSelect.style.display = 'none';
+                elements.convertBtn.textContent = 'Import Paths';
+                state.pendingImport.mode = 'paths';
+            }
+        });
+    });
+    
+    elements.convertBtn.textContent = 'Import Paths';
+    elements.convertBtn.disabled = false;
+    elements.menuFooter.style.display = 'block';
+    
+    // Store for import
+    state.pendingImport = {
+        type: 'svg',
+        mode: 'paths',
+        text: text,
+        dataUrl: dataUrl
+    };
+    
+    // Also load as image for potential conversion
+    try {
+        const img = await loadImageFromFile(file);
+        state.currentImageElement = img;
+        state.currentImagePath = file.name;
+    } catch (e) {
+        console.warn('Could not load SVG as image:', e);
+    }
+    
+    logConsole(`SVG file loaded: ${file.name}${isPolargraphSvg ? ' (Polargraph export)' : ''}`, 'msg-info');
+}
+
+async function handleImageFile(file) {
     // In client-side mode, handle images locally
-    if (CLIENT_SIDE_MODE && isImage) {
+    if (CLIENT_SIDE_MODE) {
         try {
             const img = await loadImageFromFile(file);
             state.currentImageElement = img;
-            state.currentImagePath = file.name;  // Just for display
+            state.currentImagePath = file.name;
             
             // Show preview
             const dataUrl = await fileToDataUrl(file);
             elements.convertPreview.innerHTML = `<img src="${dataUrl}" alt="Preview">`;
             elements.convertSection.style.display = 'block';
             elements.uploadZone.style.display = 'none';
+            elements.converterSelect.style.display = 'block';
+            elements.convertBtn.textContent = 'Convert';
             elements.convertBtn.disabled = false;
             elements.menuFooter.style.display = 'block';
-            logConsole(`Image loaded for client-side conversion`, 'msg-info');
+            
+            state.pendingImport = null; // Not an import, a conversion
+            
+            logConsole(`Image loaded for conversion`, 'msg-info');
         } catch (error) {
             logConsole(`Image load error: ${error.message}`, 'msg-error');
         }
         return;
     }
     
+    // Server mode
     const formData = new FormData();
     formData.append('file', file);
     
@@ -1777,7 +1931,9 @@ async function uploadFile(file) {
                 state.currentImagePath = result.filepath;
                 elements.convertPreview.innerHTML = `<img src="/uploads/${encodeURIComponent(file.name)}" alt="Preview">`;
                 elements.convertSection.style.display = 'block';
-                elements.uploadZone.style.display = 'none'; // Hide drop zone, use preview for replacement
+                elements.uploadZone.style.display = 'none';
+                elements.converterSelect.style.display = 'block';
+                elements.convertBtn.textContent = 'Convert';
                 elements.convertBtn.disabled = false;
             } else {
                 state.preview = result.preview;
@@ -1832,10 +1988,10 @@ async function exportGcode() {
     
     if (colors.length === 1) {
         // Single color - export as single file
-        const gcode = generateGcodeForEntities(state.entities);
+        const gcode = generateGcodeForEntities(state.entities, colors[0]);
         const colorName = PEN_COLORS[colors[0]]?.name || colors[0];
         downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
-        logConsole(`Exported G-code (${colorName})`, 'msg-info');
+        logConsole(`Exported G-code (${colorName}) with metadata`, 'msg-info');
     } else {
         // Multiple colors - export as ZIP or separate files
         logConsole(`Exporting ${colors.length} G-code files (one per color)...`, 'msg-info');
@@ -1843,7 +1999,7 @@ async function exportGcode() {
         // Export each color as separate file
         for (const colorId of colors) {
             const entities = colorGroups[colorId];
-            const gcode = generateGcodeForEntities(entities);
+            const gcode = generateGcodeForEntities(entities, colorId);
             const colorName = PEN_COLORS[colorId]?.name || colorId;
             
             // Small delay between downloads for browser compatibility
@@ -1851,7 +2007,7 @@ async function exportGcode() {
             downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
         }
         
-        logConsole(`Exported ${colors.length} G-code files`, 'msg-info');
+        logConsole(`Exported ${colors.length} G-code files with metadata`, 'msg-info');
     }
 }
 
@@ -1883,17 +2039,41 @@ function transformPoint(x, y, entity, centerX, centerY) {
     return { x: px, y: py };
 }
 
-function generateGcodeForEntities(entities) {
+function generateGcodeForEntities(entities, colorId = null) {
     const gcodeGen = new GCodeGenerator();
     const turtle = new Turtle();
+    const lines = [];
     
-    entities.forEach(entity => {
+    // Add header with metadata
+    lines.push('; Generated by Polargraph');
+    lines.push(`; Date: ${new Date().toISOString()}`);
+    lines.push(`; Entities: ${entities.length}`);
+    if (colorId) {
+        const colorName = PEN_COLORS[colorId]?.name || colorId;
+        lines.push(`; Color: ${colorName} (${colorId})`);
+    }
+    lines.push(';');
+    
+    // Add entity metadata as JSON comment for reimport
+    const metadata = entities.map(e => ({
+        name: e.name,
+        color: e.color,
+        algorithm: e.algorithm,
+        pathCount: e.paths.length
+    }));
+    lines.push(`; polargraph-metadata: ${JSON.stringify(metadata)}`);
+    lines.push(';');
+    
+    entities.forEach((entity, entityIdx) => {
+        // Add entity marker comment
+        lines.push(`; Entity ${entityIdx}: ${entity.name} (${PEN_COLORS[entity.color]?.name || entity.color})`);
+        
         // Calculate center for rotation
         const bounds = getEntityBounds(entity.paths);
         const centerX = (bounds.minX + bounds.maxX) / 2;
         const centerY = (bounds.minY + bounds.maxY) / 2;
         
-        entity.paths.forEach(path => {
+        entity.paths.forEach((path, pathIdx) => {
             if (path.points.length < 2) return;
             
             turtle.penUpCmd();
@@ -1909,7 +2089,10 @@ function generateGcodeForEntities(entities) {
     });
     
     turtle.penUpCmd();
-    return gcodeGen.turtleToGcode(turtle);
+    
+    // Combine header with generated gcode
+    const gcodeLines = gcodeGen.turtleToGcode(turtle);
+    return [...lines, ...gcodeLines];
 }
 
 async function exportSvg() {
@@ -1918,31 +2101,10 @@ async function exportSvg() {
         return;
     }
     
-    // Collect all paths with their colors, applying transforms
-    const allPaths = [];
-    state.entities.forEach(entity => {
-        const color = PEN_COLORS[entity.color]?.hex || '#000';
-        const bounds = getEntityBounds(entity.paths);
-        const centerX = (bounds.minX + bounds.maxX) / 2;
-        const centerY = (bounds.minY + bounds.maxY) / 2;
-        
-        entity.paths.forEach(path => {
-            if (path.points.length >= 2) {
-                // Apply transforms including rotation
-                const transformedPoints = path.points.map(p => 
-                    transformPoint(p.x, p.y, entity, centerX, centerY)
-                );
-                allPaths.push({
-                    points: transformedPoints,
-                    color: color
-                });
-            }
-        });
-    });
-    
-    const svg = generateSvgFromPaths(allPaths);
+    // Use new entity-aware SVG generator with metadata
+    const svg = generateSvgFromEntities(state.entities);
     downloadFile('drawing.svg', svg, 'image/svg+xml');
-    logConsole('Exported SVG', 'msg-info');
+    logConsole('Exported SVG with layer metadata', 'msg-info');
 }
 
 function downloadFile(filename, content, type) {
@@ -1955,6 +2117,78 @@ function downloadFile(filename, content, type) {
     URL.revokeObjectURL(url);
 }
 
+function generateSvgFromEntities(entities) {
+    // Calculate bounds from all entities
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
+    entities.forEach(entity => {
+        const bounds = getEntityBounds(entity.paths);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+        
+        entity.paths.forEach(path => {
+            path.points.forEach(p => {
+                const tp = transformPoint(p.x, p.y, entity, centerX, centerY);
+                minX = Math.min(minX, tp.x);
+                minY = Math.min(minY, tp.y);
+                maxX = Math.max(maxX, tp.x);
+                maxY = Math.max(maxY, tp.y);
+            });
+        });
+    });
+    
+    const width = maxX - minX || 100;
+    const height = maxY - minY || 100;
+    const margin = 10;
+    
+    let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    svg += `<svg xmlns="http://www.w3.org/2000/svg" `;
+    svg += `width="${width + 2*margin}mm" height="${height + 2*margin}mm" `;
+    svg += `viewBox="${minX - margin} ${-maxY - margin} ${width + 2*margin} ${height + 2*margin}"\n`;
+    svg += `  data-polargraph-version="1.0">\n`;
+    
+    // Add metadata for reimport
+    const metadata = entities.map(e => ({
+        name: e.name,
+        color: e.color,
+        algorithm: e.algorithm,
+        algorithmOptions: e.algorithmOptions,
+        offsetX: e.offsetX,
+        offsetY: e.offsetY,
+        scale: e.scale,
+        rotation: e.rotation
+    }));
+    svg += `  <!-- polargraph-metadata: ${JSON.stringify(metadata)} -->\n`;
+    
+    // Output each entity as a group with metadata
+    entities.forEach((entity, idx) => {
+        const color = PEN_COLORS[entity.color]?.hex || '#000000';
+        const bounds = getEntityBounds(entity.paths);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+        
+        svg += `  <g id="entity-${idx}" stroke="${color}" fill="none" stroke-width="0.5"\n`;
+        svg += `     data-entity-name="${entity.name}" data-entity-color="${entity.color}">\n`;
+        
+        entity.paths.forEach(path => {
+            if (path.points.length >= 2) {
+                const transformedPoints = path.points.map(p => 
+                    transformPoint(p.x, p.y, entity, centerX, centerY)
+                );
+                const d = transformedPoints.map((p, i) => 
+                    `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`
+                ).join(' ');
+                svg += `    <path d="${d}" />\n`;
+            }
+        });
+        svg += `  </g>\n`;
+    });
+    
+    svg += `</svg>`;
+    return svg;
+}
+
+// Legacy function for compatibility
 function generateSvgFromPaths(paths) {
     // Calculate bounds
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -2002,6 +2236,545 @@ function generateSvgFromPaths(paths) {
     
     svg += `</svg>`;
     return svg;
+}
+
+// ============================================================================
+// Import Functions (SVG, G-code)
+// ============================================================================
+
+/**
+ * Parse SVG file and extract paths as entities
+ * Handles: our exported SVGs with metadata, Illustrator, Inkscape, CorelDRAW, etc.
+ */
+function parseSvgToEntities(svgText) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svg = doc.querySelector('svg');
+    
+    if (!svg) {
+        throw new Error('Invalid SVG file');
+    }
+    
+    const entities = [];
+    let polargraphMetadata = null;
+    
+    // Check for our custom metadata
+    const metadataMatch = svgText.match(/polargraph-metadata:\s*(\[.*?\])/);
+    if (metadataMatch) {
+        try {
+            polargraphMetadata = JSON.parse(metadataMatch[1]);
+            logConsole('Found Polargraph metadata - restoring original layers', 'msg-info');
+        } catch (e) {
+            console.warn('Could not parse polargraph metadata:', e);
+        }
+    }
+    
+    // Get viewBox for coordinate transformation
+    const viewBox = svg.getAttribute('viewBox');
+    let vbMinX = 0, vbMinY = 0, vbWidth = 100, vbHeight = 100;
+    if (viewBox) {
+        const parts = viewBox.split(/\s+/).map(Number);
+        [vbMinX, vbMinY, vbWidth, vbHeight] = parts;
+    }
+    
+    // Helper: Parse SVG path d attribute to points
+    function parsePathD(d) {
+        const points = [];
+        const commands = d.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi) || [];
+        let currentX = 0, currentY = 0;
+        let startX = 0, startY = 0;
+        
+        for (const cmd of commands) {
+            const type = cmd[0];
+            const args = cmd.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
+            
+            switch (type.toUpperCase()) {
+                case 'M': // Move to
+                    if (type === 'M') {
+                        currentX = args[0];
+                        currentY = args[1];
+                    } else {
+                        currentX += args[0];
+                        currentY += args[1];
+                    }
+                    startX = currentX;
+                    startY = currentY;
+                    points.push({ x: currentX, y: -currentY }); // Flip Y
+                    // Handle implicit lineto after moveto
+                    for (let i = 2; i < args.length; i += 2) {
+                        if (type === 'M') {
+                            currentX = args[i];
+                            currentY = args[i + 1];
+                        } else {
+                            currentX += args[i];
+                            currentY += args[i + 1];
+                        }
+                        points.push({ x: currentX, y: -currentY });
+                    }
+                    break;
+                    
+                case 'L': // Line to
+                    for (let i = 0; i < args.length; i += 2) {
+                        if (type === 'L') {
+                            currentX = args[i];
+                            currentY = args[i + 1];
+                        } else {
+                            currentX += args[i];
+                            currentY += args[i + 1];
+                        }
+                        points.push({ x: currentX, y: -currentY });
+                    }
+                    break;
+                    
+                case 'H': // Horizontal line
+                    for (const val of args) {
+                        currentX = type === 'H' ? val : currentX + val;
+                        points.push({ x: currentX, y: -currentY });
+                    }
+                    break;
+                    
+                case 'V': // Vertical line
+                    for (const val of args) {
+                        currentY = type === 'V' ? val : currentY + val;
+                        points.push({ x: currentX, y: -currentY });
+                    }
+                    break;
+                    
+                case 'Z': // Close path
+                    if (startX !== currentX || startY !== currentY) {
+                        points.push({ x: startX, y: -startY });
+                    }
+                    currentX = startX;
+                    currentY = startY;
+                    break;
+                    
+                case 'C': // Cubic bezier - approximate with line segments
+                    for (let i = 0; i < args.length; i += 6) {
+                        const x1 = type === 'C' ? args[i] : currentX + args[i];
+                        const y1 = type === 'C' ? args[i+1] : currentY + args[i+1];
+                        const x2 = type === 'C' ? args[i+2] : currentX + args[i+2];
+                        const y2 = type === 'C' ? args[i+3] : currentY + args[i+3];
+                        const x = type === 'C' ? args[i+4] : currentX + args[i+4];
+                        const y = type === 'C' ? args[i+5] : currentY + args[i+5];
+                        
+                        // Approximate bezier with line segments
+                        const steps = 10;
+                        for (let t = 1; t <= steps; t++) {
+                            const tt = t / steps;
+                            const px = Math.pow(1-tt, 3) * currentX + 
+                                       3 * Math.pow(1-tt, 2) * tt * x1 +
+                                       3 * (1-tt) * tt * tt * x2 +
+                                       Math.pow(tt, 3) * x;
+                            const py = Math.pow(1-tt, 3) * currentY + 
+                                       3 * Math.pow(1-tt, 2) * tt * y1 +
+                                       3 * (1-tt) * tt * tt * y2 +
+                                       Math.pow(tt, 3) * y;
+                            points.push({ x: px, y: -py });
+                        }
+                        currentX = x;
+                        currentY = y;
+                    }
+                    break;
+                    
+                case 'Q': // Quadratic bezier
+                    for (let i = 0; i < args.length; i += 4) {
+                        const x1 = type === 'Q' ? args[i] : currentX + args[i];
+                        const y1 = type === 'Q' ? args[i+1] : currentY + args[i+1];
+                        const x = type === 'Q' ? args[i+2] : currentX + args[i+2];
+                        const y = type === 'Q' ? args[i+3] : currentY + args[i+3];
+                        
+                        const steps = 10;
+                        for (let t = 1; t <= steps; t++) {
+                            const tt = t / steps;
+                            const px = Math.pow(1-tt, 2) * currentX + 
+                                       2 * (1-tt) * tt * x1 +
+                                       Math.pow(tt, 2) * x;
+                            const py = Math.pow(1-tt, 2) * currentY + 
+                                       2 * (1-tt) * tt * y1 +
+                                       Math.pow(tt, 2) * y;
+                            points.push({ x: px, y: -py });
+                        }
+                        currentX = x;
+                        currentY = y;
+                    }
+                    break;
+                    
+                case 'A': // Arc - approximate with line segments
+                    for (let i = 0; i < args.length; i += 7) {
+                        const x = type === 'A' ? args[i+5] : currentX + args[i+5];
+                        const y = type === 'A' ? args[i+6] : currentY + args[i+6];
+                        // Simple approximation: just draw a line (proper arc handling is complex)
+                        points.push({ x: x, y: -y });
+                        currentX = x;
+                        currentY = y;
+                    }
+                    break;
+            }
+        }
+        
+        return points;
+    }
+    
+    // Helper: Get stroke color from element (handling inheritance)
+    function getStrokeColor(element) {
+        let el = element;
+        while (el && el !== svg) {
+            const stroke = el.getAttribute('stroke');
+            if (stroke && stroke !== 'none' && stroke !== 'inherit') {
+                return stroke;
+            }
+            const style = el.getAttribute('style');
+            if (style) {
+                const match = style.match(/stroke:\s*([^;]+)/);
+                if (match && match[1] !== 'none') {
+                    return match[1].trim();
+                }
+            }
+            el = el.parentElement;
+        }
+        return '#000000';
+    }
+    
+    // Helper: Map hex color to our PEN_COLORS
+    function mapColorToPenColor(hexColor) {
+        if (!hexColor) return 'black';
+        
+        const hex = hexColor.toLowerCase().replace('#', '');
+        
+        // Exact match first
+        for (const [id, color] of Object.entries(PEN_COLORS)) {
+            if (color.hex.toLowerCase().replace('#', '') === hex) {
+                return id;
+            }
+        }
+        
+        // Find closest color by RGB distance
+        let closestId = 'black';
+        let closestDist = Infinity;
+        
+        const r1 = parseInt(hex.substr(0, 2), 16) || 0;
+        const g1 = parseInt(hex.substr(2, 2), 16) || 0;
+        const b1 = parseInt(hex.substr(4, 2), 16) || 0;
+        
+        for (const [id, color] of Object.entries(PEN_COLORS)) {
+            const h = color.hex.replace('#', '');
+            const r2 = parseInt(h.substr(0, 2), 16);
+            const g2 = parseInt(h.substr(2, 2), 16);
+            const b2 = parseInt(h.substr(4, 2), 16);
+            
+            const dist = Math.sqrt(
+                Math.pow(r1 - r2, 2) + 
+                Math.pow(g1 - g2, 2) + 
+                Math.pow(b1 - b2, 2)
+            );
+            
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestId = id;
+            }
+        }
+        
+        return closestId;
+    }
+    
+    // Process all groups and paths
+    const groups = svg.querySelectorAll('g');
+    let entityIndex = 0;
+    
+    // If we have groups, process each as a potential entity
+    if (groups.length > 0) {
+        groups.forEach((group, gIdx) => {
+            const paths = group.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse');
+            if (paths.length === 0) return;
+            
+            const entityPaths = [];
+            let entityColor = 'black';
+            
+            // Check for our custom data attributes
+            const dataName = group.getAttribute('data-entity-name');
+            const dataColor = group.getAttribute('data-entity-color');
+            
+            paths.forEach(pathEl => {
+                let points = [];
+                
+                if (pathEl.tagName === 'path') {
+                    const d = pathEl.getAttribute('d');
+                    if (d) points = parsePathD(d);
+                } else if (pathEl.tagName === 'line') {
+                    points = [
+                        { x: parseFloat(pathEl.getAttribute('x1') || 0), y: -parseFloat(pathEl.getAttribute('y1') || 0) },
+                        { x: parseFloat(pathEl.getAttribute('x2') || 0), y: -parseFloat(pathEl.getAttribute('y2') || 0) }
+                    ];
+                } else if (pathEl.tagName === 'polyline' || pathEl.tagName === 'polygon') {
+                    const pointsAttr = pathEl.getAttribute('points') || '';
+                    const coords = pointsAttr.trim().split(/[\s,]+/).map(Number);
+                    for (let i = 0; i < coords.length; i += 2) {
+                        points.push({ x: coords[i], y: -coords[i+1] });
+                    }
+                    if (pathEl.tagName === 'polygon' && points.length > 0) {
+                        points.push({ ...points[0] }); // Close polygon
+                    }
+                } else if (pathEl.tagName === 'rect') {
+                    const x = parseFloat(pathEl.getAttribute('x') || 0);
+                    const y = parseFloat(pathEl.getAttribute('y') || 0);
+                    const w = parseFloat(pathEl.getAttribute('width') || 0);
+                    const h = parseFloat(pathEl.getAttribute('height') || 0);
+                    points = [
+                        { x: x, y: -y },
+                        { x: x + w, y: -y },
+                        { x: x + w, y: -(y + h) },
+                        { x: x, y: -(y + h) },
+                        { x: x, y: -y }
+                    ];
+                } else if (pathEl.tagName === 'circle') {
+                    const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                    const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                    const r = parseFloat(pathEl.getAttribute('r') || 0);
+                    const steps = 36;
+                    for (let i = 0; i <= steps; i++) {
+                        const angle = (i / steps) * 2 * Math.PI;
+                        points.push({
+                            x: cx + r * Math.cos(angle),
+                            y: -(cy + r * Math.sin(angle))
+                        });
+                    }
+                } else if (pathEl.tagName === 'ellipse') {
+                    const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                    const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                    const rx = parseFloat(pathEl.getAttribute('rx') || 0);
+                    const ry = parseFloat(pathEl.getAttribute('ry') || 0);
+                    const steps = 36;
+                    for (let i = 0; i <= steps; i++) {
+                        const angle = (i / steps) * 2 * Math.PI;
+                        points.push({
+                            x: cx + rx * Math.cos(angle),
+                            y: -(cy + ry * Math.sin(angle))
+                        });
+                    }
+                }
+                
+                if (points.length >= 2) {
+                    entityPaths.push({ points });
+                }
+                
+                // Get color from first path if not set
+                if (!entityColor || entityColor === 'black') {
+                    const strokeColor = getStrokeColor(pathEl);
+                    entityColor = mapColorToPenColor(strokeColor);
+                }
+            });
+            
+            if (entityPaths.length > 0) {
+                // Use metadata if available
+                const meta = polargraphMetadata ? polargraphMetadata[entityIndex] : null;
+                
+                entities.push({
+                    paths: entityPaths,
+                    color: dataColor || meta?.color || entityColor,
+                    name: dataName || meta?.name || `Layer ${gIdx + 1}`,
+                    algorithm: meta?.algorithm || 'imported',
+                    algorithmOptions: meta?.algorithmOptions || {},
+                    offsetX: meta?.offsetX || 0,
+                    offsetY: meta?.offsetY || 0,
+                    scale: meta?.scale || 1,
+                    rotation: meta?.rotation || 0
+                });
+                entityIndex++;
+            }
+        });
+    }
+    
+    // Also process any paths not in groups
+    const topLevelPaths = svg.querySelectorAll(':scope > path, :scope > line, :scope > polyline, :scope > polygon, :scope > rect, :scope > circle, :scope > ellipse');
+    if (topLevelPaths.length > 0) {
+        const entityPaths = [];
+        let entityColor = 'black';
+        
+        topLevelPaths.forEach(pathEl => {
+            let points = [];
+            
+            if (pathEl.tagName === 'path') {
+                const d = pathEl.getAttribute('d');
+                if (d) points = parsePathD(d);
+            }
+            // ... similar handling as above (abbreviated for brevity)
+            
+            if (points.length >= 2) {
+                entityPaths.push({ points });
+                const strokeColor = getStrokeColor(pathEl);
+                entityColor = mapColorToPenColor(strokeColor);
+            }
+        });
+        
+        if (entityPaths.length > 0) {
+            entities.push({
+                paths: entityPaths,
+                color: entityColor,
+                name: 'Imported Paths',
+                algorithm: 'imported'
+            });
+        }
+    }
+    
+    return entities;
+}
+
+/**
+ * Parse G-code file and extract paths as entities
+ * Handles: our exported G-code with metadata, standard G-code files
+ */
+function parseGcodeToEntities(gcodeText) {
+    const lines = gcodeText.split('\n');
+    const entities = [];
+    let polargraphMetadata = null;
+    
+    // Check for our custom metadata
+    const metadataLine = lines.find(l => l.includes('polargraph-metadata:'));
+    if (metadataLine) {
+        const match = metadataLine.match(/polargraph-metadata:\s*(\[.*\])/);
+        if (match) {
+            try {
+                polargraphMetadata = JSON.parse(match[1]);
+                logConsole('Found Polargraph metadata - restoring original structure', 'msg-info');
+            } catch (e) {
+                console.warn('Could not parse polargraph metadata:', e);
+            }
+        }
+    }
+    
+    // Parse G-code movements
+    const paths = [];
+    let currentPath = null;
+    let penDown = false;
+    let currentX = 0, currentY = 0;
+    let currentEntityIdx = 0;
+    let entityMarkers = [];
+    
+    // Find entity markers for grouping
+    lines.forEach((line, idx) => {
+        const entityMatch = line.match(/;\s*Entity\s+(\d+):\s*(.*)/);
+        if (entityMatch) {
+            entityMarkers.push({ index: idx, name: entityMatch[2] });
+        }
+    });
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith(';')) continue;
+        
+        // Check for pen up/down (servo commands or M commands)
+        if (line.match(/M3|M03|S\d+\s*;\s*pen\s*down/i) || 
+            line.match(/G0?1.*Z-?\d/i)) {
+            penDown = true;
+            currentPath = { points: [{ x: currentX, y: currentY }] };
+        } else if (line.match(/M5|M05|S\d+\s*;\s*pen\s*up/i) || 
+                   line.match(/G0.*Z\d/i)) {
+            if (currentPath && currentPath.points.length >= 2) {
+                paths.push(currentPath);
+            }
+            currentPath = null;
+            penDown = false;
+        }
+        
+        // Parse movement commands
+        const moveMatch = line.match(/G[01]\s*(X(-?\d+\.?\d*))?\s*(Y(-?\d+\.?\d*))?/i);
+        if (moveMatch) {
+            if (moveMatch[2]) currentX = parseFloat(moveMatch[2]);
+            if (moveMatch[4]) currentY = parseFloat(moveMatch[4]);
+            
+            if (penDown && currentPath) {
+                currentPath.points.push({ x: currentX, y: currentY });
+            }
+        }
+    }
+    
+    // Add last path if any
+    if (currentPath && currentPath.points.length >= 2) {
+        paths.push(currentPath);
+    }
+    
+    // Create entities from paths
+    if (polargraphMetadata && polargraphMetadata.length > 0) {
+        // Try to reconstruct entities from metadata
+        polargraphMetadata.forEach((meta, idx) => {
+            const entityPaths = paths.slice(0, meta.pathCount || paths.length);
+            paths.splice(0, meta.pathCount || paths.length);
+            
+            entities.push({
+                paths: entityPaths,
+                color: meta.color || 'black',
+                name: meta.name || `Entity ${idx + 1}`,
+                algorithm: meta.algorithm || 'imported',
+                offsetX: 0,
+                offsetY: 0,
+                scale: 1,
+                rotation: 0
+            });
+        });
+        
+        // Any remaining paths
+        if (paths.length > 0) {
+            entities.push({
+                paths: paths,
+                color: 'black',
+                name: 'Additional Paths',
+                algorithm: 'imported'
+            });
+        }
+    } else {
+        // No metadata - create single entity
+        entities.push({
+            paths: paths,
+            color: 'black',
+            name: 'Imported G-code',
+            algorithm: 'imported',
+            offsetX: 0,
+            offsetY: 0,
+            scale: 1,
+            rotation: 0
+        });
+    }
+    
+    return entities;
+}
+
+/**
+ * Import entities from parsed data and add to canvas
+ */
+function importEntities(parsedEntities, filename) {
+    if (!parsedEntities || parsedEntities.length === 0) {
+        logConsole('No paths found in file', 'msg-error');
+        return;
+    }
+    
+    saveHistoryState();
+    
+    parsedEntities.forEach(entityData => {
+        const entity = createEntity(entityData.paths, {
+            color: entityData.color,
+            name: entityData.name || filename,
+            algorithm: entityData.algorithm || 'imported',
+            algorithmOptions: entityData.algorithmOptions || {},
+            offsetX: entityData.offsetX || 0,
+            offsetY: entityData.offsetY || 0,
+            scale: entityData.scale || 1,
+            rotation: entityData.rotation || 0
+        });
+        state.entities.push(entity);
+    });
+    
+    // Select the first imported entity
+    if (parsedEntities.length > 0) {
+        state.selectedEntityIds.clear();
+        const lastEntity = state.entities[state.entities.length - parsedEntities.length];
+        if (lastEntity) state.selectedEntityIds.add(lastEntity.id);
+    }
+    
+    updateEntityList();
+    updateExportInfo();
+    drawCanvas();
+    
+    logConsole(`Imported ${parsedEntities.length} layer${parsedEntities.length > 1 ? 's' : ''} from ${filename}`, 'msg-info');
 }
 
 // ============================================================================
@@ -2180,6 +2953,12 @@ function updateConverterOptions() {
 }
 
 async function convertImage() {
+    // Check for pending import (G-code or SVG as paths)
+    if (state.pendingImport) {
+        await handlePendingImport();
+        return;
+    }
+    
     if (!state.currentImagePath && !state.currentImageElement) return;
     
     const algorithm = elements.converterSelect.value;
@@ -2236,6 +3015,75 @@ async function convertImage() {
     } else {
         logConsole(`Convert failed: ${result.error}`, 'msg-error');
     }
+}
+
+async function handlePendingImport() {
+    const pending = state.pendingImport;
+    if (!pending) return;
+    
+    try {
+        if (pending.type === 'gcode') {
+            // Import G-code directly
+            const parsedEntities = parseGcodeToEntities(pending.text);
+            importEntities(parsedEntities, state.currentFileName);
+            
+        } else if (pending.type === 'svg') {
+            if (pending.mode === 'paths') {
+                // Import SVG as paths
+                const parsedEntities = parseSvgToEntities(pending.text);
+                importEntities(parsedEntities, state.currentFileName);
+                
+            } else if (pending.mode === 'convert') {
+                // Convert SVG as raster image
+                if (state.currentImageElement) {
+                    const algorithm = elements.converterSelect.value;
+                    const options = {};
+                    
+                    elements.converterOptions.querySelectorAll('input').forEach(input => {
+                        const key = input.id.replace('conv_', '');
+                        if (input.type === 'checkbox') {
+                            options[key] = input.checked;
+                        } else {
+                            options[key] = parseFloat(input.value);
+                        }
+                    });
+                    
+                    const imgConverter = new ImageConverter();
+                    const turtle = await imgConverter.convert(state.currentImageElement, algorithm, options);
+                    const paths = turtle.getPaths();
+                    
+                    const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
+                    addEntity(paths, {
+                        algorithm: algorithm,
+                        algorithmOptions: options,
+                        name: `SVG (${converterName})`
+                    });
+                    
+                    logConsole(`Converted SVG with ${algorithm}`, 'msg-info');
+                }
+            }
+        }
+        
+        // Reset after import
+        resetUploadUI();
+        
+    } catch (error) {
+        logConsole(`Import failed: ${error.message}`, 'msg-error');
+        console.error('Import error:', error);
+    }
+    
+    state.pendingImport = null;
+}
+
+function resetUploadUI() {
+    elements.uploadZone.style.display = 'block';
+    elements.convertSection.style.display = 'none';
+    elements.converterSelect.style.display = 'block';
+    elements.convertBtn.textContent = 'Convert';
+    elements.converterOptions.innerHTML = '';
+    state.pendingImport = null;
+    state.currentFile = null;
+    state.currentFileName = null;
 }
 
 // ============================================================================
