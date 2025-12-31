@@ -150,13 +150,13 @@ class TurtleGenerator:
                     'default': 'rainbow',
                     'options': [
                         {'value': 'rainbow', 'label': 'Rainbow (8 colors)'},
-                        {'value': 'monochrome', 'label': 'Monochrome (black)'},
+                        {'value': 'monochrome', 'label': 'Monochrome (black only)'},
                         {'value': 'primary', 'label': 'Primary (red, yellow, blue)'},
-                        {'value': 'warm', 'label': 'Warm (reds, oranges, yellows)'},
-                        {'value': 'cool', 'label': 'Cool (blues, greens, purples)'},
-                        {'value': 'earth', 'label': 'Earth (browns, greens, ochres)'},
-                        {'value': 'pastel', 'label': 'Pastel (soft tones)'},
-                        {'value': 'neon', 'label': 'Neon (vibrant)'}
+                        {'value': 'warm', 'label': 'Warm (red, orange, yellow, pink)'},
+                        {'value': 'cool', 'label': 'Cool (blue, green, purple)'},
+                        {'value': 'earth', 'label': 'Earth (brown, orange, green)'},
+                        {'value': 'sunset', 'label': 'Sunset (red, orange, yellow, pink, purple)'},
+                        {'value': 'ocean', 'label': 'Ocean (blue, green, purple)'}
                     ]
                 },
                 'source_text': {'type': 'string', 'label': 'Source Text (optional)', 'default': ''},
@@ -745,16 +745,16 @@ class TurtleGenerator:
         grid_width = 8  # Fixed by Sonakinatography system
         palette = options.get('palette', 'rainbow')
         
-        # Define color palettes
+        # Define color palettes (using only available pen colors: brown, black, blue, green, purple, pink, red, orange, yellow)
         PALETTES = {
             'rainbow': ['brown', 'blue', 'green', 'purple', 'pink', 'red', 'orange', 'yellow'],
             'monochrome': ['black', 'black', 'black', 'black', 'black', 'black', 'black', 'black'],
             'primary': ['red', 'yellow', 'blue', 'red', 'yellow', 'blue', 'red', 'yellow'],
-            'warm': ['#8B0000', '#DC143C', '#FF4500', '#FF6347', '#FF7F50', '#FFA500', '#FFD700', '#FFFF00'],
-            'cool': ['#00008B', '#0000CD', '#4169E1', '#1E90FF', '#00CED1', '#20B2AA', '#008B8B', '#006400'],
-            'earth': ['#8B4513', '#A0522D', '#CD853F', '#D2691E', '#DEB887', '#808000', '#556B2F', '#6B8E23'],
-            'pastel': ['#FFB6C1', '#FFDAB9', '#FFFACD', '#98FB98', '#B0E0E6', '#DDA0DD', '#E6E6FA', '#F0E68C'],
-            'neon': ['#FF1493', '#FF00FF', '#00FFFF', '#00FF00', '#FFFF00', '#FF4500', '#FF6347', '#7FFF00']
+            'warm': ['red', 'orange', 'yellow', 'pink', 'red', 'orange', 'yellow', 'pink'],
+            'cool': ['blue', 'green', 'purple', 'blue', 'green', 'purple', 'blue', 'green'],
+            'earth': ['brown', 'orange', 'green', 'brown', 'orange', 'green', 'brown', 'orange'],
+            'sunset': ['red', 'orange', 'yellow', 'pink', 'purple', 'red', 'orange', 'yellow'],
+            'ocean': ['blue', 'green', 'purple', 'blue', 'green', 'purple', 'blue', 'green']
         }
         
         entity_colors = PALETTES.get(palette, PALETTES['rainbow'])
