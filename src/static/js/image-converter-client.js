@@ -49,6 +49,26 @@ class ImageConverter {
                 step_size: { type: 'float', default: 1.0, min: 0.5, max: 5 },
                 turns: { type: 'int', default: 5000, min: 100, max: 50000 }
             }
+        },
+        trace: {
+            name: 'Trace Outline',
+            description: 'Traces object outlines with optional fill pattern',
+            options: {
+                threshold: { type: 'int', default: 128, min: 0, max: 255, label: 'Edge Threshold' },
+                fill_enabled: { type: 'bool', default: false, label: 'Fill Objects' },
+                fill_pattern: {
+                    type: 'select',
+                    default: 'horizontal',
+                    label: 'Fill Pattern',
+                    options: [
+                        { value: 'horizontal', label: 'Horizontal Lines' },
+                        { value: 'vertical', label: 'Vertical Lines' },
+                        { value: 'diagonal', label: 'Diagonal Lines' },
+                        { value: 'crosshatch', label: 'Crosshatch' }
+                    ]
+                },
+                fill_density: { type: 'float', default: 50, min: 10, max: 100, label: 'Fill Density (%)' }
+            }
         }
     };
     
@@ -395,6 +415,273 @@ class ImageConverter {
         }
         
         return turtle;
+    }
+    
+    _convert_trace(gray, w, h, offsetX, offsetY, options) {
+        const turtle = new Turtle();
+        
+        const threshold = options.threshold || 128;
+        const fillEnabled = options.fill_enabled || false;
+        const fillPattern = options.fill_pattern || 'horizontal';
+        const fillDensity = options.fill_density || 50;
+        
+        // Create binary mask (objects are dark areas)
+        const binary = new Uint8Array(w * h);
+        for (let i = 0; i < gray.length; i++) {
+            binary[i] = gray[i] < threshold ? 1 : 0;
+        }
+        
+        // Find contours
+        const contours = this._findContours(binary, w, h);
+        
+        // Draw contours
+        for (const contour of contours) {
+            if (contour.length < 3) continue;
+            
+            let first = true;
+            for (const [px, py] of contour) {
+                const x = px + offsetX;
+                const y = (h - 1 - py) + offsetY;
+                
+                if (first) {
+                    turtle.jumpTo(x, y);
+                    first = false;
+                } else {
+                    turtle.moveTo(x, y);
+                }
+            }
+            
+            // Close the contour
+            if (contour.length > 2) {
+                const x = contour[0][0] + offsetX;
+                const y = (h - 1 - contour[0][1]) + offsetY;
+                turtle.moveTo(x, y);
+            }
+        }
+        
+        // Fill if enabled
+        if (fillEnabled && contours.length > 0) {
+            this._fillContours(turtle, binary, w, h, offsetX, offsetY, fillPattern, fillDensity);
+        }
+        
+        return turtle;
+    }
+    
+    _findContours(binary, w, h) {
+        const contours = [];
+        const visited = new Uint8Array(w * h);
+        
+        const directions = [
+            [1, 0], [1, 1], [0, 1], [-1, 1],
+            [-1, 0], [-1, -1], [0, -1], [1, -1]
+        ];
+        
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                const idx = y * w + x;
+                
+                if (binary[idx] === 1 && !visited[idx]) {
+                    // Check if it's an edge pixel
+                    let isEdge = false;
+                    for (const [dx, dy] of directions) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        if (nx >= 0 && nx < w && ny >= 0 && ny < h && binary[ny * w + nx] === 0) {
+                            isEdge = true;
+                            break;
+                        }
+                    }
+                    
+                    if (isEdge) {
+                        const contour = this._traceContour(binary, visited, x, y, w, h, directions);
+                        if (contour.length >= 3) {
+                            contours.push(contour);
+                        }
+                    }
+                }
+            }
+        }
+        
+        return contours;
+    }
+    
+    _traceContour(binary, visited, startX, startY, w, h, directions) {
+        const contour = [];
+        let x = startX;
+        let y = startY;
+        
+        const maxSteps = w * h;
+        let steps = 0;
+        
+        while (steps < maxSteps) {
+            const idx = y * w + x;
+            if (visited[idx]) break;
+            
+            visited[idx] = 1;
+            contour.push([x, y]);
+            
+            let foundNext = false;
+            for (const [dx, dy] of directions) {
+                const nx = x + dx;
+                const ny = y + dy;
+                
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                    const nidx = ny * w + nx;
+                    if (binary[nidx] === 1 && !visited[nidx]) {
+                        // Check if next is an edge pixel
+                        for (const [ddx, ddy] of directions) {
+                            const nnx = nx + ddx;
+                            const nny = ny + ddy;
+                            if (nnx >= 0 && nnx < w && nny >= 0 && nny < h && binary[nny * w + nnx] === 0) {
+                                x = nx;
+                                y = ny;
+                                foundNext = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (foundNext) break;
+                }
+            }
+            
+            if (!foundNext) break;
+            steps++;
+        }
+        
+        return contour;
+    }
+    
+    _fillContours(turtle, binary, w, h, offsetX, offsetY, pattern, density) {
+        // Calculate line spacing based on density
+        const spacing = Math.max(2, Math.floor(100 / density * 3));
+        
+        if (pattern === 'horizontal') {
+            this._fillHorizontal(turtle, binary, w, h, offsetX, offsetY, spacing);
+        } else if (pattern === 'vertical') {
+            this._fillVertical(turtle, binary, w, h, offsetX, offsetY, spacing);
+        } else if (pattern === 'diagonal') {
+            this._fillDiagonal(turtle, binary, w, h, offsetX, offsetY, spacing);
+        } else if (pattern === 'crosshatch') {
+            this._fillHorizontal(turtle, binary, w, h, offsetX, offsetY, spacing);
+            this._fillVertical(turtle, binary, w, h, offsetX, offsetY, spacing);
+        }
+    }
+    
+    _fillHorizontal(turtle, binary, w, h, offsetX, offsetY, spacing) {
+        for (let row = 0; row < h; row += spacing) {
+            let inShape = false;
+            let startX = null;
+            
+            for (let col = 0; col < w; col++) {
+                if (binary[row * w + col] === 1) {
+                    if (!inShape) {
+                        inShape = true;
+                        startX = col;
+                    }
+                } else {
+                    if (inShape) {
+                        const x1 = startX + offsetX;
+                        const x2 = (col - 1) + offsetX;
+                        const y = (h - 1 - row) + offsetY;
+                        
+                        turtle.jumpTo(x1, y);
+                        turtle.moveTo(x2, y);
+                        inShape = false;
+                    }
+                }
+            }
+            
+            if (inShape) {
+                const x1 = startX + offsetX;
+                const x2 = (w - 1) + offsetX;
+                const y = (h - 1 - row) + offsetY;
+                turtle.jumpTo(x1, y);
+                turtle.moveTo(x2, y);
+            }
+        }
+    }
+    
+    _fillVertical(turtle, binary, w, h, offsetX, offsetY, spacing) {
+        for (let col = 0; col < w; col += spacing) {
+            let inShape = false;
+            let startY = null;
+            
+            for (let row = 0; row < h; row++) {
+                if (binary[row * w + col] === 1) {
+                    if (!inShape) {
+                        inShape = true;
+                        startY = row;
+                    }
+                } else {
+                    if (inShape) {
+                        const x = col + offsetX;
+                        const y1 = (h - 1 - startY) + offsetY;
+                        const y2 = (h - 1 - (row - 1)) + offsetY;
+                        
+                        turtle.jumpTo(x, y1);
+                        turtle.moveTo(x, y2);
+                        inShape = false;
+                    }
+                }
+            }
+            
+            if (inShape) {
+                const x = col + offsetX;
+                const y1 = (h - 1 - startY) + offsetY;
+                const y2 = offsetY;
+                turtle.jumpTo(x, y1);
+                turtle.moveTo(x, y2);
+            }
+        }
+    }
+    
+    _fillDiagonal(turtle, binary, w, h, offsetX, offsetY, spacing) {
+        const angle = 45;
+        const rad = angle * Math.PI / 180;
+        const cosA = Math.cos(rad);
+        const sinA = Math.sin(rad);
+        
+        const maxDist = Math.floor(Math.sqrt(w * w + h * h));
+        
+        for (let d = -maxDist; d < maxDist; d += spacing) {
+            const segments = [];
+            let inShape = false;
+            let startPt = null;
+            
+            for (let t = -maxDist; t < maxDist; t++) {
+                const px = Math.floor(d * cosA - t * sinA + w / 2);
+                const py = Math.floor(d * sinA + t * cosA + h / 2);
+                
+                if (px >= 0 && px < w && py >= 0 && py < h) {
+                    if (binary[py * w + px] === 1) {
+                        if (!inShape) {
+                            inShape = true;
+                            startPt = [px, py];
+                        }
+                    } else {
+                        if (inShape) {
+                            segments.push([startPt, [px, py]]);
+                            inShape = false;
+                        }
+                    }
+                } else {
+                    if (inShape) {
+                        segments.push([startPt, [px, py]]);
+                        inShape = false;
+                    }
+                }
+            }
+            
+            for (const [[x1, y1], [x2, y2]] of segments) {
+                const dx1 = x1 + offsetX;
+                const dy1 = (h - 1 - y1) + offsetY;
+                const dx2 = x2 + offsetX;
+                const dy2 = (h - 1 - y2) + offsetY;
+                
+                turtle.jumpTo(dx1, dy1);
+                turtle.moveTo(dx2, dy2);
+            }
+        }
     }
 }
 

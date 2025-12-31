@@ -3088,13 +3088,23 @@ function updateConverterOptions() {
         group.className = 'form-group';
         
         const label = document.createElement('label');
-        label.textContent = key.replace(/_/g, ' ');
+        label.textContent = config.label || key.replace(/_/g, ' ');
         
         let input;
         if (config.type === 'bool') {
             input = document.createElement('input');
             input.type = 'checkbox';
             input.checked = config.default;
+        } else if (config.type === 'select') {
+            input = document.createElement('select');
+            input.className = 'menu-select';
+            config.options.forEach(opt => {
+                const optEl = document.createElement('option');
+                optEl.value = opt.value;
+                optEl.textContent = opt.label;
+                if (opt.value === config.default) optEl.selected = true;
+                input.appendChild(optEl);
+            });
         } else {
             input = document.createElement('input');
             input.type = 'number';
@@ -3123,10 +3133,12 @@ async function convertImage() {
     const algorithm = elements.converterSelect.value;
     const options = {};
     
-    elements.converterOptions.querySelectorAll('input').forEach(input => {
+    elements.converterOptions.querySelectorAll('input, select').forEach(input => {
         const key = input.id.replace('conv_', '');
         if (input.type === 'checkbox') {
             options[key] = input.checked;
+        } else if (input.tagName === 'SELECT') {
+            options[key] = input.value;
         } else {
             options[key] = parseFloat(input.value);
         }
@@ -3198,10 +3210,12 @@ async function handlePendingImport() {
                     const algorithm = elements.converterSelect.value;
                     const options = {};
                     
-                    elements.converterOptions.querySelectorAll('input').forEach(input => {
+                    elements.converterOptions.querySelectorAll('input, select').forEach(input => {
                         const key = input.id.replace('conv_', '');
                         if (input.type === 'checkbox') {
                             options[key] = input.checked;
+                        } else if (input.tagName === 'SELECT') {
+                            options[key] = input.value;
                         } else {
                             options[key] = parseFloat(input.value);
                         }
