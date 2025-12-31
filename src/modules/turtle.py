@@ -257,6 +257,23 @@ class Turtle:
         
         return paths
     
+    def get_lines(self) -> List:
+        """Get all lines as raw Line objects (for internal use)."""
+        lines = []
+        for layer in self.layers:
+            for line in layer.lines:
+                if len(line.points) >= 2:
+                    lines.append(line)
+        return lines
+    
+    def has_content(self) -> bool:
+        """Check if the turtle has any drawn content."""
+        for layer in self.layers:
+            for line in layer.lines:
+                if len(line.points) >= 2:
+                    return True
+        return False
+    
     # ========================================================================
     # Transform methods
     # ========================================================================

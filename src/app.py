@@ -570,8 +570,42 @@ def generate_pattern():
     generator = data.get('generator', 'spiral')
     options = data.get('options', {})
     
+    import sys
+    print(f"[DEBUG] Generating pattern: {generator}", file=sys.stderr, flush=True)
+    print(f"[DEBUG] Options received: {options}", file=sys.stderr, flush=True)
+    
     try:
-        current_turtle = turtle_generator.generate(generator, options)
+        result = turtle_generator.generate(generator, options)
+        print(f"[DEBUG] Result type: {type(result)}, multiLayer: {isinstance(result, dict) and result.get('multiLayer')}")
+        
+        # Check if result is multi-layer (Sonakinatography)
+        if isinstance(result, dict) and result.get('multiLayer'):
+            print(f"[DEBUG] Multi-layer result with {len(result.get('layers', []))} layers")
+            layers = []
+            for idx, layer in enumerate(result.get('layers', [])):
+                turtle = layer.get('turtle')
+                print(f"[DEBUG] Layer {idx}: name={layer.get('name')}, has turtle={turtle is not None}")
+                if turtle:
+                    # Use turtle's get_paths() method which returns proper format
+                    paths = turtle.get_paths()
+                    print(f"[DEBUG] Layer {idx} has {len(paths)} paths")
+                    if paths:
+                        layers.append({
+                            'name': layer.get('name', 'Layer'),
+                            'color': layer.get('color', 'black'),
+                            'paths': paths
+                        })
+            
+            print(f"[DEBUG] Returning {len(layers)} layers total")
+            return jsonify({
+                'success': True,
+                'multiLayer': True,
+                'layers': layers,
+                'message': f'Generated {generator} pattern with {len(layers)} layers'
+            })
+        
+        # Standard single-turtle output
+        current_turtle = result
         current_gcode = gcode_generator.turtle_to_gcode(current_turtle)
         preview = get_preview_data()
         

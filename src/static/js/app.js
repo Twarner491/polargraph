@@ -271,6 +271,7 @@ const elements = {
     menuFooter: document.getElementById('menuFooter'),
     
     // Color Picker
+    colorPickerSection: document.getElementById('colorPickerSection'),
     colorPicker: document.getElementById('colorPicker'),
     
     // Entity List
@@ -931,10 +932,13 @@ function updateEntityList() {
         if (entity.rotation !== 0) info += ` · ${entity.rotation}°`;
         
         const item = document.createElement('div');
-        item.className = `entity-item${state.selectedEntityIds.has(entity.id) ? ' selected' : ''}`;
+        item.className = `entity-item${state.selectedEntityIds.has(entity.id) ? ' selected' : ''}${!entity.visible ? ' hidden-entity' : ''}`;
         item.innerHTML = `
-            <div class="entity-color" style="background-color: ${color.hex}"></div>
-            <span class="entity-name">${entity.name}</span>
+            <button class="entity-visibility-btn${entity.visible ? ' visible' : ''}" data-action="toggle-visibility" title="${entity.visible ? 'Hide' : 'Show'}">
+                ${entity.visible ? '👁' : '👁‍🗨'}
+            </button>
+            <div class="entity-color" style="background-color: ${color.hex}${!entity.visible ? '; opacity: 0.4' : ''}"></div>
+            <span class="entity-name" data-action="rename" title="Double-click to rename">${entity.name}</span>
             <span class="entity-info">${info}</span>
             <div class="entity-actions">
                 <button class="entity-action-btn" data-action="duplicate" title="Duplicate">⊕</button>
@@ -942,8 +946,20 @@ function updateEntityList() {
             </div>
         `;
         
+        // Visibility toggle
+        item.querySelector('.entity-visibility-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleEntityVisibility(entity.id);
+        });
+        
+        // Double-click to rename
+        item.querySelector('.entity-name').addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            startEntityRename(entity.id, e.target);
+        });
+        
         item.addEventListener('click', (e) => {
-            if (!e.target.closest('.entity-action-btn')) {
+            if (!e.target.closest('.entity-action-btn') && !e.target.closest('.entity-visibility-btn') && !e.target.closest('.entity-name-input')) {
                 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
                 const cmdKey = isMac ? e.metaKey : e.ctrlKey;
                 selectEntity(entity.id, e.shiftKey, cmdKey);
@@ -969,23 +985,82 @@ function updateEntityList() {
     });
 }
 
+function toggleEntityVisibility(entityId) {
+    const entity = state.entities.find(e => e.id === entityId);
+    if (entity) {
+        saveHistoryState();
+        entity.visible = !entity.visible;
+        updateEntityList();
+        updateExportInfo();
+        drawCanvas();
+        logConsole(`${entity.name} ${entity.visible ? 'shown' : 'hidden'}`, 'msg-info');
+    }
+}
+
+function startEntityRename(entityId, element) {
+    const entity = state.entities.find(e => e.id === entityId);
+    if (!entity) return;
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'entity-name-input';
+    input.value = entity.name;
+    
+    const finishRename = () => {
+        const newName = input.value.trim();
+        if (newName && newName !== entity.name) {
+            saveHistoryState();
+            entity.name = newName;
+            logConsole(`Renamed to "${newName}"`, 'msg-info');
+        }
+        updateEntityList();
+    };
+    
+    input.addEventListener('blur', finishRename);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+        } else if (e.key === 'Escape') {
+            input.value = entity.name;
+            input.blur();
+        }
+    });
+    
+    element.replaceWith(input);
+    input.focus();
+    input.select();
+}
+
 function updateExportInfo() {
     if (!elements.exportInfo) return;
     
-    if (state.entities.length === 0) {
-        elements.exportInfo.textContent = '';
+    // Only count visible entities
+    const visibleEntities = state.entities.filter(e => e.visible);
+    
+    if (visibleEntities.length === 0) {
+        elements.exportInfo.textContent = state.entities.length > 0 ? 'All layers hidden' : '';
         return;
     }
     
-    // Count colors used
-    const colorsUsed = new Set(state.entities.map(e => e.color));
+    // Count colors used in visible entities
+    const colorsUsed = new Set(visibleEntities.map(e => e.color));
     const colorNames = Array.from(colorsUsed).map(c => PEN_COLORS[c]?.name || c);
     
+    const hiddenCount = state.entities.length - visibleEntities.length;
+    let info = '';
+    
     if (colorsUsed.size > 1) {
-        elements.exportInfo.textContent = `${colorsUsed.size} colors: ${colorNames.join(', ')}`;
+        info = `${colorsUsed.size} colors: ${colorNames.join(', ')}`;
     } else {
-        elements.exportInfo.textContent = `Color: ${colorNames[0]}`;
+        info = `Color: ${colorNames[0]}`;
     }
+    
+    if (hiddenCount > 0) {
+        info += ` (${hiddenCount} hidden)`;
+    }
+    
+    elements.exportInfo.textContent = info;
 }
 
 function initClientSideMode() {
@@ -1970,14 +2045,17 @@ function fileToDataUrl(file) {
 }
 
 async function exportGcode() {
-    if (state.entities.length === 0) {
-        logConsole('No elements to export', 'msg-error');
+    // Filter to only visible entities
+    const visibleEntities = state.entities.filter(e => e.visible);
+    
+    if (visibleEntities.length === 0) {
+        logConsole('No visible elements to export', 'msg-error');
         return;
     }
     
     // Group entities by color
     const colorGroups = {};
-    state.entities.forEach(entity => {
+    visibleEntities.forEach(entity => {
         if (!colorGroups[entity.color]) {
             colorGroups[entity.color] = [];
         }
@@ -2096,13 +2174,16 @@ function generateGcodeForEntities(entities, colorId = null) {
 }
 
 async function exportSvg() {
-    if (state.entities.length === 0) {
-        logConsole('No elements to export', 'msg-error');
+    // Filter to only visible entities
+    const visibleEntities = state.entities.filter(e => e.visible);
+    
+    if (visibleEntities.length === 0) {
+        logConsole('No visible elements to export', 'msg-error');
         return;
     }
     
     // Use new entity-aware SVG generator with metadata
-    const svg = generateSvgFromEntities(state.entities);
+    const svg = generateSvgFromEntities(visibleEntities);
     downloadFile('drawing.svg', svg, 'image/svg+xml');
     logConsole('Exported SVG with layer metadata', 'msg-info');
 }
@@ -2804,25 +2885,44 @@ function updateGeneratorOptions() {
     const selected = elements.generatorSelect.selectedOptions[0];
     if (!selected) return;
     
+    const generatorId = selected.value;
     const options = JSON.parse(selected.dataset.options || '{}');
     elements.generatorOptions.innerHTML = '';
+    
+    // Hide color picker for Sonakinatography (it creates its own multi-color layers)
+    if (elements.colorPickerSection) {
+        elements.colorPickerSection.style.display = generatorId === 'sonakinatography' ? 'none' : 'block';
+    }
     
     Object.entries(options).forEach(([key, config]) => {
         const group = document.createElement('div');
         group.className = 'form-group';
         
         const label = document.createElement('label');
-        label.textContent = key.replace(/_/g, ' ');
+        label.textContent = config.label || key.replace(/_/g, ' ');
         
         let input;
         if (config.type === 'bool') {
             input = document.createElement('input');
             input.type = 'checkbox';
             input.checked = config.default;
+            input.id = `gen_${key}`;
         } else if (config.type === 'string') {
             input = document.createElement('input');
             input.type = 'text';
             input.value = config.default;
+            input.id = `gen_${key}`;
+        } else if (config.type === 'select') {
+            input = document.createElement('select');
+            input.className = 'menu-select';
+            input.id = `gen_${key}`;
+            config.options.forEach(opt => {
+                const optEl = document.createElement('option');
+                optEl.value = opt.value;
+                optEl.textContent = opt.label;
+                if (opt.value === config.default) optEl.selected = true;
+                input.appendChild(optEl);
+            });
         } else {
             input = document.createElement('input');
             input.type = 'number';
@@ -2830,8 +2930,8 @@ function updateGeneratorOptions() {
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
             input.step = config.type === 'int' ? 1 : 0.1;
+            input.id = `gen_${key}`;
         }
-        input.id = `gen_${key}`;
         
         group.appendChild(label);
         group.appendChild(input);
@@ -2843,55 +2943,114 @@ async function generatePattern() {
     const generator = elements.generatorSelect.value;
     const options = {};
     
-    elements.generatorOptions.querySelectorAll('input').forEach(input => {
+    // Show loading state
+    const btn = elements.generateBtn;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-spinner"></span> Generating...';
+    
+    elements.generatorOptions.querySelectorAll('input, select').forEach(input => {
         const key = input.id.replace('gen_', '');
         if (input.type === 'checkbox') {
             options[key] = input.checked;
         } else if (input.type === 'number') {
             options[key] = parseFloat(input.value);
+        } else if (input.tagName === 'SELECT') {
+            options[key] = input.value;
         } else {
             options[key] = input.value;
         }
     });
     
+    console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
+    
     // Use client-side generation if in remote mode
     if (CLIENT_SIDE_MODE) {
         try {
+            console.log('[CLIENT] Generating pattern:', generator, options);
             const patternGen = new PatternGenerator();
-            const turtle = patternGen.generate(generator, options);
-            const paths = turtle.getPaths();
+            const result = patternGen.generate(generator, options);
+            console.log('[CLIENT] Generate result:', result);
             
-            // Create entity instead of just preview
-            const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
+            // Check if result is multi-layer (Sonakinatography)
+            if (result.multiLayer && result.layers) {
+                console.log('[CLIENT] Multi-layer result with', result.layers.length, 'layers');
+                let totalPaths = 0;
+                result.layers.forEach(layer => {
+                    console.log('[CLIENT] Layer:', layer.name, 'paths:', layer.paths.length);
+                    if (layer.paths.length > 0) {
+                        addEntity(layer.paths, {
+                            algorithm: generator,
+                            algorithmOptions: options,
+                            name: layer.name,
+                            color: layer.color
+                        });
+                        totalPaths += layer.paths.length;
+                    }
+                });
+                elements.plotStatus.textContent = `${totalPaths} lines in ${result.layers.length} layers`;
+                logConsole(`Generated ${generator} pattern (${result.layers.length} color layers)`, 'msg-info');
+            } else {
+                // Standard single-turtle output
+                const paths = result.getPaths();
+                const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
+                addEntity(paths, {
+                    algorithm: generator,
+                    algorithmOptions: options,
+                    name: generatorName
+                });
+                elements.plotStatus.textContent = `${paths.length} lines generated`;
+                logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+            }
+        } catch (err) {
+            console.error('[CLIENT] Generate error:', err);
+            logConsole(`Generate failed: ${err.message}`, 'msg-error');
+        }
+        btn.disabled = false;
+        btn.textContent = originalText;
+        return;
+    }
+    
+    console.log('[SERVER] Sending generate request:', generator, options);
+    const result = await sendCommand('/api/generate', 'POST', { generator, options });
+    console.log('[SERVER] Generate response:', result);
+    
+    if (result.success) {
+        // Check if result is multi-layer (Sonakinatography)
+        if (result.multiLayer && result.layers) {
+            console.log('[SERVER] Multi-layer result with', result.layers.length, 'layers');
+            let totalPaths = 0;
+            result.layers.forEach(layer => {
+                console.log('[SERVER] Layer:', layer.name, 'paths:', layer.paths.length);
+                if (layer.paths.length > 0) {
+                    addEntity(layer.paths, {
+                        algorithm: generator,
+                        algorithmOptions: options,
+                        name: layer.name,
+                        color: layer.color
+                    });
+                    totalPaths += layer.paths.length;
+                }
+            });
+            elements.plotStatus.textContent = `${totalPaths} lines in ${result.layers.length} layers`;
+            logConsole(`Generated ${generator} pattern (${result.layers.length} color layers)`, 'msg-info');
+        } else {
+            // Create entity from server result
+            const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+            const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
             addEntity(paths, {
                 algorithm: generator,
                 algorithmOptions: options,
                 name: generatorName
             });
-            
-            elements.plotStatus.textContent = `${paths.length} lines generated`;
-            logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
-        } catch (err) {
-            logConsole(`Generate failed: ${err.message}`, 'msg-error');
+            elements.plotStatus.textContent = `${result.lines} lines generated`;
         }
-        return;
-    }
-    
-    const result = await sendCommand('/api/generate', 'POST', { generator, options });
-    
-    if (result.success) {
-        // Create entity from server result
-        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
-        const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
-        addEntity(paths, {
-            algorithm: generator,
-            algorithmOptions: options,
-            name: generatorName
-        });
-        elements.plotStatus.textContent = `${result.lines} lines generated`;
     } else {
         logConsole(`Generate failed: ${result.error}`, 'msg-error');
     }
+    
+    btn.disabled = false;
+    btn.textContent = originalText;
 }
 
 // ============================================================================
