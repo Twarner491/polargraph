@@ -431,127 +431,114 @@ class ImageConverter {
             binary[i] = gray[i] < threshold ? 1 : 0;
         }
         
-        // Find contours
-        const contours = this._findContours(binary, w, h);
-        
-        // Draw contours
-        for (const contour of contours) {
-            if (contour.length < 3) continue;
-            
-            let first = true;
-            for (const [px, py] of contour) {
-                const x = px + offsetX;
-                const y = (h - 1 - py) + offsetY;
-                
-                if (first) {
-                    turtle.jumpTo(x, y);
-                    first = false;
-                } else {
-                    turtle.moveTo(x, y);
-                }
-            }
-            
-            // Close the contour
-            if (contour.length > 2) {
-                const x = contour[0][0] + offsetX;
-                const y = (h - 1 - contour[0][1]) + offsetY;
-                turtle.moveTo(x, y);
-            }
-        }
+        // Draw outline using edge-following scan lines (no cross-gap connections)
+        this._drawOutlineSegments(turtle, binary, w, h, offsetX, offsetY);
         
         // Fill if enabled
-        if (fillEnabled && contours.length > 0) {
-            this._fillContours(turtle, binary, w, h, offsetX, offsetY, fillPattern, fillDensity);
+        if (fillEnabled) {
+            this._fillShape(turtle, binary, w, h, offsetX, offsetY, fillPattern, fillDensity);
         }
         
         return turtle;
     }
     
-    _findContours(binary, w, h) {
-        const contours = [];
-        const visited = new Uint8Array(w * h);
+    _isEdgePixel(binary, x, y, w, h) {
+        if (binary[y * w + x] !== 1) return false;
         
-        const directions = [
-            [1, 0], [1, 1], [0, 1], [-1, 1],
-            [-1, 0], [-1, -1], [0, -1], [1, -1]
-        ];
-        
-        for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-                const idx = y * w + x;
+        // Check 4-connectivity neighbors
+        const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (const [dx, dy] of neighbors) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h || binary[ny * w + nx] === 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    _drawOutlineSegments(turtle, binary, w, h, offsetX, offsetY) {
+        // Draw horizontal edge segments
+        for (let row = 0; row < h; row++) {
+            let inEdge = false;
+            let startX = null;
+            
+            for (let col = 0; col < w; col++) {
+                const isEdge = this._isEdgePixel(binary, col, row, w, h);
                 
-                if (binary[idx] === 1 && !visited[idx]) {
-                    // Check if it's an edge pixel
-                    let isEdge = false;
-                    for (const [dx, dy] of directions) {
-                        const nx = x + dx;
-                        const ny = y + dy;
-                        if (nx >= 0 && nx < w && ny >= 0 && ny < h && binary[ny * w + nx] === 0) {
-                            isEdge = true;
-                            break;
-                        }
+                if (isEdge) {
+                    if (!inEdge) {
+                        inEdge = true;
+                        startX = col;
                     }
-                    
-                    if (isEdge) {
-                        const contour = this._traceContour(binary, visited, x, y, w, h, directions);
-                        if (contour.length >= 3) {
-                            contours.push(contour);
+                } else {
+                    if (inEdge) {
+                        // Draw segment from startX to col-1
+                        const x1 = startX + offsetX;
+                        const x2 = (col - 1) + offsetX;
+                        const y = (h - 1 - row) + offsetY;
+                        
+                        if (x2 > x1) {
+                            turtle.jumpTo(x1, y);
+                            turtle.moveTo(x2, y);
                         }
+                        inEdge = false;
                     }
+                }
+            }
+            
+            if (inEdge) {
+                const x1 = startX + offsetX;
+                const x2 = (w - 1) + offsetX;
+                const y = (h - 1 - row) + offsetY;
+                if (x2 > x1) {
+                    turtle.jumpTo(x1, y);
+                    turtle.moveTo(x2, y);
                 }
             }
         }
         
-        return contours;
-    }
-    
-    _traceContour(binary, visited, startX, startY, w, h, directions) {
-        const contour = [];
-        let x = startX;
-        let y = startY;
-        
-        const maxSteps = w * h;
-        let steps = 0;
-        
-        while (steps < maxSteps) {
-            const idx = y * w + x;
-            if (visited[idx]) break;
+        // Draw vertical edge segments
+        for (let col = 0; col < w; col++) {
+            let inEdge = false;
+            let startY = null;
             
-            visited[idx] = 1;
-            contour.push([x, y]);
-            
-            let foundNext = false;
-            for (const [dx, dy] of directions) {
-                const nx = x + dx;
-                const ny = y + dy;
+            for (let row = 0; row < h; row++) {
+                const isEdge = this._isEdgePixel(binary, col, row, w, h);
                 
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-                    const nidx = ny * w + nx;
-                    if (binary[nidx] === 1 && !visited[nidx]) {
-                        // Check if next is an edge pixel
-                        for (const [ddx, ddy] of directions) {
-                            const nnx = nx + ddx;
-                            const nny = ny + ddy;
-                            if (nnx >= 0 && nnx < w && nny >= 0 && nny < h && binary[nny * w + nnx] === 0) {
-                                x = nx;
-                                y = ny;
-                                foundNext = true;
-                                break;
-                            }
-                        }
+                if (isEdge) {
+                    if (!inEdge) {
+                        inEdge = true;
+                        startY = row;
                     }
-                    if (foundNext) break;
+                } else {
+                    if (inEdge) {
+                        const x = col + offsetX;
+                        const y1 = (h - 1 - startY) + offsetY;
+                        const y2 = (h - 1 - (row - 1)) + offsetY;
+                        
+                        if (Math.abs(y2 - y1) > 1) {
+                            turtle.jumpTo(x, y1);
+                            turtle.moveTo(x, y2);
+                        }
+                        inEdge = false;
+                    }
                 }
             }
             
-            if (!foundNext) break;
-            steps++;
+            if (inEdge) {
+                const x = col + offsetX;
+                const y1 = (h - 1 - startY) + offsetY;
+                const y2 = offsetY;
+                if (Math.abs(y2 - y1) > 1) {
+                    turtle.jumpTo(x, y1);
+                    turtle.moveTo(x, y2);
+                }
+            }
         }
-        
-        return contour;
     }
     
-    _fillContours(turtle, binary, w, h, offsetX, offsetY, pattern, density) {
+    _fillShape(turtle, binary, w, h, offsetX, offsetY, pattern, density) {
         // Calculate line spacing based on density
         const spacing = Math.max(2, Math.floor(100 / density * 3));
         
@@ -569,6 +556,7 @@ class ImageConverter {
     
     _fillHorizontal(turtle, binary, w, h, offsetX, offsetY, spacing) {
         for (let row = 0; row < h; row += spacing) {
+            // Collect all segments in this row
             let inShape = false;
             let startX = null;
             
@@ -580,23 +568,29 @@ class ImageConverter {
                     }
                 } else {
                     if (inShape) {
+                        // End of a segment - draw it
                         const x1 = startX + offsetX;
                         const x2 = (col - 1) + offsetX;
                         const y = (h - 1 - row) + offsetY;
                         
-                        turtle.jumpTo(x1, y);
-                        turtle.moveTo(x2, y);
+                        if (x2 > x1) {
+                            turtle.jumpTo(x1, y);
+                            turtle.moveTo(x2, y);
+                        }
                         inShape = false;
                     }
                 }
             }
             
+            // Handle segment ending at edge
             if (inShape) {
                 const x1 = startX + offsetX;
                 const x2 = (w - 1) + offsetX;
                 const y = (h - 1 - row) + offsetY;
-                turtle.jumpTo(x1, y);
-                turtle.moveTo(x2, y);
+                if (x2 > x1) {
+                    turtle.jumpTo(x1, y);
+                    turtle.moveTo(x2, y);
+                }
             }
         }
     }
@@ -614,12 +608,15 @@ class ImageConverter {
                     }
                 } else {
                     if (inShape) {
+                        // End of segment - draw it
                         const x = col + offsetX;
                         const y1 = (h - 1 - startY) + offsetY;
                         const y2 = (h - 1 - (row - 1)) + offsetY;
                         
-                        turtle.jumpTo(x, y1);
-                        turtle.moveTo(x, y2);
+                        if (Math.abs(y2 - y1) > 1) {
+                            turtle.jumpTo(x, y1);
+                            turtle.moveTo(x, y2);
+                        }
                         inShape = false;
                     }
                 }
@@ -629,8 +626,10 @@ class ImageConverter {
                 const x = col + offsetX;
                 const y1 = (h - 1 - startY) + offsetY;
                 const y2 = offsetY;
-                turtle.jumpTo(x, y1);
-                turtle.moveTo(x, y2);
+                if (Math.abs(y2 - y1) > 1) {
+                    turtle.jumpTo(x, y1);
+                    turtle.moveTo(x, y2);
+                }
             }
         }
     }
@@ -644,9 +643,9 @@ class ImageConverter {
         const maxDist = Math.floor(Math.sqrt(w * w + h * h));
         
         for (let d = -maxDist; d < maxDist; d += spacing) {
-            const segments = [];
             let inShape = false;
             let startPt = null;
+            let lastValidPt = null;
             
             for (let t = -maxDist; t < maxDist; t++) {
                 const px = Math.floor(d * cosA - t * sinA + w / 2);
@@ -658,28 +657,59 @@ class ImageConverter {
                             inShape = true;
                             startPt = [px, py];
                         }
+                        lastValidPt = [px, py];
                     } else {
-                        if (inShape) {
-                            segments.push([startPt, [px, py]]);
-                            inShape = false;
+                        if (inShape && startPt && lastValidPt) {
+                            // Draw segment
+                            const [x1, y1] = startPt;
+                            const [x2, y2] = lastValidPt;
+                            const dx1 = x1 + offsetX;
+                            const dy1 = (h - 1 - y1) + offsetY;
+                            const dx2 = x2 + offsetX;
+                            const dy2 = (h - 1 - y2) + offsetY;
+                            
+                            if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
+                                turtle.jumpTo(dx1, dy1);
+                                turtle.moveTo(dx2, dy2);
+                            }
                         }
+                        inShape = false;
+                        startPt = null;
+                        lastValidPt = null;
                     }
                 } else {
-                    if (inShape) {
-                        segments.push([startPt, [px, py]]);
-                        inShape = false;
+                    if (inShape && startPt && lastValidPt) {
+                        const [x1, y1] = startPt;
+                        const [x2, y2] = lastValidPt;
+                        const dx1 = x1 + offsetX;
+                        const dy1 = (h - 1 - y1) + offsetY;
+                        const dx2 = x2 + offsetX;
+                        const dy2 = (h - 1 - y2) + offsetY;
+                        
+                        if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
+                            turtle.jumpTo(dx1, dy1);
+                            turtle.moveTo(dx2, dy2);
+                        }
                     }
+                    inShape = false;
+                    startPt = null;
+                    lastValidPt = null;
                 }
             }
             
-            for (const [[x1, y1], [x2, y2]] of segments) {
+            // Handle segment at end
+            if (inShape && startPt && lastValidPt) {
+                const [x1, y1] = startPt;
+                const [x2, y2] = lastValidPt;
                 const dx1 = x1 + offsetX;
                 const dy1 = (h - 1 - y1) + offsetY;
                 const dx2 = x2 + offsetX;
                 const dy2 = (h - 1 - y2) + offsetY;
                 
-                turtle.jumpTo(dx1, dy1);
-                turtle.moveTo(dx2, dy2);
+                if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
+                    turtle.jumpTo(dx1, dy1);
+                    turtle.moveTo(dx2, dy2);
+                }
             }
         }
     }

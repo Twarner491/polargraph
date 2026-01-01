@@ -504,114 +504,98 @@ class ImageConverter:
         # Create binary mask (objects are dark areas)
         binary = (img < threshold).astype(np.uint8)
         
-        # Find contours using a simple marching approach
-        contours = self._find_contours(binary, w, h)
-        
-        # Draw contours
-        for contour in contours:
-            if len(contour) < 3:
-                continue
-            
-            # Convert to drawing coordinates
-            first = True
-            for px, py in contour:
-                x = px + offset_x
-                y = (h - 1 - py) + offset_y  # Flip Y
-                
-                if first:
-                    turtle.jump_to(x, y)
-                    first = False
-                else:
-                    turtle.move_to(x, y)
-            
-            # Close the contour
-            if len(contour) > 2:
-                x = contour[0][0] + offset_x
-                y = (h - 1 - contour[0][1]) + offset_y
-                turtle.move_to(x, y)
+        # Draw outline using edge-following scan lines (no cross-gap connections)
+        self._draw_outline_segments(turtle, binary, w, h, offset_x, offset_y)
         
         # Fill if enabled
-        if fill_enabled and contours:
-            self._fill_contours(turtle, binary, w, h, offset_x, offset_y, 
-                               fill_pattern, fill_density)
+        if fill_enabled:
+            self._fill_shape(turtle, binary, w, h, offset_x, offset_y, 
+                            fill_pattern, fill_density)
         
         return turtle
     
-    def _find_contours(self, binary: np.ndarray, w: int, h: int) -> List[List[tuple]]:
-        """Find contours in binary image using simple edge following."""
-        contours = []
-        visited = np.zeros_like(binary, dtype=bool)
+    def _is_edge_pixel(self, binary: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
+        """Check if a pixel is on the edge of a shape."""
+        if binary[y, x] != 1:
+            return False
         
-        # Direction vectors for 8-connectivity
-        directions = [
-            (1, 0), (1, 1), (0, 1), (-1, 1),
-            (-1, 0), (-1, -1), (0, -1), (1, -1)
-        ]
-        
-        for y in range(1, h - 1):
-            for x in range(1, w - 1):
-                # Look for edge pixels (foreground with background neighbor)
-                if binary[y, x] == 1 and not visited[y, x]:
-                    # Check if it's an edge pixel
-                    is_edge = False
-                    for dx, dy in directions:
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < w and 0 <= ny < h and binary[ny, nx] == 0:
-                            is_edge = True
-                            break
-                    
-                    if is_edge:
-                        contour = self._trace_contour(binary, visited, x, y, w, h, directions)
-                        if len(contour) >= 3:
-                            contours.append(contour)
-        
-        return contours
+        # Check 4-connectivity neighbors
+        neighbors = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        for dx, dy in neighbors:
+            nx, ny = x + dx, y + dy
+            if nx < 0 or nx >= w or ny < 0 or ny >= h or binary[ny, nx] == 0:
+                return True
+        return False
     
-    def _trace_contour(self, binary: np.ndarray, visited: np.ndarray, 
-                       start_x: int, start_y: int, w: int, h: int,
-                       directions: List[tuple]) -> List[tuple]:
-        """Trace a single contour starting from given point."""
-        contour = []
-        x, y = start_x, start_y
-        
-        # Moore neighborhood tracing
-        max_steps = w * h  # Prevent infinite loops
-        steps = 0
-        
-        while steps < max_steps:
-            if visited[y, x]:
-                break
+    def _draw_outline_segments(self, turtle: Turtle, binary: np.ndarray,
+                               w: int, h: int, offset_x: float, offset_y: float):
+        """Draw outline as separate segments without connecting across gaps."""
+        # Draw horizontal edge segments
+        for row in range(h):
+            in_edge = False
+            start_x = None
             
-            visited[y, x] = True
-            contour.append((x, y))
-            
-            # Find next edge pixel
-            found_next = False
-            for dx, dy in directions:
-                nx, ny = x + dx, y + dy
+            for col in range(w):
+                is_edge = self._is_edge_pixel(binary, col, row, w, h)
                 
-                if 0 <= nx < w and 0 <= ny < h:
-                    if binary[ny, nx] == 1 and not visited[ny, nx]:
-                        # Check if it's an edge pixel
-                        for ddx, ddy in directions:
-                            nnx, nny = nx + ddx, ny + ddy
-                            if 0 <= nnx < w and 0 <= nny < h and binary[nny, nnx] == 0:
-                                x, y = nx, ny
-                                found_next = True
-                                break
-                    if found_next:
-                        break
+                if is_edge:
+                    if not in_edge:
+                        in_edge = True
+                        start_x = col
+                else:
+                    if in_edge:
+                        # Draw segment from start_x to col-1
+                        x1 = start_x + offset_x
+                        x2 = (col - 1) + offset_x
+                        y = (h - 1 - row) + offset_y
+                        
+                        if x2 > x1:
+                            turtle.jump_to(x1, y)
+                            turtle.move_to(x2, y)
+                        in_edge = False
             
-            if not found_next:
-                break
-            
-            steps += 1
+            if in_edge:
+                x1 = start_x + offset_x
+                x2 = (w - 1) + offset_x
+                y = (h - 1 - row) + offset_y
+                if x2 > x1:
+                    turtle.jump_to(x1, y)
+                    turtle.move_to(x2, y)
         
-        return contour
+        # Draw vertical edge segments
+        for col in range(w):
+            in_edge = False
+            start_y = None
+            
+            for row in range(h):
+                is_edge = self._is_edge_pixel(binary, col, row, w, h)
+                
+                if is_edge:
+                    if not in_edge:
+                        in_edge = True
+                        start_y = row
+                else:
+                    if in_edge:
+                        x = col + offset_x
+                        y1 = (h - 1 - start_y) + offset_y
+                        y2 = (h - 1 - (row - 1)) + offset_y
+                        
+                        if abs(y2 - y1) > 1:
+                            turtle.jump_to(x, y1)
+                            turtle.move_to(x, y2)
+                        in_edge = False
+            
+            if in_edge:
+                x = col + offset_x
+                y1 = (h - 1 - start_y) + offset_y
+                y2 = offset_y
+                if abs(y2 - y1) > 1:
+                    turtle.jump_to(x, y1)
+                    turtle.move_to(x, y2)
     
-    def _fill_contours(self, turtle: Turtle, binary: np.ndarray, 
-                       w: int, h: int, offset_x: float, offset_y: float,
-                       pattern: str, density: float):
+    def _fill_shape(self, turtle: Turtle, binary: np.ndarray, 
+                    w: int, h: int, offset_x: float, offset_y: float,
+                    pattern: str, density: float):
         """Fill the binary mask with the specified pattern."""
         # Calculate line spacing based on density (higher density = closer lines)
         spacing = max(2, int(100 / density * 3))
@@ -628,7 +612,7 @@ class ImageConverter:
     
     def _fill_horizontal(self, turtle: Turtle, binary: np.ndarray,
                          w: int, h: int, offset_x: float, offset_y: float, spacing: int):
-        """Fill with horizontal lines."""
+        """Fill with horizontal lines - each segment is separate."""
         for row in range(0, h, spacing):
             in_shape = False
             start_x = None
@@ -640,26 +624,28 @@ class ImageConverter:
                         start_x = col
                 else:
                     if in_shape:
-                        # Draw line from start_x to col-1
+                        # End of segment - draw it
                         x1 = start_x + offset_x
                         x2 = (col - 1) + offset_x
                         y = (h - 1 - row) + offset_y
                         
-                        turtle.jump_to(x1, y)
-                        turtle.move_to(x2, y)
+                        if x2 > x1:
+                            turtle.jump_to(x1, y)
+                            turtle.move_to(x2, y)
                         in_shape = False
             
-            # Handle line ending at edge
+            # Handle segment ending at edge
             if in_shape:
                 x1 = start_x + offset_x
                 x2 = (w - 1) + offset_x
                 y = (h - 1 - row) + offset_y
-                turtle.jump_to(x1, y)
-                turtle.move_to(x2, y)
+                if x2 > x1:
+                    turtle.jump_to(x1, y)
+                    turtle.move_to(x2, y)
     
     def _fill_vertical(self, turtle: Turtle, binary: np.ndarray,
                        w: int, h: int, offset_x: float, offset_y: float, spacing: int):
-        """Fill with vertical lines."""
+        """Fill with vertical lines - each segment is separate."""
         for col in range(0, w, spacing):
             in_shape = False
             start_y = None
@@ -671,25 +657,28 @@ class ImageConverter:
                         start_y = row
                 else:
                     if in_shape:
+                        # End of segment - draw it
                         x = col + offset_x
                         y1 = (h - 1 - start_y) + offset_y
                         y2 = (h - 1 - (row - 1)) + offset_y
                         
-                        turtle.jump_to(x, y1)
-                        turtle.move_to(x, y2)
+                        if abs(y2 - y1) > 1:
+                            turtle.jump_to(x, y1)
+                            turtle.move_to(x, y2)
                         in_shape = False
             
             if in_shape:
                 x = col + offset_x
                 y1 = (h - 1 - start_y) + offset_y
                 y2 = offset_y
-                turtle.jump_to(x, y1)
-                turtle.move_to(x, y2)
+                if abs(y2 - y1) > 1:
+                    turtle.jump_to(x, y1)
+                    turtle.move_to(x, y2)
     
     def _fill_diagonal(self, turtle: Turtle, binary: np.ndarray,
                        w: int, h: int, offset_x: float, offset_y: float, 
                        spacing: int, angle: float):
-        """Fill with diagonal lines."""
+        """Fill with diagonal lines - each segment is separate."""
         rad = math.radians(angle)
         cos_a = math.cos(rad)
         sin_a = math.sin(rad)
@@ -698,15 +687,12 @@ class ImageConverter:
         max_dist = int(math.sqrt(w**2 + h**2))
         
         for d in range(-max_dist, max_dist, spacing):
-            # Line: x*cos + y*sin = d
-            # Find intersections with the shape
-            segments = []
             in_shape = False
             start_pt = None
+            last_valid_pt = None
             
             # Sample along the diagonal line
             for t in range(-max_dist, max_dist, 1):
-                # Point on line at distance t from origin along perpendicular
                 px = int(d * cos_a - t * sin_a + w/2)
                 py = int(d * sin_a + t * cos_a + h/2)
                 
@@ -715,22 +701,49 @@ class ImageConverter:
                         if not in_shape:
                             in_shape = True
                             start_pt = (px, py)
+                        last_valid_pt = (px, py)
                     else:
-                        if in_shape:
-                            segments.append((start_pt, (px, py)))
-                            in_shape = False
-                else:
-                    if in_shape:
-                        segments.append((start_pt, (px, py)))
+                        if in_shape and start_pt and last_valid_pt:
+                            # Draw segment
+                            x1, y1 = start_pt
+                            x2, y2 = last_valid_pt
+                            dx1 = x1 + offset_x
+                            dy1 = (h - 1 - y1) + offset_y
+                            dx2 = x2 + offset_x
+                            dy2 = (h - 1 - y2) + offset_y
+                            
+                            if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                                turtle.jump_to(dx1, dy1)
+                                turtle.move_to(dx2, dy2)
                         in_shape = False
+                        start_pt = None
+                        last_valid_pt = None
+                else:
+                    if in_shape and start_pt and last_valid_pt:
+                        x1, y1 = start_pt
+                        x2, y2 = last_valid_pt
+                        dx1 = x1 + offset_x
+                        dy1 = (h - 1 - y1) + offset_y
+                        dx2 = x2 + offset_x
+                        dy2 = (h - 1 - y2) + offset_y
+                        
+                        if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                            turtle.jump_to(dx1, dy1)
+                            turtle.move_to(dx2, dy2)
+                    in_shape = False
+                    start_pt = None
+                    last_valid_pt = None
             
-            # Draw collected segments
-            for (x1, y1), (x2, y2) in segments:
+            # Handle segment at end
+            if in_shape and start_pt and last_valid_pt:
+                x1, y1 = start_pt
+                x2, y2 = last_valid_pt
                 dx1 = x1 + offset_x
                 dy1 = (h - 1 - y1) + offset_y
                 dx2 = x2 + offset_x
                 dy2 = (h - 1 - y2) + offset_y
                 
-                turtle.jump_to(dx1, dy1)
-                turtle.move_to(dx2, dy2)
+                if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                    turtle.jump_to(dx1, dy1)
+                    turtle.move_to(dx2, dy2)
 
