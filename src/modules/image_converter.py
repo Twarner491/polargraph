@@ -76,9 +76,7 @@ class ImageConverter:
                     'options': [
                         {'value': 'outline', 'label': 'Outline (Single Color)'},
                         {'value': 'multicolor', 'label': 'Multi-Color (8 Pens)'},
-                        {'value': 'tricolor', 'label': 'Tri-Color (3 Pens)'},
-                        {'value': 'cmyk_dither', 'label': 'CMYK Dithering'},
-                        {'value': 'cmyk_crosshatch', 'label': 'CMYK Crosshatch'}
+                        {'value': 'tricolor', 'label': 'Tri-Color (3 Pens)'}
                     ]
                 },
                 'threshold': {'type': 'int', 'default': 128, 'min': 0, 'max': 255, 'label': 'Edge Threshold'},
@@ -95,6 +93,22 @@ class ImageConverter:
                     ]
                 },
                 'fill_density': {'type': 'float', 'default': 50, 'min': 10, 'max': 100, 'label': 'Fill Density (%)'}
+            }
+        },
+        'cmyk_halftone': {
+            'name': 'CMYK Halftone',
+            'description': 'Full color reproduction using CMYK separation with Floyd-Steinberg dithering',
+            'options': {
+                'density': {'type': 'float', 'default': 50, 'min': 10, 'max': 100, 'label': 'Line Density (%)'},
+                'white_threshold': {'type': 'int', 'default': 250, 'min': 200, 'max': 255, 'label': 'Paper White Threshold'}
+            }
+        },
+        'cmyk_crosshatch': {
+            'name': 'CMYK Crosshatch',
+            'description': 'Full color reproduction using CMYK separation with crosshatch patterns',
+            'options': {
+                'density': {'type': 'float', 'default': 50, 'min': 10, 'max': 100, 'label': 'Line Density (%)'},
+                'white_threshold': {'type': 'int', 'default': 250, 'min': 200, 'max': 255, 'label': 'Paper White Threshold'}
             }
         }
     }
@@ -142,12 +156,19 @@ class ImageConverter:
         offset_x = -new_width / 2
         offset_y = -new_height / 2
         
-        # For color trace modes, also load RGB image
-        if algorithm == 'trace' and options.get('trace_mode', 'outline') != 'outline':
+        # For color modes (trace color, CMYK), load RGB image
+        if algorithm in ('cmyk_halftone', 'cmyk_crosshatch') or \
+           (algorithm == 'trace' and options.get('trace_mode', 'outline') != 'outline'):
             img_rgb = Image.open(filepath).convert('RGB')
             img_rgb = img_rgb.resize((new_width, new_height), Image.Resampling.LANCZOS)
             rgb_array = np.array(img_rgb)
-            return self._convert_trace_color(gray_array, rgb_array, offset_x, offset_y, options)
+            
+            if algorithm == 'cmyk_halftone':
+                return self._convert_cmyk_halftone(gray_array, rgb_array, offset_x, offset_y, options)
+            elif algorithm == 'cmyk_crosshatch':
+                return self._convert_cmyk_crosshatch(gray_array, rgb_array, offset_x, offset_y, options)
+            else:
+                return self._convert_trace_color(gray_array, rgb_array, offset_x, offset_y, options)
         
         # Convert using selected algorithm
         converter_method = getattr(self, f'_convert_{algorithm}', None)
@@ -1183,4 +1204,133 @@ class ImageConverter:
                 if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
                     turtle.jump_to(dx1, dy1)
                     turtle.move_to(dx2, dy2)
+    
+    # =========================================================================
+    # Full Image CMYK Converters
+    # =========================================================================
+    
+    def _convert_cmyk_halftone(self, gray: np.ndarray, rgb: np.ndarray,
+                               offset_x: float, offset_y: float,
+                               options: Dict[str, Any]) -> Dict:
+        """Convert full image to CMYK using Floyd-Steinberg dithering."""
+        h, w = gray.shape
+        density = options.get('density', 50)
+        white_thresh = options.get('white_threshold', 250)
+        
+        # Convert entire image to CMYK
+        cmyk = np.zeros((h, w, 4), dtype=np.float32)
+        for row in range(h):
+            for col in range(w):
+                r, g, b = rgb[row, col]
+                # Skip pure white (paper)
+                if r >= white_thresh and g >= white_thresh and b >= white_thresh:
+                    continue
+                cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
+        
+        # Apply Floyd-Steinberg dithering to each channel
+        dithered = {}
+        for idx, channel in enumerate(['cyan', 'magenta', 'yellow', 'black']):
+            channel_data = cmyk[:, :, idx].copy()
+            dithered[channel] = self._floyd_steinberg_dither(channel_data)
+        
+        # Calculate line spacing from density
+        spacing = max(1, int(100 / density * 2))
+        
+        # Create layers for each CMYK channel
+        layers = []
+        for cmyk_channel, pen in self.CMYK_PENS.items():
+            mask = dithered[cmyk_channel]
+            if np.sum(mask) == 0:
+                continue
+            
+            turtle = Turtle()
+            
+            # Draw horizontal lines through dithered pixels
+            for row in range(0, h, spacing):
+                in_segment = False
+                start_x = None
+                
+                for col in range(w):
+                    if mask[row, col] == 1:
+                        if not in_segment:
+                            in_segment = True
+                            start_x = col
+                    else:
+                        if in_segment:
+                            x1 = start_x + offset_x
+                            x2 = (col - 1) + offset_x
+                            y = (h - 1 - row) + offset_y
+                            if x2 >= x1:
+                                turtle.jump_to(x1, y)
+                                turtle.move_to(x2, y)
+                            in_segment = False
+                
+                if in_segment:
+                    x1 = start_x + offset_x
+                    x2 = (w - 1) + offset_x
+                    y = (h - 1 - row) + offset_y
+                    if x2 >= x1:
+                        turtle.jump_to(x1, y)
+                        turtle.move_to(x2, y)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': f'CMYK ({cmyk_channel.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _convert_cmyk_crosshatch(self, gray: np.ndarray, rgb: np.ndarray,
+                                  offset_x: float, offset_y: float,
+                                  options: Dict[str, Any]) -> Dict:
+        """Convert full image to CMYK using crosshatch patterns at screen angles."""
+        h, w = gray.shape
+        density = options.get('density', 50)
+        white_thresh = options.get('white_threshold', 250)
+        
+        # Convert entire image to CMYK
+        cmyk = np.zeros((h, w, 4), dtype=np.float32)
+        for row in range(h):
+            for col in range(w):
+                r, g, b = rgb[row, col]
+                if r >= white_thresh and g >= white_thresh and b >= white_thresh:
+                    continue
+                cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
+        
+        # Base spacing from density
+        base_spacing = max(2, int(100 / density * 3))
+        
+        # Traditional CMYK screen angles to minimize moiré
+        angles = {
+            'cyan': 15,
+            'magenta': 75,
+            'yellow': 0,
+            'black': 45
+        }
+        
+        layers = []
+        for cmyk_channel, pen in self.CMYK_PENS.items():
+            channel_data = cmyk[:, :, list(self.CMYK_PENS.keys()).index(cmyk_channel)]
+            
+            # Skip only completely empty channels
+            if np.max(channel_data) < 0.001:
+                continue
+            
+            turtle = Turtle()
+            angle = angles[cmyk_channel]
+            
+            # Draw crosshatch with ordered dithering for proper halftone
+            self._draw_intensity_crosshatch(turtle, channel_data, w, h,
+                                           offset_x, offset_y, base_spacing, angle)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': f'CMYK ({cmyk_channel.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
 

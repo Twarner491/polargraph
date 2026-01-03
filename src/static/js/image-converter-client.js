@@ -61,9 +61,7 @@ class ImageConverter {
                     options: [
                         { value: 'outline', label: 'Outline (Single Color)' },
                         { value: 'multicolor', label: 'Multi-Color (8 Pens)' },
-                        { value: 'tricolor', label: 'Tri-Color (3 Pens)' },
-                        { value: 'cmyk_dither', label: 'CMYK Dithering' },
-                        { value: 'cmyk_crosshatch', label: 'CMYK Crosshatch' }
+                        { value: 'tricolor', label: 'Tri-Color (3 Pens)' }
                     ]
                 },
                 threshold: { type: 'int', default: 128, min: 0, max: 255, label: 'Edge Threshold' },
@@ -80,6 +78,22 @@ class ImageConverter {
                     ]
                 },
                 fill_density: { type: 'float', default: 50, min: 10, max: 100, label: 'Fill Density (%)' }
+            }
+        },
+        cmyk_halftone: {
+            name: 'CMYK Halftone',
+            description: 'Full color reproduction using CMYK separation with Floyd-Steinberg dithering',
+            options: {
+                density: { type: 'float', default: 50, min: 10, max: 100, label: 'Line Density (%)' },
+                white_threshold: { type: 'int', default: 250, min: 200, max: 255, label: 'Paper White Threshold' }
+            }
+        },
+        cmyk_crosshatch: {
+            name: 'CMYK Crosshatch',
+            description: 'Full color reproduction using CMYK separation with crosshatch patterns',
+            options: {
+                density: { type: 'float', default: 50, min: 10, max: 100, label: 'Line Density (%)' },
+                white_threshold: { type: 'int', default: 250, min: 200, max: 255, label: 'Paper White Threshold' }
             }
         }
     };
@@ -151,7 +165,13 @@ class ImageConverter {
         const offsetX = -newWidth / 2;
         const offsetY = -newHeight / 2;
         
-        // For color trace modes, use special handler
+        // For color modes (CMYK, color trace), use RGB image data
+        if (algorithm === 'cmyk_halftone') {
+            return this._convert_cmyk_halftone(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
+        }
+        if (algorithm === 'cmyk_crosshatch') {
+            return this._convert_cmyk_crosshatch(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
+        }
         if (algorithm === 'trace' && options.trace_mode && options.trace_mode !== 'outline') {
             return this._convert_trace_color(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
         }
@@ -1410,6 +1430,171 @@ class ImageConverter {
                 }
             }
         }
+    }
+    
+    // =========================================================================
+    // Full Image CMYK Converters
+    // =========================================================================
+    
+    _convert_cmyk_halftone(imageData, gray, w, h, offsetX, offsetY, options) {
+        const data = imageData.data;
+        const density = options.density || 50;
+        const whiteThresh = options.white_threshold || 250;
+        
+        // Convert entire image to CMYK
+        const cmyk = {
+            cyan: new Float32Array(w * h),
+            magenta: new Float32Array(w * h),
+            yellow: new Float32Array(w * h),
+            black: new Float32Array(w * h)
+        };
+        
+        for (let row = 0; row < h; row++) {
+            for (let col = 0; col < w; col++) {
+                const idx = (row * w + col) * 4;
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+                
+                // Skip pure white (paper)
+                if (r >= whiteThresh && g >= whiteThresh && b >= whiteThresh) continue;
+                
+                const { c, m, y, k } = this._rgbToCmyk(r, g, b);
+                const i = row * w + col;
+                cmyk.cyan[i] = c;
+                cmyk.magenta[i] = m;
+                cmyk.yellow[i] = y;
+                cmyk.black[i] = k;
+            }
+        }
+        
+        // Apply Floyd-Steinberg dithering to each channel
+        const dithered = {};
+        for (const channel of ['cyan', 'magenta', 'yellow', 'black']) {
+            dithered[channel] = this._floydSteinbergDither(cmyk[channel], w, h);
+        }
+        
+        // Calculate line spacing from density
+        const spacing = Math.max(1, Math.floor(100 / density * 2));
+        
+        const layers = [];
+        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
+            const mask = dithered[cmykChannel];
+            if (!mask.some(v => v === 1)) continue;
+            
+            const turtle = new Turtle();
+            
+            // Draw horizontal lines through dithered pixels
+            for (let row = 0; row < h; row += spacing) {
+                let inSegment = false;
+                let startX = null;
+                
+                for (let col = 0; col < w; col++) {
+                    if (mask[row * w + col] === 1) {
+                        if (!inSegment) {
+                            inSegment = true;
+                            startX = col;
+                        }
+                    } else {
+                        if (inSegment) {
+                            const x1 = startX + offsetX;
+                            const x2 = (col - 1) + offsetX;
+                            const y = (h - 1 - row) + offsetY;
+                            if (x2 >= x1) {
+                                turtle.jumpTo(x1, y);
+                                turtle.moveTo(x2, y);
+                            }
+                            inSegment = false;
+                        }
+                    }
+                }
+                
+                if (inSegment) {
+                    const x1 = startX + offsetX;
+                    const x2 = (w - 1) + offsetX;
+                    const y = (h - 1 - row) + offsetY;
+                    if (x2 >= x1) {
+                        turtle.jumpTo(x1, y);
+                        turtle.moveTo(x2, y);
+                    }
+                }
+            }
+            
+            if (turtle.getPaths().length > 0) {
+                layers.push({
+                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
+                    color: pen,
+                    turtle: turtle
+                });
+            }
+        }
+        
+        return { multiLayer: true, layers };
+    }
+    
+    _convert_cmyk_crosshatch(imageData, gray, w, h, offsetX, offsetY, options) {
+        const data = imageData.data;
+        const density = options.density || 50;
+        const whiteThresh = options.white_threshold || 250;
+        
+        // Convert entire image to CMYK
+        const cmyk = {
+            cyan: new Float32Array(w * h),
+            magenta: new Float32Array(w * h),
+            yellow: new Float32Array(w * h),
+            black: new Float32Array(w * h)
+        };
+        
+        for (let row = 0; row < h; row++) {
+            for (let col = 0; col < w; col++) {
+                const idx = (row * w + col) * 4;
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+                
+                if (r >= whiteThresh && g >= whiteThresh && b >= whiteThresh) continue;
+                
+                const { c, m, y, k } = this._rgbToCmyk(r, g, b);
+                const i = row * w + col;
+                cmyk.cyan[i] = c;
+                cmyk.magenta[i] = m;
+                cmyk.yellow[i] = y;
+                cmyk.black[i] = k;
+            }
+        }
+        
+        // Base spacing from density
+        const baseSpacing = Math.max(2, Math.floor(100 / density * 3));
+        
+        // Traditional CMYK screen angles
+        const angles = { cyan: 15, magenta: 75, yellow: 0, black: 45 };
+        
+        const layers = [];
+        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
+            const channelData = cmyk[cmykChannel];
+            
+            // Skip only completely empty channels
+            let maxVal = 0;
+            for (let i = 0; i < channelData.length; i++) {
+                if (channelData[i] > maxVal) maxVal = channelData[i];
+            }
+            if (maxVal < 0.001) continue;
+            
+            const turtle = new Turtle();
+            const angle = angles[cmykChannel];
+            
+            this._drawIntensityCrosshatch(turtle, channelData, w, h, offsetX, offsetY, baseSpacing, angle);
+            
+            if (turtle.getPaths().length > 0) {
+                layers.push({
+                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
+                    color: pen,
+                    turtle: turtle
+                });
+            }
+        }
+        
+        return { multiLayer: true, layers };
     }
 }
 
