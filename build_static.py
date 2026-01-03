@@ -17,6 +17,10 @@ DOCS_DIR = 'docs'
 # Leave empty for local-only mode (connects directly to plotter.local)
 HA_WEBHOOK_URL = ""  # e.g., "https://your-ha-instance.duckdns.org/api/webhook/polargraph_command"
 
+# GPenT Cloudflare Worker URL for AI-powered generation on the public site
+# Deploy the worker from cloudflare-worker/ and set the URL here
+GPENT_WORKER_URL = ""  # e.g., "https://gpent-proxy.your-subdomain.workers.dev"
+
 
 def build():
     """Build static files for documentation."""
@@ -53,6 +57,12 @@ def build():
         js_content = js_content.replace(
             'var POLARGRAPH_WEBHOOK_URL = "";',
             f'var POLARGRAPH_WEBHOOK_URL = "{HA_WEBHOOK_URL}";'
+        )
+        
+        # Replace GPenT Worker URL placeholder
+        js_content = js_content.replace(
+            'var GPENT_WORKER_URL = "";',
+            f'var GPENT_WORKER_URL = "{GPENT_WORKER_URL}";'
         )
         
         # Force client-side mode for static build

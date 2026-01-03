@@ -7,6 +7,9 @@
 // For local mode (plotter.local), leave as empty string
 var POLARGRAPH_WEBHOOK_URL = "";
 
+// GPenT Cloudflare Worker URL - set this after deploying the worker
+var GPENT_WORKER_URL = "";
+
 // Check if we're in client-side mode (static site or server unreachable)
 // In static deployment, we detect by checking if we're on the static domain or if webhook is set
 let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL || window.location.hostname === 'plotter.onethreenine.net' || window.location.protocol === 'file:';
@@ -3064,16 +3067,8 @@ async function generatePattern() {
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
     
-    // Special handling for GPenT - requires server API (not available in client-side mode)
+    // Special handling for GPenT - uses Cloudflare Worker in client mode, server API locally
     if (generator === 'gpent') {
-        if (CLIENT_SIDE_MODE) {
-            logConsole('GPenT requires local server connection', 'msg-warn');
-            logConsole('Connect to plotter.local to use AI-powered generation', 'msg-info');
-            btn.disabled = false;
-            btn.textContent = originalText;
-            return;
-        }
-        
         try {
             const keywords = options.inspiration || '';
             logConsole('GPenT starting...', 'msg-info');
@@ -3081,7 +3076,22 @@ async function generatePattern() {
                 logConsole(`Inspiration: "${keywords}"`, 'msg-info');
             }
             
-            const response = await fetch('/api/gpent', {
+            // Determine which endpoint to use
+            let gpentUrl;
+            if (CLIENT_SIDE_MODE) {
+                if (!GPENT_WORKER_URL) {
+                    logConsole('GPenT requires worker URL to be configured', 'msg-error');
+                    logConsole('Connect to plotter.local for local GPenT', 'msg-info');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+                gpentUrl = GPENT_WORKER_URL;
+            } else {
+                gpentUrl = '/api/gpent';
+            }
+            
+            const response = await fetch(gpentUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ keywords })
@@ -3096,11 +3106,68 @@ async function generatePattern() {
             
             if (!result.success) {
                 logConsole(`GPenT Error: ${result.error}`, 'msg-error');
+                btn.disabled = false;
+                btn.textContent = originalText;
                 return;
             }
             
-            // Add generated entities
-            if (result.entities && result.entities.length > 0) {
+            // In client-side mode, worker returns commands that we generate locally
+            if (CLIENT_SIDE_MODE && result.commands) {
+                const patternGen = new PatternGenerator();
+                let createdCount = 0;
+                
+                for (const cmd of result.commands) {
+                    try {
+                        const genResult = patternGen.generate(cmd.generator_id, cmd.options || {});
+                        let paths;
+                        
+                        if (genResult.multiLayer && genResult.layers) {
+                            // Multi-layer result - add each layer
+                            genResult.layers.forEach(layer => {
+                                if (layer.paths && layer.paths.length > 0) {
+                                    addEntity(layer.paths, {
+                                        name: `GPenT: ${cmd.generator_id}`,
+                                        color: layer.color || cmd.color_id || 'black',
+                                        scale: (cmd.scale || 100) / 100,
+                                        rotation: cmd.rotation || 0,
+                                        offsetX: cmd.offset_x || 0,
+                                        offsetY: cmd.offset_y || 0
+                                    });
+                                    createdCount++;
+                                }
+                            });
+                        } else {
+                            // Single result
+                            paths = genResult.turtle ? genResult.turtle.getPaths() : genResult.getPaths?.() || [];
+                            if (paths.length > 0) {
+                                const genName = PatternGenerator.GENERATORS[cmd.generator_id]?.name || cmd.generator_id;
+                                addEntity(paths, {
+                                    name: `GPenT: ${genName}`,
+                                    color: cmd.color_id || 'black',
+                                    scale: (cmd.scale || 100) / 100,
+                                    rotation: cmd.rotation || 0,
+                                    offsetX: cmd.offset_x || 0,
+                                    offsetY: cmd.offset_y || 0
+                                });
+                                createdCount++;
+                            }
+                        }
+                    } catch (genError) {
+                        logConsole(`Failed to generate ${cmd.generator_id}: ${genError.message}`, 'msg-warn');
+                    }
+                }
+                
+                if (createdCount > 0) {
+                    logConsole(`GPenT created ${createdCount} elements`, 'msg-info');
+                    if (result.isFinished) {
+                        logConsole('GPenT declares the artwork complete', 'msg-info');
+                    }
+                } else {
+                    logConsole('GPenT did not generate any elements', 'msg-warn');
+                }
+            }
+            // Server mode returns pre-generated entities
+            else if (result.entities && result.entities.length > 0) {
                 result.entities.forEach(entity => {
                     addEntity(entity.paths, {
                         name: entity.name || 'GPenT Element',
@@ -3115,7 +3182,7 @@ async function generatePattern() {
                 if (result.is_finished) {
                     logConsole('GPenT declares the artwork complete', 'msg-info');
                 }
-            } else {
+            } else if (!CLIENT_SIDE_MODE) {
                 logConsole('GPenT did not generate any elements', 'msg-warn');
             }
             

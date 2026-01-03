@@ -1,0 +1,6 @@
+name = "gpent-proxy"
+main = "gpent-worker.js"
+compatibility_date = "2024-01-01"
+
+# The worker will be available at: https://gpent-proxy.<your-subdomain>.workers.dev
+# Or you can add a custom route
