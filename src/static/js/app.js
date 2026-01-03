@@ -1159,12 +1159,16 @@ function updateExportInfo() {
 
 function initClientSideMode() {
     
-    // Populate generators from PatternGenerator
-    const generators = Object.entries(PatternGenerator.GENERATORS).map(([id, v]) => ({ id, ...v }));
+    // Populate generators from PatternGenerator (sorted alphabetically)
+    const generators = Object.entries(PatternGenerator.GENERATORS)
+        .map(([id, v]) => ({ id, ...v }))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     populateGeneratorSelect(generators);
     
-    // Populate converters from ImageConverter  
-    const converters = Object.entries(ImageConverter.CONVERTERS).map(([id, v]) => ({ id, ...v }));
+    // Populate converters from ImageConverter (sorted alphabetically)
+    const converters = Object.entries(ImageConverter.CONVERTERS)
+        .map(([id, v]) => ({ id, ...v }))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     populateConverterSelect(converters);
     
     // Use default settings

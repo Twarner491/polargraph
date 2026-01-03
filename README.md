@@ -14,6 +14,10 @@ Wall mounted, web accessible polargraph pen plotter. Full project writeup at [te
 
 ---
 
+All project CAD may be found in the [hardware](https://github.com/Twarner491/polargraph/hardware) directory in this repo. Full assembly instructions may be found in the [full project writeup](https://teddywarner.org/Projects/Polargraph/).
+
+---
+
 ## 1. Raspberry Pi Setup
 
 Flash Raspberry Pi OS Lite (64-bit) and configure WiFi. SSH in:
