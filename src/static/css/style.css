@@ -1419,28 +1419,3 @@ html, body {
     position: absolute;
 }
 
-/* ============================================
-   Menu Textarea for text options
-   ============================================ */
-
-.menu-textarea {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-family: var(--font);
-    font-size: 11px;
-    resize: vertical;
-    min-height: 40px;
-    background: white;
-    color: var(--text-dark);
-}
-
-.menu-textarea:focus {
-    outline: none;
-    border-color: var(--text-light);
-}
-
-.menu-textarea::placeholder {
-    color: var(--text-faint);
-}

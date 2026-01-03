@@ -193,7 +193,7 @@ class TurtleGenerator:
             'name': 'GPenT',
             'description': 'Generative Pen-trained Transformer - AI-powered art generation',
             'options': {
-                'inspiration': {'type': 'string', 'label': 'Inspiration (optional)', 'default': ''}
+                'inspiration': {'type': 'string', 'label': 'Inspiration', 'default': '', 'placeholder': 'Optional'}
             }
         }
     }

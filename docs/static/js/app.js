@@ -3002,12 +3002,10 @@ function updateGeneratorOptions() {
             input.type = 'checkbox';
             input.checked = config.default;
             input.id = `gen_${key}`;
-        } else if (config.type === 'string' || config.type === 'text') {
-            // Use textarea for text/string inputs (like inspiration)
-            input = document.createElement('textarea');
-            input.className = 'menu-textarea';
+        } else if (config.type === 'string') {
+            input = document.createElement('input');
+            input.type = 'text';
             input.value = config.default || '';
-            input.rows = 2;
             input.placeholder = config.placeholder || '';
             input.id = `gen_${key}`;
         } else if (config.type === 'select') {

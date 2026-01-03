@@ -12,22 +12,19 @@ from typing import Dict, Any, List, Callable
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # Available generators and their options (numbered for easy reference)
+# These must match actual generators in pattern-generator-client.js and turtle_generator.py
 GENERATORS = {
     1: {'id': 'spiral', 'name': 'Spiral', 'options': ['turns (1-50)', 'spacing (1-20)']},
     2: {'id': 'spirograph', 'name': 'Spirograph', 'options': ['R (10-300)', 'r (5-150)', 'd (5-200)', 'revolutions (1-100)']},
     3: {'id': 'lissajous', 'name': 'Lissajous', 'options': ['a (1-20)', 'b (1-20)', 'delta (0-180)', 'size (50-500)']},
     4: {'id': 'maze', 'name': 'Maze', 'options': ['rows (5-50)', 'cols (5-50)', 'cell_size (5-40)']},
     5: {'id': 'dragon', 'name': 'Dragon Curve', 'options': ['iterations (1-16)', 'size (1-10)']},
-    6: {'id': 'hilbert', 'name': 'Hilbert Curve', 'options': ['order (1-7)', 'size (1-20)']},
-    7: {'id': 'sierpinski', 'name': 'Sierpinski Triangle', 'options': ['order (1-8)', 'size (50-500)']},
-    8: {'id': 'tree', 'name': 'Fractal Tree', 'options': ['depth (1-12)', 'angle (10-60)', 'ratio (0.5-0.9)']},
-    9: {'id': 'star', 'name': 'Star', 'options': ['points (3-20)', 'outer_radius (50-300)', 'inner_radius (20-150)']},
-    10: {'id': 'grid', 'name': 'Grid', 'options': ['rows (2-30)', 'cols (2-30)', 'spacing (5-50)']},
-    11: {'id': 'circles', 'name': 'Concentric Circles', 'options': ['count (2-30)', 'spacing (5-30)']},
-    12: {'id': 'waves', 'name': 'Waves', 'options': ['rows (2-20)', 'amplitude (10-100)', 'frequency (1-10)']},
-    13: {'id': 'rose', 'name': 'Rose Curve', 'options': ['n (1-12)', 'd (1-12)', 'size (50-300)']},
-    14: {'id': 'polygon', 'name': 'Polygon', 'options': ['sides (3-12)', 'size (50-300)']},
-    15: {'id': 'noise', 'name': 'Perlin Flow', 'options': ['lines (10-200)', 'steps (10-200)', 'scale (0.001-0.05)']},
+    6: {'id': 'hilbert', 'name': 'Hilbert Curve', 'options': ['order (1-7)', 'size (100-800)']},
+    7: {'id': 'tree', 'name': 'Fractal Tree', 'options': ['depth (1-12)', 'trunk_length (20-200)', 'angle (10-45)', 'ratio (0.5-0.9)']},
+    8: {'id': 'hexagons', 'name': 'Hexagon Grid', 'options': ['size (5-50)', 'rows (3-30)', 'cols (3-30)']},
+    9: {'id': 'flowfield', 'name': 'Flow Field', 'options': ['lines (50-1000)', 'length (10-200)', 'scale (0.001-0.1)']},
+    10: {'id': 'border', 'name': 'Border', 'options': ['margin (0-50)']},
+    11: {'id': 'text', 'name': 'Text', 'options': ['text (string)', 'size (10-200)']},
 }
 
 # Available pen colors (numbered)

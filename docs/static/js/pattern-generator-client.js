@@ -179,7 +179,7 @@ class PatternGenerator {
             name: 'GPenT',
             description: 'Generative Pen-trained Transformer - AI-powered art generation',
             options: {
-                inspiration: { type: 'text', label: 'Inspiration (optional)', default: '' }
+                inspiration: { type: 'string', label: 'Inspiration', default: '', placeholder: 'Optional' }
             },
             serverOnly: true  // GPenT requires server API call
         }
