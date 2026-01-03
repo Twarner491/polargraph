@@ -1569,6 +1569,10 @@ class ImageConverter {
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
+                const a = data[idx + 3];
+                
+                // Skip transparent pixels
+                if (a < 128) continue;
                 
                 // Skip pure white (paper)
                 if (r >= whiteThresh && g >= whiteThresh && b >= whiteThresh) continue;

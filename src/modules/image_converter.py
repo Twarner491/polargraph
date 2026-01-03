@@ -221,15 +221,17 @@ class ImageConverter:
         offset_x = -new_width / 2
         offset_y = -new_height / 2
         
-        # For color modes (trace color, halftone), load RGB image
+        # For color modes (trace color, halftone), load RGBA image to check transparency
         if algorithm == 'halftone' or \
            (algorithm == 'trace' and options.get('trace_mode', 'outline') != 'outline'):
-            img_rgb = Image.open(filepath).convert('RGB')
-            img_rgb = img_rgb.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            rgb_array = np.array(img_rgb)
+            img_rgba = Image.open(filepath).convert('RGBA')
+            img_rgba = img_rgba.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            rgba_array = np.array(img_rgba)
+            rgb_array = rgba_array[:, :, :3]  # RGB channels
+            alpha_array = rgba_array[:, :, 3]  # Alpha channel
             
             if algorithm == 'halftone':
-                return self._convert_halftone(gray_array, rgb_array, offset_x, offset_y, options)
+                return self._convert_halftone(gray_array, rgb_array, alpha_array, offset_x, offset_y, options)
             else:
                 return self._convert_trace_color(gray_array, rgb_array, offset_x, offset_y, options)
         
@@ -1301,7 +1303,7 @@ class ImageConverter:
         }
     }
     
-    def _convert_halftone(self, gray: np.ndarray, rgb: np.ndarray,
+    def _convert_halftone(self, gray: np.ndarray, rgb: np.ndarray, alpha: np.ndarray,
                           offset_x: float, offset_y: float,
                           options: Dict[str, Any]) -> Dict:
         """Convert full image using selected halftone method and color mode."""
@@ -1314,6 +1316,7 @@ class ImageConverter:
         # Flip image vertically to correct orientation
         rgb_flipped = np.flipud(rgb)
         gray_flipped = np.flipud(gray)
+        alpha_flipped = np.flipud(alpha)
         
         # Handle monotone and duotone with user-selected colors
         if color_mode == 'monotone':
@@ -1341,6 +1344,10 @@ class ImageConverter:
         
         for row in range(h):
             for col in range(w):
+                # Skip transparent pixels
+                if alpha_flipped[row, col] < 128:
+                    continue
+                    
                 r, g, b = rgb_flipped[row, col]
                 # Skip pure white (paper)
                 if r >= white_thresh and g >= white_thresh and b >= white_thresh:
