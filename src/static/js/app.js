@@ -3606,47 +3606,90 @@ async function generatePattern() {
             
             logConsole('Calling dcode diffusion model...', 'msg-info');
             
-            // Gradio API call - POST to queue then GET result
-            const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
-                })
-            });
-            
-            if (!callResponse.ok) {
-                throw new Error(`dcode API error: ${callResponse.status}`);
-            }
-            
-            const callResult = await callResponse.json();
-            const eventId = callResult.event_id;
-            
-            if (!eventId) {
-                throw new Error('dcode API did not return event_id');
-            }
-            
-            logConsole('Processing diffusion...', 'msg-info');
-            
-            // Stream the result
-            const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
-            const resultText = await resultResponse.text();
-            
-            // Parse SSE format - look for "data:" lines
-            const lines = resultText.split('\n');
+            // Try Gradio API - first attempt with /api/predict (older format)
             let gcode = null;
             let svg = null;
             
-            for (const line of lines) {
-                if (line.startsWith('data:')) {
-                    try {
-                        const data = JSON.parse(line.substring(5).trim());
-                        if (Array.isArray(data) && data.length >= 2) {
-                            gcode = data[0];
-                            svg = data[1];
+            // Try the queue-based API first (Gradio 4.x+)
+            try {
+                const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                    })
+                });
+                
+                if (callResponse.ok) {
+                    const callResult = await callResponse.json();
+                    const eventId = callResult.event_id;
+                    
+                    if (eventId) {
+                        logConsole('Processing diffusion...', 'msg-info');
+                        
+                        // Stream the result
+                        const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
+                        const resultText = await resultResponse.text();
+                        
+                        // Parse SSE format - look for "data:" lines
+                        const lines = resultText.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                try {
+                                    const data = JSON.parse(line.substring(5).trim());
+                                    if (Array.isArray(data) && data.length >= 2) {
+                                        gcode = data[0];
+                                        svg = data[1];
+                                    }
+                                } catch (e) {
+                                    // Not JSON, skip
+                                }
+                            }
                         }
-                    } catch (e) {
-                        // Not JSON, skip
+                    }
+                }
+            } catch (queueError) {
+                console.log('Queue API failed, trying predict API:', queueError);
+            }
+            
+            // Fallback to /api/predict if queue API didn't work
+            if (!gcode) {
+                logConsole('Trying alternate API...', 'msg-info');
+                
+                const predictResponse = await fetch(`${DCODE_SPACE_URL}/api/predict`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fn_index: 0,
+                        data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed],
+                        session_hash: Math.random().toString(36).substring(7)
+                    })
+                });
+                
+                if (!predictResponse.ok) {
+                    // Try one more format - /run/generate
+                    const runResponse = await fetch(`${DCODE_SPACE_URL}/run/generate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                        })
+                    });
+                    
+                    if (!runResponse.ok) {
+                        throw new Error(`dcode API error: Space may be sleeping or unavailable. Visit ${DCODE_SPACE_URL} to wake it up.`);
+                    }
+                    
+                    const runResult = await runResponse.json();
+                    if (runResult.data && runResult.data.length >= 2) {
+                        gcode = runResult.data[0];
+                        svg = runResult.data[1];
+                    }
+                } else {
+                    const predictResult = await predictResponse.json();
+                    if (predictResult.data && predictResult.data.length >= 2) {
+                        gcode = predictResult.data[0];
+                        svg = predictResult.data[1];
                     }
                 }
             }
