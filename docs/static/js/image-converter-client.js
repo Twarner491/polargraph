@@ -808,9 +808,15 @@ class ImageConverter {
         return { c, m, y, k };
     }
     
+    _isWhitePixel(r, g, b, threshold = 240) {
+        // Check if pixel is close to white (paper background)
+        return r >= threshold && g >= threshold && b >= threshold;
+    }
+    
     _traceMulticolor(imageData, gray, w, h, offsetX, offsetY,
                      threshold, fillEnabled, fillPattern, fillDensity) {
         const data = imageData.data;
+        const whiteThresh = Math.max(threshold, 240);
         
         // Create mask for each color
         const colorMasks = {};
@@ -821,12 +827,13 @@ class ImageConverter {
         // Assign each pixel to closest pen color
         for (let row = 0; row < h; row++) {
             for (let col = 0; col < w; col++) {
-                if (gray[row * w + col] > threshold) continue;
-                
                 const idx = (row * w + col) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
+                
+                // Skip white/near-white pixels (paper background)
+                if (this._isWhitePixel(r, g, b, whiteThresh)) continue;
                 
                 const closest = this._findClosestPen(r, g, b, ImageConverter.MULTICOLOR_PENS);
                 colorMasks[closest][row * w + col] = 1;
@@ -863,6 +870,7 @@ class ImageConverter {
     _traceTricolor(imageData, gray, w, h, offsetX, offsetY,
                    threshold, fillEnabled, fillPattern, fillDensity) {
         const data = imageData.data;
+        const whiteThresh = Math.max(threshold, 240);
         
         const colorMasks = {};
         for (const pen of ImageConverter.TRICOLOR_PENS) {
@@ -871,12 +879,13 @@ class ImageConverter {
         
         for (let row = 0; row < h; row++) {
             for (let col = 0; col < w; col++) {
-                if (gray[row * w + col] > threshold) continue;
-                
                 const idx = (row * w + col) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
+                
+                // Skip white/near-white pixels (paper background)
+                if (this._isWhitePixel(r, g, b, whiteThresh)) continue;
                 
                 const closest = this._findClosestPen(r, g, b, ImageConverter.TRICOLOR_PENS);
                 colorMasks[closest][row * w + col] = 1;
@@ -909,6 +918,7 @@ class ImageConverter {
     
     _traceCmykDither(imageData, gray, w, h, offsetX, offsetY, threshold, fillDensity) {
         const data = imageData.data;
+        const whiteThresh = Math.max(threshold, 240);
         
         // Convert to CMYK channels
         const cmyk = {
@@ -920,12 +930,13 @@ class ImageConverter {
         
         for (let row = 0; row < h; row++) {
             for (let col = 0; col < w; col++) {
-                if (gray[row * w + col] > threshold) continue;
-                
                 const idx = (row * w + col) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
+                
+                // Skip white/near-white pixels (paper background)
+                if (this._isWhitePixel(r, g, b, whiteThresh)) continue;
                 
                 const { c, m, y, k } = this._rgbToCmyk(r, g, b);
                 const i = row * w + col;
@@ -1025,6 +1036,7 @@ class ImageConverter {
     
     _traceCmykCrosshatch(imageData, gray, w, h, offsetX, offsetY, threshold, fillDensity) {
         const data = imageData.data;
+        const whiteThresh = Math.max(threshold, 240);
         
         // Convert to CMYK channels
         const cmyk = {
@@ -1036,12 +1048,13 @@ class ImageConverter {
         
         for (let row = 0; row < h; row++) {
             for (let col = 0; col < w; col++) {
-                if (gray[row * w + col] > threshold) continue;
-                
                 const idx = (row * w + col) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
+                
+                // Skip white/near-white pixels (paper background)
+                if (this._isWhitePixel(r, g, b, whiteThresh)) continue;
                 
                 const { c, m, y, k } = this._rgbToCmyk(r, g, b);
                 const i = row * w + col;

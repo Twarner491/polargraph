@@ -857,22 +857,29 @@ class ImageConverter:
         
         return (c, m, y, k)
     
+    def _is_white_pixel(self, r: int, g: int, b: int, threshold: int = 240) -> bool:
+        """Check if a pixel is close to white (paper background)."""
+        return r >= threshold and g >= threshold and b >= threshold
+    
     def _trace_multicolor(self, rgb: np.ndarray, gray: np.ndarray,
                           w: int, h: int, offset_x: float, offset_y: float,
                           threshold: int, fill_enabled: bool,
                           fill_pattern: str, fill_density: float) -> Dict:
         """Multi-color trace - map each pixel to closest of 8 pen colors."""
+        # White threshold for background detection
+        white_thresh = max(threshold, 240)
+        
         # Create a mask for each pen color
         color_masks = {pen: np.zeros((h, w), dtype=np.uint8) for pen in self.MULTICOLOR_PENS}
         
         # For each pixel, find closest pen color and mark in that mask
         for row in range(h):
             for col in range(w):
-                # Skip white/light background
-                if gray[row, col] > threshold:
+                r, g, b = rgb[row, col]
+                # Skip white/near-white pixels (paper background)
+                if self._is_white_pixel(r, g, b, white_thresh):
                     continue
                 
-                r, g, b = rgb[row, col]
                 closest = self._find_closest_pen(r, g, b, self.MULTICOLOR_PENS)
                 color_masks[closest][row, col] = 1
         
@@ -907,16 +914,20 @@ class ImageConverter:
                         threshold: int, fill_enabled: bool,
                         fill_pattern: str, fill_density: float) -> Dict:
         """Tri-color trace - map each pixel to closest of 3 primary colors."""
+        # White threshold for background detection
+        white_thresh = max(threshold, 240)
+        
         # Create a mask for each pen color
         color_masks = {pen: np.zeros((h, w), dtype=np.uint8) for pen in self.TRICOLOR_PENS}
         
         # For each pixel, find closest pen color
         for row in range(h):
             for col in range(w):
-                if gray[row, col] > threshold:
+                r, g, b = rgb[row, col]
+                # Skip white/near-white pixels (paper background)
+                if self._is_white_pixel(r, g, b, white_thresh):
                     continue
                 
-                r, g, b = rgb[row, col]
                 closest = self._find_closest_pen(r, g, b, self.TRICOLOR_PENS)
                 color_masks[closest][row, col] = 1
         
@@ -947,13 +958,17 @@ class ImageConverter:
                            w: int, h: int, offset_x: float, offset_y: float,
                            threshold: int, fill_density: float) -> Dict:
         """CMYK dithering - Floyd-Steinberg dithering for each CMYK channel."""
+        # White threshold - pixels with all RGB > this are treated as paper
+        white_thresh = max(threshold, 240)
+        
         # Convert entire image to CMYK
         cmyk = np.zeros((h, w, 4), dtype=np.float32)
         for row in range(h):
             for col in range(w):
-                if gray[row, col] > threshold:
-                    continue  # Skip background
                 r, g, b = rgb[row, col]
+                # Skip only pure white/near-white pixels (paper background)
+                if self._is_white_pixel(r, g, b, white_thresh):
+                    continue
                 cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
         
         # Apply Floyd-Steinberg dithering to each channel
@@ -1040,13 +1055,17 @@ class ImageConverter:
                                w: int, h: int, offset_x: float, offset_y: float,
                                threshold: int, fill_density: float) -> Dict:
         """CMYK crosshatch - each CMYK channel drawn with crosshatch at angle/density."""
+        # White threshold - pixels with all RGB > this are treated as paper
+        white_thresh = max(threshold, 240)
+        
         # Convert image to CMYK
         cmyk = np.zeros((h, w, 4), dtype=np.float32)
         for row in range(h):
             for col in range(w):
-                if gray[row, col] > threshold:
-                    continue
                 r, g, b = rgb[row, col]
+                # Skip only pure white/near-white pixels (paper background)
+                if self._is_white_pixel(r, g, b, white_thresh):
+                    continue
                 cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
         
         # Base spacing from density
