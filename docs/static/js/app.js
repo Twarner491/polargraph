@@ -542,7 +542,7 @@ function initKeyboardShortcuts() {
             const selected = getSelectedEntities();
             if (selected.length > 0) {
                 saveHistoryState();
-                const step = e.shiftKey ? 45 : 15;
+                const step = e.shiftKey ? 15 : 5;
                 selected.forEach(entity => {
                     entity.rotation = (entity.rotation + step) % 360;
                 });
@@ -637,18 +637,21 @@ function handleContextAction(action) {
         case 'rotateLeft':
             saveHistoryState();
             selected.forEach(entity => {
-                entity.rotation = (entity.rotation - 15 + 360) % 360;
+                entity.rotation = (entity.rotation - 5 + 360) % 360;
             });
             drawCanvas();
-            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} -15°`, 'msg-info');
+            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} -5°`, 'msg-info');
             break;
         case 'rotateRight':
             saveHistoryState();
             selected.forEach(entity => {
-                entity.rotation = (entity.rotation + 15) % 360;
+                entity.rotation = (entity.rotation + 5) % 360;
             });
             drawCanvas();
-            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} +15°`, 'msg-info');
+            logConsole(`Rotated ${selected.length} element${selected.length > 1 ? 's' : ''} +5°`, 'msg-info');
+            break;
+        case 'rotateCustom':
+            promptSelectedEntitiesRotation();
             break;
         case 'scaleUp':
             saveHistoryState();
@@ -810,6 +813,27 @@ function promptSelectedEntitiesOffset() {
         });
         drawCanvas();
         logConsole(`Offset ${selected.length} element${selected.length > 1 ? 's' : ''} by (${offsetX}, ${offsetY})`, 'msg-info');
+    }
+}
+
+function promptSelectedEntitiesRotation() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    // Show current rotation if single selection
+    const currentRotation = selected.length === 1 ? selected[0].rotation : 0;
+    const input = prompt('Rotation (degrees):', String(currentRotation));
+    
+    if (input !== null) {
+        saveHistoryState();
+        const rotation = parseFloat(input) || 0;
+        // Normalize to 0-360
+        const normalizedRotation = ((rotation % 360) + 360) % 360;
+        selected.forEach(entity => {
+            entity.rotation = normalizedRotation;
+        });
+        drawCanvas();
+        logConsole(`Set rotation to ${normalizedRotation}° for ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
     }
 }
 
