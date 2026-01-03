@@ -10,6 +10,9 @@ var POLARGRAPH_WEBHOOK_URL = "";
 // GPenT Cloudflare Worker URL - set this after deploying the worker
 var GPENT_WORKER_URL = "";
 
+// dcode HuggingFace Space URL
+var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
+
 // Check if we're in client-side mode (static site or server unreachable)
 // In static deployment, we detect by checking if we're on the static domain or if webhook is set
 let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL || window.location.hostname === 'plotter.onethreenine.net' || window.location.protocol === 'file:';
@@ -3087,6 +3090,66 @@ function parseSvgToEntities(svgText) {
 }
 
 /**
+ * Parse dcode G-code output into paths
+ * dcode uses M280 S<angle> for pen control (S<50 = pen down)
+ */
+function parseGcodeToPath(gcodeText) {
+    const paths = [];
+    let currentPath = null;
+    let penDown = false;
+    let currentX = 0, currentY = 0;
+    
+    // Replace <newline> tokens with actual newlines
+    gcodeText = gcodeText.replace(/<newline>/g, '\n');
+    
+    const lines = gcodeText.split('\n');
+    
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(';')) continue;
+        
+        // Check for pen up/down via M280 servo command
+        const servoMatch = trimmed.match(/M280.*S(\d+)/i);
+        if (servoMatch) {
+            const angle = parseInt(servoMatch[1]);
+            const newPenDown = angle < 50;
+            
+            if (!penDown && newPenDown) {
+                // Pen going down - start new path
+                penDown = true;
+                currentPath = { points: [{ x: currentX, y: currentY }] };
+            } else if (penDown && !newPenDown) {
+                // Pen going up - finish path
+                if (currentPath && currentPath.points.length >= 2) {
+                    paths.push(currentPath);
+                }
+                currentPath = null;
+                penDown = false;
+            }
+            continue;
+        }
+        
+        // Parse X/Y coordinates from any line
+        const xMatch = trimmed.match(/X(-?\d+\.?\d*)/i);
+        const yMatch = trimmed.match(/Y(-?\d+\.?\d*)/i);
+        
+        if (xMatch) currentX = parseFloat(xMatch[1]);
+        if (yMatch) currentY = parseFloat(yMatch[1]);
+        
+        if ((xMatch || yMatch) && penDown && currentPath) {
+            currentPath.points.push({ x: currentX, y: currentY });
+        }
+    }
+    
+    // Add last path if any
+    if (currentPath && currentPath.points.length >= 2) {
+        paths.push(currentPath);
+    }
+    
+    return paths;
+}
+
+/**
  * Parse G-code file and extract paths as entities
  * Handles: our exported G-code with metadata, standard G-code files
  */
@@ -3275,13 +3338,26 @@ function updateGeneratorOptions() {
     const options = JSON.parse(selected.dataset.options || '{}');
     elements.generatorOptions.innerHTML = '';
     
-    // Hide color picker for Sonakinatography and GPenT (they create multi-color layers)
+    // Hide color picker for Sonakinatography, GPenT, and dcode (they create multi-color layers or have fixed color)
     if (elements.colorPickerSection) {
-        const hideColorPicker = generatorId === 'sonakinatography' || generatorId === 'gpent';
+        const hideColorPicker = generatorId === 'sonakinatography' || generatorId === 'gpent' || generatorId === 'dcode';
         elements.colorPickerSection.style.display = hideColorPicker ? 'none' : 'block';
     }
     
+    // Separate main options from collapsible options
+    const mainOptions = [];
+    const collapsibleOptions = [];
+    
     Object.entries(options).forEach(([key, config]) => {
+        if (config.collapsible) {
+            collapsibleOptions.push([key, config]);
+        } else {
+            mainOptions.push([key, config]);
+        }
+    });
+    
+    // Helper to create input element
+    const createInput = (key, config) => {
         const group = document.createElement('div');
         group.className = 'form-group';
         
@@ -3317,14 +3393,40 @@ function updateGeneratorOptions() {
             input.value = config.default;
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
-            input.step = config.type === 'int' ? 1 : 0.1;
-        input.id = `gen_${key}`;
+            if (config.step !== undefined) input.step = config.step;
+            else input.step = config.type === 'int' ? 1 : 0.1;
+            input.id = `gen_${key}`;
         }
         
         group.appendChild(label);
         group.appendChild(input);
-        elements.generatorOptions.appendChild(group);
+        return group;
+    };
+    
+    // Add main options
+    mainOptions.forEach(([key, config]) => {
+        elements.generatorOptions.appendChild(createInput(key, config));
     });
+    
+    // Add collapsible section if there are collapsible options
+    if (collapsibleOptions.length > 0) {
+        const details = document.createElement('details');
+        details.className = 'collapsible-settings';
+        
+        const summary = document.createElement('summary');
+        summary.textContent = 'Settings';
+        details.appendChild(summary);
+        
+        const settingsContainer = document.createElement('div');
+        settingsContainer.className = 'settings-container';
+        
+        collapsibleOptions.forEach(([key, config]) => {
+            settingsContainer.appendChild(createInput(key, config));
+        });
+        
+        details.appendChild(settingsContainer);
+        elements.generatorOptions.appendChild(details);
+    }
 }
 
 async function generatePattern() {
@@ -3474,6 +3576,105 @@ async function generatePattern() {
         } catch (error) {
             logConsole(`Error: ${error.message}`, 'msg-error');
             console.error('GPenT error:', error);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+        return;
+    }
+    
+    // Special handling for dcode - uses HuggingFace Space API
+    if (generator === 'dcode') {
+        try {
+            const prompt = options.prompt || '';
+            if (!prompt.trim()) {
+                logConsole('dcode requires a prompt', 'msg-error');
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+            
+            logConsole('dcode starting...', 'msg-info');
+            logConsole(`Prompt: "${prompt}"`, 'msg-info');
+            
+            // Call HuggingFace Space API (Gradio endpoint)
+            const temperature = parseFloat(options.temperature) || 0.5;
+            const maxTokens = parseInt(options.max_tokens) || 2048;
+            const diffusionSteps = parseInt(options.diffusion_steps) || 35;
+            const guidance = parseFloat(options.guidance) || 10.0;
+            const seed = parseInt(options.seed) || -1;
+            
+            logConsole('Calling dcode diffusion model...', 'msg-info');
+            
+            // Gradio API call - POST to queue then GET result
+            const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                })
+            });
+            
+            if (!callResponse.ok) {
+                throw new Error(`dcode API error: ${callResponse.status}`);
+            }
+            
+            const callResult = await callResponse.json();
+            const eventId = callResult.event_id;
+            
+            if (!eventId) {
+                throw new Error('dcode API did not return event_id');
+            }
+            
+            logConsole('Processing diffusion...', 'msg-info');
+            
+            // Stream the result
+            const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
+            const resultText = await resultResponse.text();
+            
+            // Parse SSE format - look for "data:" lines
+            const lines = resultText.split('\n');
+            let gcode = null;
+            let svg = null;
+            
+            for (const line of lines) {
+                if (line.startsWith('data:')) {
+                    try {
+                        const data = JSON.parse(line.substring(5).trim());
+                        if (Array.isArray(data) && data.length >= 2) {
+                            gcode = data[0];
+                            svg = data[1];
+                        }
+                    } catch (e) {
+                        // Not JSON, skip
+                    }
+                }
+            }
+            
+            if (!gcode) {
+                throw new Error('dcode did not return G-code');
+            }
+            
+            logConsole('dcode generation complete', 'msg-info');
+            
+            // Parse G-code into paths
+            const paths = parseGcodeToPath(gcode);
+            
+            if (paths.length > 0) {
+                addEntity(paths, {
+                    name: `dcode: ${prompt.substring(0, 30)}...`,
+                    color: 'black',
+                    algorithm: 'dcode',
+                    algorithmOptions: options
+                });
+                logConsole(`Created entity with ${paths.length} paths`, 'msg-info');
+            } else {
+                logConsole('dcode generated no drawable paths', 'msg-warn');
+            }
+            
+        } catch (error) {
+            logConsole(`dcode Error: ${error.message}`, 'msg-error');
+            console.error('dcode error:', error);
         } finally {
             btn.disabled = false;
             btn.textContent = originalText;

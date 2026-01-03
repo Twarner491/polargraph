@@ -195,6 +195,18 @@ class TurtleGenerator:
             'options': {
                 'inspiration': {'type': 'string', 'label': 'Inspiration', 'default': '', 'placeholder': 'Optional'}
             }
+        },
+        'dcode': {
+            'name': 'dcode',
+            'description': 'Text to polargraph G-code via Stable Diffusion',
+            'options': {
+                'prompt': {'type': 'string', 'label': 'Prompt', 'default': '', 'placeholder': 'Describe what to draw...'},
+                'temperature': {'type': 'float', 'label': 'Temperature', 'default': 0.5, 'min': 0.3, 'max': 1.2, 'step': 0.1, 'collapsible': True},
+                'max_tokens': {'type': 'int', 'label': 'Max Tokens', 'default': 2048, 'min': 256, 'max': 2048, 'step': 256, 'collapsible': True},
+                'diffusion_steps': {'type': 'int', 'label': 'Diffusion Steps', 'default': 35, 'min': 20, 'max': 50, 'step': 5, 'collapsible': True},
+                'guidance': {'type': 'float', 'label': 'Guidance', 'default': 10.0, 'min': 5.0, 'max': 20.0, 'step': 0.5, 'collapsible': True},
+                'seed': {'type': 'string', 'label': 'Seed', 'default': '-1', 'placeholder': '-1 for random', 'collapsible': True}
+            }
         }
     }
     

@@ -1090,6 +1090,33 @@ html, body {
     accent-color: var(--text-dark);
 }
 
+/* Collapsible Settings Section */
+.collapsible-settings {
+    margin-top: 8px;
+    border-top: 1px solid var(--border-light);
+    padding-top: 8px;
+}
+
+.collapsible-settings summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-light);
+    user-select: none;
+    padding: 4px 0;
+}
+
+.collapsible-settings summary:hover {
+    color: var(--text-mid);
+}
+
+.collapsible-settings[open] summary {
+    margin-bottom: 4px;
+}
+
+.collapsible-settings .settings-container {
+    padding-left: 0;
+}
+
 /* ============================================
    Color Picker
    ============================================ */

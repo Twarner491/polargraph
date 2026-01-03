@@ -25,6 +25,7 @@ GENERATORS = {
     9: {'id': 'flowfield', 'name': 'Flow Field', 'options': ['lines (50-1000)', 'length (10-200)', 'scale (0.001-0.1)']},
     10: {'id': 'border', 'name': 'Border', 'options': ['margin (0-50)']},
     11: {'id': 'text', 'name': 'Text', 'options': ['text (string)', 'size (10-200)']},
+    12: {'id': 'dcode', 'name': 'dcode (AI Drawing)', 'options': ['prompt (describe what to draw)']},
 }
 
 # Available pen colors (numbered)
