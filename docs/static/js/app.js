@@ -1031,36 +1031,89 @@ function clipPathToRect(path, bounds) {
     return clippedPaths;
 }
 
+function getEntityCenter(entity) {
+    // Calculate the center of the entity's paths
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    entity.paths.forEach(path => {
+        path.points.forEach(p => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+    });
+    return {
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2
+    };
+}
+
+function transformPointToWorld(p, entity, center) {
+    // Apply scale
+    let x = p.x * entity.scale;
+    let y = p.y * entity.scale;
+    
+    // Apply rotation around scaled center (matching how drawing works)
+    if (entity.rotation !== 0) {
+        const rad = entity.rotation * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        
+        const cx = center.x * entity.scale;
+        const cy = center.y * entity.scale;
+        
+        const rx = x - cx;
+        const ry = y - cy;
+        
+        x = rx * cos - ry * sin + cx;
+        y = rx * sin + ry * cos + cy;
+    }
+    
+    // Apply offset
+    x += entity.offsetX;
+    y += entity.offsetY;
+    
+    return { x, y };
+}
+
+function transformPointFromWorld(p, entity, center) {
+    // Inverse of transformPointToWorld
+    let x = p.x - entity.offsetX;
+    let y = p.y - entity.offsetY;
+    
+    // Inverse rotation around scaled center
+    if (entity.rotation !== 0) {
+        const rad = -entity.rotation * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        
+        const cx = center.x * entity.scale;
+        const cy = center.y * entity.scale;
+        
+        const rx = x - cx;
+        const ry = y - cy;
+        
+        x = rx * cos - ry * sin + cx;
+        y = rx * sin + ry * cos + cy;
+    }
+    
+    // Inverse scale
+    x /= entity.scale;
+    y /= entity.scale;
+    
+    return { x, y };
+}
+
 function cropEntityToPaper(entity) {
     const bounds = getWorkAreaBounds();
+    const center = getEntityCenter(entity);
     const newPaths = [];
     
-    // First, we need to get the transformed coordinates
-    // Apply scale, rotation, offset to each point
+    // Transform to world coordinates, clip, transform back
     entity.paths.forEach(path => {
         // Transform points to world coordinates
         const transformedPath = {
-            points: path.points.map(p => {
-                let x = p.x * entity.scale;
-                let y = p.y * entity.scale;
-                
-                // Apply rotation if any
-                if (entity.rotation !== 0) {
-                    const rad = entity.rotation * Math.PI / 180;
-                    const cos = Math.cos(rad);
-                    const sin = Math.sin(rad);
-                    const nx = x * cos - y * sin;
-                    const ny = x * sin + y * cos;
-                    x = nx;
-                    y = ny;
-                }
-                
-                // Apply offset
-                x += entity.offsetX;
-                y += entity.offsetY;
-                
-                return { x, y };
-            })
+            points: path.points.map(p => transformPointToWorld(p, entity, center))
         };
         
         // Clip the transformed path
@@ -1068,30 +1121,9 @@ function cropEntityToPaper(entity) {
         newPaths.push(...clippedPaths);
     });
     
-    // Now we need to transform the clipped paths back to entity-local coordinates
-    // (inverse of the transformation above)
+    // Transform clipped paths back to entity-local coordinates
     const inversePaths = newPaths.map(path => ({
-        points: path.points.map(p => {
-            let x = p.x - entity.offsetX;
-            let y = p.y - entity.offsetY;
-            
-            // Inverse rotation
-            if (entity.rotation !== 0) {
-                const rad = -entity.rotation * Math.PI / 180;
-                const cos = Math.cos(rad);
-                const sin = Math.sin(rad);
-                const nx = x * cos - y * sin;
-                const ny = x * sin + y * cos;
-                x = nx;
-                y = ny;
-            }
-            
-            // Inverse scale
-            x /= entity.scale;
-            y /= entity.scale;
-            
-            return { x, y };
-        })
+        points: path.points.map(p => transformPointFromWorld(p, entity, center))
     }));
     
     return inversePaths;
