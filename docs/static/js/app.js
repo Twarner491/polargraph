@@ -8,7 +8,7 @@
 var POLARGRAPH_WEBHOOK_URL = "";
 
 // GPenT Cloudflare Worker URL - set this after deploying the worker
-var GPENT_WORKER_URL = "";
+var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/";
 
 // Check if we're in client-side mode (static site or server unreachable)
 // In static deployment, we detect by checking if we're on the static domain or if webhook is set

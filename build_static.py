@@ -18,8 +18,7 @@ DOCS_DIR = 'docs'
 HA_WEBHOOK_URL = ""  # e.g., "https://your-ha-instance.duckdns.org/api/webhook/polargraph_command"
 
 # GPenT Cloudflare Worker URL for AI-powered generation on the public site
-# Deploy the worker from cloudflare-worker/ and set the URL here
-GPENT_WORKER_URL = ""  # e.g., "https://gpent-proxy.your-subdomain.workers.dev"
+GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
 
 
 def build():
