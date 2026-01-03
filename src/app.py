@@ -547,17 +547,44 @@ def convert_image():
         return jsonify({'success': False, 'error': 'Image file not found'})
     
     try:
-        current_turtle = image_converter.convert(filepath, algorithm, options)
-        current_gcode = gcode_generator.turtle_to_gcode(current_turtle)
-        preview = get_preview_data()
+        result = image_converter.convert(filepath, algorithm, options)
         
-        return jsonify({
-            'success': True,
-            'preview': preview,
-            'lines': len(current_gcode),
-            'message': f'Converted using {algorithm}'
-        })
+        # Check if result is multi-layer (color trace modes)
+        if isinstance(result, dict) and 'layers' in result:
+            layers = []
+            for layer in result.get('layers', []):
+                turtle = layer.get('turtle')
+                if turtle:
+                    paths = turtle.get_paths()
+                    if paths:
+                        layers.append({
+                            'name': layer.get('name', 'Layer'),
+                            'color': layer.get('color', 'black'),
+                            'paths': paths
+                        })
+            
+            return jsonify({
+                'success': True,
+                'multiLayer': True,
+                'layers': layers,
+                'lines': sum(len(l.get('paths', [])) for l in layers),
+                'message': f'Converted using {algorithm} ({len(layers)} layers)'
+            })
+        else:
+            # Single turtle result
+            current_turtle = result
+            current_gcode = gcode_generator.turtle_to_gcode(current_turtle)
+            preview = get_preview_data()
+            
+            return jsonify({
+                'success': True,
+                'preview': preview,
+                'lines': len(current_gcode),
+                'message': f'Converted using {algorithm}'
+            })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
 

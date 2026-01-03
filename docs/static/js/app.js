@@ -3148,20 +3148,40 @@ async function convertImage() {
     if (CLIENT_SIDE_MODE && state.currentImageElement) {
         try {
             const imgConverter = new ImageConverter();
-            const turtle = await imgConverter.convert(state.currentImageElement, algorithm, options);
-            const paths = turtle.getPaths();
+            const result = await imgConverter.convert(state.currentImageElement, algorithm, options);
             
-            // Create entity instead of just preview
-            const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
-            addEntity(paths, {
-                algorithm: algorithm,
-                algorithmOptions: options,
-                name: `Image (${converterName})`
-            });
-            
-            elements.plotStatus.textContent = `${paths.length} lines converted`;
-            logConsole(`Converted image with ${algorithm} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+            // Check for multi-layer result
+            if (result && result.multiLayer && result.layers) {
+                saveHistoryState();
+                result.layers.forEach(layer => {
+                    const paths = layer.turtle.getPaths();
+                    addEntity(paths, {
+                        algorithm: algorithm,
+                        algorithmOptions: options,
+                        name: layer.name,
+                        color: layer.color
+                    });
+                });
+                const totalLines = result.layers.reduce((sum, l) => sum + l.turtle.getPaths().length, 0);
+                elements.plotStatus.textContent = `${totalLines} lines converted (${result.layers.length} layers)`;
+                logConsole(`Converted image with ${algorithm} - ${result.layers.length} color layers`, 'msg-info');
+            } else {
+                // Single turtle result
+                const turtle = result;
+                const paths = turtle.getPaths();
+                
+                const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
+                addEntity(paths, {
+                    algorithm: algorithm,
+                    algorithmOptions: options,
+                    name: `Image (${converterName})`
+                });
+                
+                elements.plotStatus.textContent = `${paths.length} lines converted`;
+                logConsole(`Converted image with ${algorithm} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+            }
         } catch (err) {
+            console.error('Convert error:', err);
             logConsole(`Convert failed: ${err.message}`, 'msg-error');
         }
         return;
@@ -3174,15 +3194,30 @@ async function convertImage() {
     });
     
     if (result.success) {
-        // Create entity from server result
-        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
-        const converterName = elements.converterSelect.selectedOptions[0]?.textContent || algorithm;
-        addEntity(paths, {
-            algorithm: algorithm,
-            algorithmOptions: options,
-            name: `Image (${converterName})`
-        });
-        elements.plotStatus.textContent = `${result.lines} lines converted`;
+        // Check for multi-layer result (color trace modes)
+        if (result.multiLayer && result.layers) {
+            saveHistoryState();
+            result.layers.forEach(layer => {
+                addEntity(layer.paths, {
+                    algorithm: algorithm,
+                    algorithmOptions: options,
+                    name: layer.name,
+                    color: layer.color
+                });
+            });
+            elements.plotStatus.textContent = `${result.lines} lines converted (${result.layers.length} layers)`;
+            logConsole(`Converted image with ${algorithm} - ${result.layers.length} color layers`, 'msg-info');
+        } else {
+            // Single layer result
+            const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+            const converterName = elements.converterSelect.selectedOptions[0]?.textContent || algorithm;
+            addEntity(paths, {
+                algorithm: algorithm,
+                algorithmOptions: options,
+                name: `Image (${converterName})`
+            });
+            elements.plotStatus.textContent = `${result.lines} lines converted`;
+        }
     } else {
         logConsole(`Convert failed: ${result.error}`, 'msg-error');
     }

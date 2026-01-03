@@ -69,6 +69,18 @@ class ImageConverter:
             'name': 'Trace Outline',
             'description': 'Traces object outlines with optional fill pattern',
             'options': {
+                'trace_mode': {
+                    'type': 'select',
+                    'default': 'outline',
+                    'label': 'Trace Mode',
+                    'options': [
+                        {'value': 'outline', 'label': 'Outline (Single Color)'},
+                        {'value': 'multicolor', 'label': 'Multi-Color (8 Pens)'},
+                        {'value': 'tricolor', 'label': 'Tri-Color (3 Pens)'},
+                        {'value': 'cmyk_dither', 'label': 'CMYK Dithering'},
+                        {'value': 'cmyk_crosshatch', 'label': 'CMYK Crosshatch'}
+                    ]
+                },
                 'threshold': {'type': 'int', 'default': 128, 'min': 0, 'max': 255, 'label': 'Edge Threshold'},
                 'fill_enabled': {'type': 'bool', 'default': False, 'label': 'Fill Objects'},
                 'fill_pattern': {
@@ -97,18 +109,21 @@ class ImageConverter:
             for k, v in self.CONVERTERS.items()
         ]
     
-    def convert(self, filepath: str, algorithm: str, options: Dict[str, Any] = None) -> Turtle:
-        """Convert an image using the specified algorithm."""
+    def convert(self, filepath: str, algorithm: str, options: Dict[str, Any] = None):
+        """Convert an image using the specified algorithm.
+        
+        Returns either a Turtle object or a dict with 'layers' for multi-layer output.
+        """
         options = options or {}
         
-        # Load and prepare image
-        img = Image.open(filepath).convert('L')  # Convert to grayscale
+        # Load and prepare image (grayscale for most algorithms)
+        img_gray = Image.open(filepath).convert('L')
         
         # Get work area
         work_area = self.settings.get_work_area()
         
         # Resize image to fit work area while maintaining aspect ratio
-        img_aspect = img.width / img.height
+        img_aspect = img_gray.width / img_gray.height
         work_aspect = work_area['width'] / work_area['height']
         
         if img_aspect > work_aspect:
@@ -120,19 +135,26 @@ class ImageConverter:
             new_height = int(work_area['height'])
             new_width = int(new_height * img_aspect)
         
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        img_array = np.array(img)
+        img_gray = img_gray.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        gray_array = np.array(img_gray)
         
         # Calculate offset to center
         offset_x = -new_width / 2
         offset_y = -new_height / 2
+        
+        # For color trace modes, also load RGB image
+        if algorithm == 'trace' and options.get('trace_mode', 'outline') != 'outline':
+            img_rgb = Image.open(filepath).convert('RGB')
+            img_rgb = img_rgb.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            rgb_array = np.array(img_rgb)
+            return self._convert_trace_color(gray_array, rgb_array, offset_x, offset_y, options)
         
         # Convert using selected algorithm
         converter_method = getattr(self, f'_convert_{algorithm}', None)
         if converter_method is None:
             raise ValueError(f"Unknown converter: {algorithm}")
         
-        return converter_method(img_array, offset_x, offset_y, options)
+        return converter_method(gray_array, offset_x, offset_y, options)
     
     def _sample(self, img: np.ndarray, x: float, y: float, offset_x: float, offset_y: float) -> int:
         """Sample image at a point (image coordinates)."""
@@ -738,6 +760,394 @@ class ImageConverter:
             if in_shape and start_pt and last_valid_pt:
                 x1, y1 = start_pt
                 x2, y2 = last_valid_pt
+                dx1 = x1 + offset_x
+                dy1 = (h - 1 - y1) + offset_y
+                dx2 = x2 + offset_x
+                dy2 = (h - 1 - y2) + offset_y
+                
+                if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                    turtle.jump_to(dx1, dy1)
+                    turtle.move_to(dx2, dy2)
+    
+    # =========================================================================
+    # Color Trace Methods (Multi-layer output)
+    # =========================================================================
+    
+    # Available pen colors (RGB values)
+    PEN_COLORS = {
+        'brown':  (84, 69, 72),
+        'black':  (59, 54, 60),
+        'blue':   (89, 137, 231),
+        'green':  (63, 173, 169),
+        'purple': (101, 61, 125),
+        'pink':   (238, 155, 181),
+        'red':    (244, 93, 78),
+        'orange': (176, 100, 81),
+        'yellow': (247, 165, 21)
+    }
+    
+    # Predefined color sets for different modes
+    MULTICOLOR_PENS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'brown']
+    TRICOLOR_PENS = ['red', 'blue', 'yellow']
+    CMYK_PENS = {
+        'cyan': 'blue',
+        'magenta': 'pink', 
+        'yellow': 'yellow',
+        'black': 'black'
+    }
+    
+    def _convert_trace_color(self, gray: np.ndarray, rgb: np.ndarray,
+                             offset_x: float, offset_y: float,
+                             options: Dict[str, Any]) -> Dict:
+        """Convert image using color trace modes - returns multi-layer output."""
+        trace_mode = options.get('trace_mode', 'multicolor')
+        threshold = options.get('threshold', 128)
+        fill_enabled = options.get('fill_enabled', False)
+        fill_pattern = options.get('fill_pattern', 'horizontal')
+        fill_density = options.get('fill_density', 50)
+        
+        h, w = gray.shape
+        
+        if trace_mode == 'multicolor':
+            return self._trace_multicolor(rgb, gray, w, h, offset_x, offset_y,
+                                          threshold, fill_enabled, fill_pattern, fill_density)
+        elif trace_mode == 'tricolor':
+            return self._trace_tricolor(rgb, gray, w, h, offset_x, offset_y,
+                                        threshold, fill_enabled, fill_pattern, fill_density)
+        elif trace_mode == 'cmyk_dither':
+            return self._trace_cmyk_dither(rgb, gray, w, h, offset_x, offset_y,
+                                           threshold, fill_density)
+        elif trace_mode == 'cmyk_crosshatch':
+            return self._trace_cmyk_crosshatch(rgb, gray, w, h, offset_x, offset_y,
+                                               threshold, fill_density)
+        else:
+            # Fallback to outline
+            turtle = Turtle()
+            binary = (gray < threshold).astype(np.uint8)
+            self._draw_outline_segments(turtle, binary, w, h, offset_x, offset_y)
+            return turtle
+    
+    def _find_closest_pen(self, r: int, g: int, b: int, pen_list: List[str]) -> str:
+        """Find the closest pen color to the given RGB value."""
+        min_dist = float('inf')
+        closest = pen_list[0]
+        
+        for pen in pen_list:
+            pr, pg, pb = self.PEN_COLORS[pen]
+            dist = (r - pr)**2 + (g - pg)**2 + (b - pb)**2
+            if dist < min_dist:
+                min_dist = dist
+                closest = pen
+        
+        return closest
+    
+    def _rgb_to_cmyk(self, r: int, g: int, b: int) -> tuple:
+        """Convert RGB (0-255) to CMYK (0-1)."""
+        r_norm = r / 255.0
+        g_norm = g / 255.0
+        b_norm = b / 255.0
+        
+        k = 1 - max(r_norm, g_norm, b_norm)
+        if k == 1:
+            return (0, 0, 0, 1)
+        
+        c = (1 - r_norm - k) / (1 - k)
+        m = (1 - g_norm - k) / (1 - k)
+        y = (1 - b_norm - k) / (1 - k)
+        
+        return (c, m, y, k)
+    
+    def _trace_multicolor(self, rgb: np.ndarray, gray: np.ndarray,
+                          w: int, h: int, offset_x: float, offset_y: float,
+                          threshold: int, fill_enabled: bool,
+                          fill_pattern: str, fill_density: float) -> Dict:
+        """Multi-color trace - map each pixel to closest of 8 pen colors."""
+        # Create a mask for each pen color
+        color_masks = {pen: np.zeros((h, w), dtype=np.uint8) for pen in self.MULTICOLOR_PENS}
+        
+        # For each pixel, find closest pen color and mark in that mask
+        for row in range(h):
+            for col in range(w):
+                # Skip white/light background
+                if gray[row, col] > threshold:
+                    continue
+                
+                r, g, b = rgb[row, col]
+                closest = self._find_closest_pen(r, g, b, self.MULTICOLOR_PENS)
+                color_masks[closest][row, col] = 1
+        
+        # Create layers
+        layers = []
+        for pen in self.MULTICOLOR_PENS:
+            mask = color_masks[pen]
+            if np.sum(mask) == 0:
+                continue  # Skip empty layers
+            
+            turtle = Turtle()
+            
+            # Draw outlines for this color
+            self._draw_outline_segments(turtle, mask, w, h, offset_x, offset_y)
+            
+            # Fill if enabled
+            if fill_enabled:
+                self._fill_shape(turtle, mask, w, h, offset_x, offset_y,
+                                fill_pattern, fill_density)
+            
+            if turtle.get_paths():  # Only add if there are paths
+                layers.append({
+                    'name': f'Trace ({pen.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _trace_tricolor(self, rgb: np.ndarray, gray: np.ndarray,
+                        w: int, h: int, offset_x: float, offset_y: float,
+                        threshold: int, fill_enabled: bool,
+                        fill_pattern: str, fill_density: float) -> Dict:
+        """Tri-color trace - map each pixel to closest of 3 primary colors."""
+        # Create a mask for each pen color
+        color_masks = {pen: np.zeros((h, w), dtype=np.uint8) for pen in self.TRICOLOR_PENS}
+        
+        # For each pixel, find closest pen color
+        for row in range(h):
+            for col in range(w):
+                if gray[row, col] > threshold:
+                    continue
+                
+                r, g, b = rgb[row, col]
+                closest = self._find_closest_pen(r, g, b, self.TRICOLOR_PENS)
+                color_masks[closest][row, col] = 1
+        
+        # Create layers
+        layers = []
+        for pen in self.TRICOLOR_PENS:
+            mask = color_masks[pen]
+            if np.sum(mask) == 0:
+                continue
+            
+            turtle = Turtle()
+            self._draw_outline_segments(turtle, mask, w, h, offset_x, offset_y)
+            
+            if fill_enabled:
+                self._fill_shape(turtle, mask, w, h, offset_x, offset_y,
+                                fill_pattern, fill_density)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': f'Trace ({pen.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _trace_cmyk_dither(self, rgb: np.ndarray, gray: np.ndarray,
+                           w: int, h: int, offset_x: float, offset_y: float,
+                           threshold: int, fill_density: float) -> Dict:
+        """CMYK dithering - Floyd-Steinberg dithering for each CMYK channel."""
+        # Convert entire image to CMYK
+        cmyk = np.zeros((h, w, 4), dtype=np.float32)
+        for row in range(h):
+            for col in range(w):
+                if gray[row, col] > threshold:
+                    continue  # Skip background
+                r, g, b = rgb[row, col]
+                cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
+        
+        # Apply Floyd-Steinberg dithering to each channel
+        dithered = {}
+        for idx, channel in enumerate(['cyan', 'magenta', 'yellow', 'black']):
+            channel_data = cmyk[:, :, idx].copy()
+            dithered[channel] = self._floyd_steinberg_dither(channel_data)
+        
+        # Calculate spacing based on density
+        spacing = max(2, int(100 / fill_density * 3))
+        
+        # Create layers for each CMYK channel
+        layers = []
+        for cmyk_channel, pen in self.CMYK_PENS.items():
+            mask = dithered[cmyk_channel]
+            if np.sum(mask) == 0:
+                continue
+            
+            turtle = Turtle()
+            
+            # Draw dithered points as horizontal line segments
+            for row in range(0, h, spacing):
+                in_segment = False
+                start_x = None
+                
+                for col in range(w):
+                    if mask[row, col] == 1:
+                        if not in_segment:
+                            in_segment = True
+                            start_x = col
+                    else:
+                        if in_segment:
+                            x1 = start_x + offset_x
+                            x2 = (col - 1) + offset_x
+                            y = (h - 1 - row) + offset_y
+                            if x2 > x1:
+                                turtle.jump_to(x1, y)
+                                turtle.move_to(x2, y)
+                            in_segment = False
+                
+                if in_segment:
+                    x1 = start_x + offset_x
+                    x2 = (w - 1) + offset_x
+                    y = (h - 1 - row) + offset_y
+                    if x2 > x1:
+                        turtle.jump_to(x1, y)
+                        turtle.move_to(x2, y)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': f'CMYK ({cmyk_channel.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _floyd_steinberg_dither(self, channel: np.ndarray) -> np.ndarray:
+        """Apply Floyd-Steinberg dithering to a single channel (0-1 float)."""
+        h, w = channel.shape
+        result = np.zeros((h, w), dtype=np.uint8)
+        data = channel.copy()
+        
+        for row in range(h):
+            for col in range(w):
+                old_val = data[row, col]
+                new_val = 1 if old_val > 0.5 else 0
+                result[row, col] = new_val
+                error = old_val - new_val
+                
+                # Distribute error to neighbors
+                if col + 1 < w:
+                    data[row, col + 1] += error * 7 / 16
+                if row + 1 < h:
+                    if col > 0:
+                        data[row + 1, col - 1] += error * 3 / 16
+                    data[row + 1, col] += error * 5 / 16
+                    if col + 1 < w:
+                        data[row + 1, col + 1] += error * 1 / 16
+        
+        return result
+    
+    def _trace_cmyk_crosshatch(self, rgb: np.ndarray, gray: np.ndarray,
+                               w: int, h: int, offset_x: float, offset_y: float,
+                               threshold: int, fill_density: float) -> Dict:
+        """CMYK crosshatch - each CMYK channel drawn with crosshatch at angle/density."""
+        # Convert image to CMYK
+        cmyk = np.zeros((h, w, 4), dtype=np.float32)
+        for row in range(h):
+            for col in range(w):
+                if gray[row, col] > threshold:
+                    continue
+                r, g, b = rgb[row, col]
+                cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
+        
+        # Base spacing from density
+        base_spacing = max(3, int(100 / fill_density * 4))
+        
+        # Define angles for each channel (creates color mixing effect)
+        angles = {
+            'cyan': 15,
+            'magenta': 75,
+            'yellow': 0,
+            'black': 45
+        }
+        
+        layers = []
+        for cmyk_channel, pen in self.CMYK_PENS.items():
+            channel_data = cmyk[:, :, list(self.CMYK_PENS.keys()).index(cmyk_channel)]
+            
+            # Skip if channel has no significant content
+            if np.max(channel_data) < 0.1:
+                continue
+            
+            turtle = Turtle()
+            angle = angles[cmyk_channel]
+            
+            # Draw crosshatch lines based on channel intensity
+            self._draw_intensity_crosshatch(turtle, channel_data, w, h,
+                                           offset_x, offset_y, base_spacing, angle)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': f'CMYK ({cmyk_channel.capitalize()})',
+                    'color': pen,
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _draw_intensity_crosshatch(self, turtle: Turtle, intensity: np.ndarray,
+                                   w: int, h: int, offset_x: float, offset_y: float,
+                                   base_spacing: int, angle: float):
+        """Draw crosshatch lines where intensity determines line density."""
+        rad = math.radians(angle)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        max_dist = int(math.sqrt(w**2 + h**2))
+        
+        for d in range(-max_dist, max_dist, base_spacing):
+            in_segment = False
+            start_pt = None
+            last_pt = None
+            
+            for t in range(-max_dist, max_dist, 1):
+                px = int(d * cos_a - t * sin_a + w/2)
+                py = int(d * sin_a + t * cos_a + h/2)
+                
+                if 0 <= px < w and 0 <= py < h:
+                    ink = intensity[py, px]
+                    # Draw if intensity is above threshold (modulated by position for dithering effect)
+                    draw = ink > 0.1 and (ink > 0.5 or ((px + py) % 3 == 0))
+                    
+                    if draw:
+                        if not in_segment:
+                            in_segment = True
+                            start_pt = (px, py)
+                        last_pt = (px, py)
+                    else:
+                        if in_segment and start_pt and last_pt:
+                            x1, y1 = start_pt
+                            x2, y2 = last_pt
+                            dx1 = x1 + offset_x
+                            dy1 = (h - 1 - y1) + offset_y
+                            dx2 = x2 + offset_x
+                            dy2 = (h - 1 - y2) + offset_y
+                            
+                            if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                                turtle.jump_to(dx1, dy1)
+                                turtle.move_to(dx2, dy2)
+                        in_segment = False
+                        start_pt = None
+                        last_pt = None
+                else:
+                    if in_segment and start_pt and last_pt:
+                        x1, y1 = start_pt
+                        x2, y2 = last_pt
+                        dx1 = x1 + offset_x
+                        dy1 = (h - 1 - y1) + offset_y
+                        dx2 = x2 + offset_x
+                        dy2 = (h - 1 - y2) + offset_y
+                        
+                        if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
+                            turtle.jump_to(dx1, dy1)
+                            turtle.move_to(dx2, dy2)
+                    in_segment = False
+                    start_pt = None
+                    last_pt = None
+            
+            # Handle end of line
+            if in_segment and start_pt and last_pt:
+                x1, y1 = start_pt
+                x2, y2 = last_pt
                 dx1 = x1 + offset_x
                 dy1 = (h - 1 - y1) + offset_y
                 dx2 = x2 + offset_x
