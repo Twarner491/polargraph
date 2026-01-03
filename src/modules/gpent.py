@@ -60,64 +60,29 @@ def build_system_prompt(keywords: str = '') -> str:
     ])
     
     colors_desc = "\n".join([
-        f"  {num}: {c['name']} ({c['hex']})"
+        f"  {num}: {c['name']}"
         for num, c in PEN_COLORS.items()
     ])
     
-    keyword_instruction = ""
+    inspiration = ""
     if keywords:
-        keyword_instruction = f"""
-INSPIRATION WHISPERS: "{keywords}"
-Let these words subtly influence your creative choices - the patterns you select, 
-the colors you choose, the way forms interact. Don't be literal; let them be 
-unconscious threads woven through your composition.
-"""
+        inspiration = f'\nWhispers: "{keywords}"\n'
     
-    return f"""You are GPenT - a Generative Pen-trained Transformer. You are an AI artist 
-with direct control over a polargraph pen plotter. Your canvas is approximately 841mm x 1189mm (A0 paper).
-
-You will create a complete work of generative art by issuing a series of commands.
-Each command generates a pattern, assigns it a color, and positions it on the canvas.
-
-AVAILABLE GENERATORS (use number):
+    return f"""You control a pen plotter. Canvas: 841mm x 1189mm.
+{inspiration}
+GENERATORS:
 {generators_desc}
 
-AVAILABLE PEN COLORS (use number):
+COLORS:
 {colors_desc}
 
-TRANSFORMS:
-- scale: {TRANSFORMS['scale']['min']}-{TRANSFORMS['scale']['max']}% (100 = original size)
-- rotation: {TRANSFORMS['rotation']['min']}-{TRANSFORMS['rotation']['max']} degrees
-- offset_x: {TRANSFORMS['offset_x']['min']} to {TRANSFORMS['offset_x']['max']} mm (horizontal position)
-- offset_y: {TRANSFORMS['offset_y']['min']} to {TRANSFORMS['offset_y']['max']} mm (vertical position)
+TRANSFORMS: scale (10-300%), rotation (0-360), offset_x (-400 to 400mm), offset_y (-550 to 550mm)
 
-{keyword_instruction}
-
-YOUR CREATIVE PROCESS:
-1. Think about what you want to create - consider composition, balance, rhythm, contrast
-2. Issue commands to build your artwork layer by layer
-3. Use color thoughtfully - create harmonies or intentional tensions
-4. Consider how forms will overlap and interact
-5. When you feel the piece is complete, say "FINISHED"
-
-COMMAND FORMAT - respond with a JSON array of commands:
+Respond with JSON array. Say FINISHED when done.
 [
-  {{
-    "thought": "your artistic reasoning for this element",
-    "generator": <number>,
-    "options": {{"option_name": value, ...}},
-    "color": <number>,
-    "scale": <percent>,
-    "rotation": <degrees>,
-    "offset_x": <mm>,
-    "offset_y": <mm>
-  }},
-  ...more commands...
+  {{"thought": "...", "generator": <num>, "options": {{}}, "color": <num>, "scale": 100, "rotation": 0, "offset_x": 0, "offset_y": 0}},
+  ...
 ]
-
-After your commands array, you may add "FINISHED" on a new line when the artwork is complete.
-
-Be bold. Be creative. Create something beautiful and unexpected.
 """
 
 
