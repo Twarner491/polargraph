@@ -515,20 +515,10 @@ function initKeyboardShortcuts() {
             return;
         }
         
-        // Escape - Cancel crop mode or Deselect
+        // Escape - Deselect
         if (e.key === 'Escape') {
-            if (cropMode.active) {
-                exitCropMode(false);
-                return;
-            }
             clearSelection();
             hideContextMenu();
-            return;
-        }
-        
-        // Enter - Apply crop mode
-        if (e.key === 'Enter' && cropMode.active) {
-            exitCropMode(true);
             return;
         }
         
@@ -702,8 +692,8 @@ function handleContextAction(action) {
             drawCanvas();
             logConsole(`Reset transform on ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
             break;
-        case 'crop':
-            promptCropEntities();
+        case 'cropToPaper':
+            cropSelectedToPaper();
             break;
         case 'bringToFront':
             saveHistoryState();
@@ -923,349 +913,212 @@ function checkScaleWarning(entity) {
     }
 }
 
-// Crop mode state
-let cropMode = {
-    active: false,
-    entities: [],
-    originalBounds: null,
-    cropBounds: null,
-    dragging: null // 'left', 'right', 'top', 'bottom', or null
-};
+// ============================================================================
+// Crop to Paper - Line Clipping
+// ============================================================================
 
-function promptCropEntities() {
-    const selected = getSelectedEntities();
-    if (selected.length === 0) return;
-    
-    // Calculate combined bounds of all selected entities
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    selected.forEach(entity => {
-        entity.paths.forEach(path => {
-            path.points.forEach(p => {
-                const px = p.x * entity.scale + entity.offsetX;
-                const py = p.y * entity.scale + entity.offsetY;
-                minX = Math.min(minX, px);
-                minY = Math.min(minY, py);
-                maxX = Math.max(maxX, px);
-                maxY = Math.max(maxY, py);
-            });
-        });
-    });
-    
-    // Enter crop mode
-    cropMode.active = true;
-    cropMode.entities = selected;
-    cropMode.originalBounds = { left: minX, right: maxX, top: maxY, bottom: minY };
-    cropMode.cropBounds = { left: minX, right: maxX, top: maxY, bottom: minY };
-    cropMode.dragging = null;
-    
-    logConsole('Crop mode: Drag edges to adjust, Enter to apply, Escape to cancel', 'msg-info');
-    drawCanvas();
+function getWorkAreaBounds() {
+    // Get from settings inputs or use defaults
+    return {
+        left: parseFloat(document.getElementById('limitLeft')?.value) || DEFAULT_SETTINGS.limit_left,
+        right: parseFloat(document.getElementById('limitRight')?.value) || DEFAULT_SETTINGS.limit_right,
+        top: parseFloat(document.getElementById('limitTop')?.value) || DEFAULT_SETTINGS.limit_top,
+        bottom: parseFloat(document.getElementById('limitBottom')?.value) || DEFAULT_SETTINGS.limit_bottom
+    };
 }
 
-function exitCropMode(apply = false) {
-    if (!cropMode.active) return;
+// Cohen-Sutherland line clipping algorithm
+function clipLineToRect(x1, y1, x2, y2, bounds) {
+    const INSIDE = 0, LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
     
-    if (apply) {
-        const bounds = cropMode.cropBounds;
-        const orig = cropMode.originalBounds;
-        
-        // Check if any cropping was done
-        if (bounds.left !== orig.left || bounds.right !== orig.right || 
-            bounds.top !== orig.top || bounds.bottom !== orig.bottom) {
+    function computeCode(x, y) {
+        let code = INSIDE;
+        if (x < bounds.left) code |= LEFT;
+        else if (x > bounds.right) code |= RIGHT;
+        if (y < bounds.bottom) code |= BOTTOM;
+        else if (y > bounds.top) code |= TOP;
+        return code;
+    }
+    
+    let code1 = computeCode(x1, y1);
+    let code2 = computeCode(x2, y2);
+    let accept = false;
+    
+    while (true) {
+        if (!(code1 | code2)) {
+            // Both inside
+            accept = true;
+            break;
+        } else if (code1 & code2) {
+            // Both outside same region
+            break;
+        } else {
+            // Needs clipping
+            let x, y;
+            const codeOut = code1 ? code1 : code2;
             
-            saveHistoryState();
+            if (codeOut & TOP) {
+                x = x1 + (x2 - x1) * (bounds.top - y1) / (y2 - y1);
+                y = bounds.top;
+            } else if (codeOut & BOTTOM) {
+                x = x1 + (x2 - x1) * (bounds.bottom - y1) / (y2 - y1);
+                y = bounds.bottom;
+            } else if (codeOut & RIGHT) {
+                y = y1 + (y2 - y1) * (bounds.right - x1) / (x2 - x1);
+                x = bounds.right;
+            } else if (codeOut & LEFT) {
+                y = y1 + (y2 - y1) * (bounds.left - x1) / (x2 - x1);
+                x = bounds.left;
+            }
             
-            let totalRemoved = 0;
-            cropMode.entities.forEach(entity => {
-                const result = cropEntityPaths(entity, bounds);
-                totalRemoved += result.removed;
-            });
-            
-            updateEntityList();
-            logConsole(`Cropped ${cropMode.entities.length} element${cropMode.entities.length > 1 ? 's' : ''}`, 'msg-info');
+            if (codeOut === code1) {
+                x1 = x; y1 = y;
+                code1 = computeCode(x1, y1);
+            } else {
+                x2 = x; y2 = y;
+                code2 = computeCode(x2, y2);
+            }
         }
-    } else {
-        logConsole('Crop cancelled', 'msg-info');
     }
     
-    cropMode.active = false;
-    cropMode.entities = [];
-    cropMode.originalBounds = null;
-    cropMode.cropBounds = null;
-    cropMode.dragging = null;
-    
-    drawCanvas();
+    return accept ? { x1, y1, x2, y2 } : null;
 }
 
-function getCropHandleAtPoint(worldX, worldY) {
-    if (!cropMode.active) return null;
+function clipPathToRect(path, bounds) {
+    // Apply entity transform to get world coordinates, then clip
+    const clippedPaths = [];
+    let currentPath = null;
     
-    const bounds = cropMode.cropBounds;
-    const handleSize = 15 / getCanvasScale(); // Size in world coords
+    for (let i = 0; i < path.points.length - 1; i++) {
+        const p1 = path.points[i];
+        const p2 = path.points[i + 1];
+        
+        const clipped = clipLineToRect(p1.x, p1.y, p2.x, p2.y, bounds);
+        
+        if (clipped) {
+            if (!currentPath) {
+                currentPath = { points: [{ x: clipped.x1, y: clipped.y1 }] };
+            }
+            
+            // Check if this segment connects to the previous
+            const lastPoint = currentPath.points[currentPath.points.length - 1];
+            if (Math.abs(lastPoint.x - clipped.x1) > 0.001 || Math.abs(lastPoint.y - clipped.y1) > 0.001) {
+                // Discontinuity - save current path and start new one
+                if (currentPath.points.length > 1) {
+                    clippedPaths.push(currentPath);
+                }
+                currentPath = { points: [{ x: clipped.x1, y: clipped.y1 }] };
+            }
+            
+            currentPath.points.push({ x: clipped.x2, y: clipped.y2 });
+        } else {
+            // Segment is outside - save current path if exists
+            if (currentPath && currentPath.points.length > 1) {
+                clippedPaths.push(currentPath);
+                currentPath = null;
+            }
+        }
+    }
     
-    // Check each edge
-    if (Math.abs(worldX - bounds.left) < handleSize && worldY >= bounds.bottom && worldY <= bounds.top) {
-        return 'left';
-    }
-    if (Math.abs(worldX - bounds.right) < handleSize && worldY >= bounds.bottom && worldY <= bounds.top) {
-        return 'right';
-    }
-    if (Math.abs(worldY - bounds.top) < handleSize && worldX >= bounds.left && worldX <= bounds.right) {
-        return 'top';
-    }
-    if (Math.abs(worldY - bounds.bottom) < handleSize && worldX >= bounds.left && worldX <= bounds.right) {
-        return 'bottom';
+    // Save final path
+    if (currentPath && currentPath.points.length > 1) {
+        clippedPaths.push(currentPath);
     }
     
-    return null;
+    return clippedPaths;
 }
 
-function updateCropBounds(handle, worldX, worldY) {
-    if (!cropMode.active || !handle) return;
-    
-    const orig = cropMode.originalBounds;
-    
-    switch (handle) {
-        case 'left':
-            cropMode.cropBounds.left = Math.min(Math.max(worldX, orig.left - 100), orig.right - 10);
-            break;
-        case 'right':
-            cropMode.cropBounds.right = Math.max(Math.min(worldX, orig.right + 100), orig.left + 10);
-            break;
-        case 'top':
-            cropMode.cropBounds.top = Math.max(Math.min(worldY, orig.top + 100), orig.bottom + 10);
-            break;
-        case 'bottom':
-            cropMode.cropBounds.bottom = Math.min(Math.max(worldY, orig.bottom - 100), orig.top - 10);
-            break;
-    }
-    
-    drawCanvas();
-}
-
-function drawCropOverlay() {
-    if (!cropMode.active) return;
-    
-    const bounds = cropMode.cropBounds;
-    const scale = getCanvasScale();
-    const dpr = window.devicePixelRatio;
-    const cw = canvas.width / dpr;
-    const ch = canvas.height / dpr;
-    
-    // Convert world to screen coords
-    const toScreen = (wx, wy) => ({
-        x: cw / 2 + wx * scale,
-        y: ch / 2 - wy * scale
-    });
-    
-    const topLeft = toScreen(bounds.left, bounds.top);
-    const bottomRight = toScreen(bounds.right, bounds.bottom);
-    
-    // Draw semi-transparent overlay outside crop area
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    
-    // Top region
-    ctx.fillRect(0, 0, cw, topLeft.y);
-    // Bottom region
-    ctx.fillRect(0, bottomRight.y, cw, ch - bottomRight.y);
-    // Left region
-    ctx.fillRect(0, topLeft.y, topLeft.x, bottomRight.y - topLeft.y);
-    // Right region
-    ctx.fillRect(bottomRight.x, topLeft.y, cw - bottomRight.x, bottomRight.y - topLeft.y);
-    
-    // Draw crop boundary
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
-    ctx.setLineDash([]);
-    
-    // Draw drag handles
-    const handleSize = 8;
-    ctx.fillStyle = '#fff';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1;
-    
-    // Left handle
-    const leftMid = (topLeft.y + bottomRight.y) / 2;
-    ctx.fillRect(topLeft.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
-    ctx.strokeRect(topLeft.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
-    
-    // Right handle
-    ctx.fillRect(bottomRight.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
-    ctx.strokeRect(bottomRight.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
-    
-    // Top handle
-    const topMid = (topLeft.x + bottomRight.x) / 2;
-    ctx.fillRect(topMid - handleSize, topLeft.y - handleSize/2, handleSize * 2, handleSize);
-    ctx.strokeRect(topMid - handleSize, topLeft.y - handleSize/2, handleSize * 2, handleSize);
-    
-    // Bottom handle
-    ctx.fillRect(topMid - handleSize, bottomRight.y - handleSize/2, handleSize * 2, handleSize);
-    ctx.strokeRect(topMid - handleSize, bottomRight.y - handleSize/2, handleSize * 2, handleSize);
-    
-    // Show dimensions
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    const width = Math.abs(bounds.right - bounds.left).toFixed(1);
-    const height = Math.abs(bounds.top - bounds.bottom).toFixed(1);
-    ctx.fillText(`${width} × ${height} mm`, (topLeft.x + bottomRight.x) / 2, bottomRight.y + 20);
-}
-
-function cropEntityPaths(entity, bounds) {
-    let removed = 0;
+function cropEntityToPaper(entity) {
+    const bounds = getWorkAreaBounds();
     const newPaths = [];
     
+    // First, we need to get the transformed coordinates
+    // Apply scale, rotation, offset to each point
     entity.paths.forEach(path => {
-        const clippedPath = clipPathToBounds(path, entity, bounds);
-        if (clippedPath.length > 0) {
-            clippedPath.forEach(segment => {
-                if (segment.points.length >= 2) {
-                    newPaths.push(segment);
-                }
-            });
-        } else {
-            removed++;
-        }
-    });
-    
-    const originalCount = entity.paths.length;
-    entity.paths = newPaths;
-    
-    return { removed: originalCount - newPaths.length + removed };
-}
-
-function clipPathToBounds(path, entity, bounds) {
-    // Transform points to world coordinates and clip
-    const segments = [];
-    let currentSegment = null;
-    
-    for (let i = 0; i < path.points.length; i++) {
-        const p = path.points[i];
-        const worldX = p.x * entity.scale + entity.offsetX;
-        const worldY = p.y * entity.scale + entity.offsetY;
-        
-        const inside = worldX >= bounds.left && worldX <= bounds.right &&
-                       worldY >= bounds.bottom && worldY <= bounds.top;
-        
-        if (inside) {
-            if (!currentSegment) {
-                currentSegment = { points: [] };
-            }
-            currentSegment.points.push({ x: p.x, y: p.y });
-        } else {
-            // Point is outside - if we have a segment, try to clip the edge
-            if (currentSegment && currentSegment.points.length > 0) {
-                // Add intersection point at boundary
-                if (i > 0) {
-                    const prevP = path.points[i - 1];
-                    const prevWorldX = prevP.x * entity.scale + entity.offsetX;
-                    const prevWorldY = prevP.y * entity.scale + entity.offsetY;
-                    
-                    const intersect = lineRectIntersection(
-                        prevWorldX, prevWorldY, worldX, worldY,
-                        bounds.left, bounds.bottom, bounds.right, bounds.top
-                    );
-                    
-                    if (intersect) {
-                        // Convert back to entity coordinates
-                        currentSegment.points.push({
-                            x: (intersect.x - entity.offsetX) / entity.scale,
-                            y: (intersect.y - entity.offsetY) / entity.scale
-                        });
-                    }
+        // Transform points to world coordinates
+        const transformedPath = {
+            points: path.points.map(p => {
+                let x = p.x * entity.scale;
+                let y = p.y * entity.scale;
+                
+                // Apply rotation if any
+                if (entity.rotation !== 0) {
+                    const rad = entity.rotation * Math.PI / 180;
+                    const cos = Math.cos(rad);
+                    const sin = Math.sin(rad);
+                    const nx = x * cos - y * sin;
+                    const ny = x * sin + y * cos;
+                    x = nx;
+                    y = ny;
                 }
                 
-                segments.push(currentSegment);
-                currentSegment = null;
-            } else if (i > 0) {
-                // Check if line segment crosses the bounds
-                const prevP = path.points[i - 1];
-                const prevWorldX = prevP.x * entity.scale + entity.offsetX;
-                const prevWorldY = prevP.y * entity.scale + entity.offsetY;
-                const prevInside = prevWorldX >= bounds.left && prevWorldX <= bounds.right &&
-                                   prevWorldY >= bounds.bottom && prevWorldY <= bounds.top;
+                // Apply offset
+                x += entity.offsetX;
+                y += entity.offsetY;
                 
-                if (!prevInside) {
-                    // Both points outside - check if line crosses bounds
-                    const intersections = lineRectAllIntersections(
-                        prevWorldX, prevWorldY, worldX, worldY,
-                        bounds.left, bounds.bottom, bounds.right, bounds.top
-                    );
-                    
-                    if (intersections.length >= 2) {
-                        segments.push({
-                            points: intersections.map(int => ({
-                                x: (int.x - entity.offsetX) / entity.scale,
-                                y: (int.y - entity.offsetY) / entity.scale
-                            }))
-                        });
-                    }
-                }
-            }
-        }
-    }
-    
-    if (currentSegment && currentSegment.points.length >= 2) {
-        segments.push(currentSegment);
-    }
-    
-    return segments;
-}
-
-function lineRectIntersection(x1, y1, x2, y2, left, bottom, right, top) {
-    // Find first intersection point of line with rectangle
-    const intersections = lineRectAllIntersections(x1, y1, x2, y2, left, bottom, right, top);
-    return intersections.length > 0 ? intersections[0] : null;
-}
-
-function lineRectAllIntersections(x1, y1, x2, y2, left, bottom, right, top) {
-    const intersections = [];
-    
-    // Check all four edges
-    const edges = [
-        { x1: left, y1: bottom, x2: left, y2: top },     // Left
-        { x1: right, y1: bottom, x2: right, y2: top },   // Right
-        { x1: left, y1: top, x2: right, y2: top },       // Top
-        { x1: left, y1: bottom, x2: right, y2: bottom }  // Bottom
-    ];
-    
-    edges.forEach(edge => {
-        const int = lineLineIntersection(x1, y1, x2, y2, edge.x1, edge.y1, edge.x2, edge.y2);
-        if (int) {
-            // Check if intersection is on the original line segment
-            const t = (int.x - x1) / (x2 - x1 || 0.0001);
-            if (t >= 0 && t <= 1) {
-                intersections.push(int);
-            }
-        }
-    });
-    
-    // Sort by distance from start point
-    intersections.sort((a, b) => {
-        const distA = (a.x - x1) ** 2 + (a.y - y1) ** 2;
-        const distB = (b.x - x1) ** 2 + (b.y - y1) ** 2;
-        return distA - distB;
-    });
-    
-    return intersections;
-}
-
-function lineLineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
-    const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-    if (Math.abs(denom) < 0.0001) return null;
-    
-    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-    const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
-    
-    if (u >= 0 && u <= 1) {
-        return {
-            x: x1 + t * (x2 - x1),
-            y: y1 + t * (y2 - y1)
+                return { x, y };
+            })
         };
+        
+        // Clip the transformed path
+        const clippedPaths = clipPathToRect(transformedPath, bounds);
+        newPaths.push(...clippedPaths);
+    });
+    
+    // Now we need to transform the clipped paths back to entity-local coordinates
+    // (inverse of the transformation above)
+    const inversePaths = newPaths.map(path => ({
+        points: path.points.map(p => {
+            let x = p.x - entity.offsetX;
+            let y = p.y - entity.offsetY;
+            
+            // Inverse rotation
+            if (entity.rotation !== 0) {
+                const rad = -entity.rotation * Math.PI / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                const nx = x * cos - y * sin;
+                const ny = x * sin + y * cos;
+                x = nx;
+                y = ny;
+            }
+            
+            // Inverse scale
+            x /= entity.scale;
+            y /= entity.scale;
+            
+            return { x, y };
+        })
+    }));
+    
+    return inversePaths;
+}
+
+function cropSelectedToPaper() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) {
+        logConsole('No elements selected to crop', 'msg-warn');
+        return;
     }
-    return null;
+    
+    saveHistoryState();
+    const bounds = getWorkAreaBounds();
+    let totalOriginal = 0;
+    let totalCropped = 0;
+    
+    selected.forEach(entity => {
+        totalOriginal += entity.paths.length;
+        const croppedPaths = cropEntityToPaper(entity);
+        entity.paths = croppedPaths;
+        totalCropped += croppedPaths.length;
+    });
+    
+    drawCanvas();
+    updateEntityList();
+    updateExportInfo();
+    
+    const removed = totalOriginal - totalCropped;
+    logConsole(`Cropped to paper: ${totalCropped} paths (${removed > 0 ? removed + ' segments clipped' : 'nothing outside bounds'})`, 'msg-info');
 }
 
 function changeEntityColor(entityId, colorId) {
@@ -1841,19 +1694,8 @@ function onCanvasMouseDown(e) {
     state.dragStartX = x;
     state.dragStartY = y;
     
-    const worldPos = screenToWorld(x, y);
-    
-    // Handle crop mode
-    if (cropMode.active) {
-        const handle = getCropHandleAtPoint(worldPos.x, worldPos.y);
-        if (handle) {
-            cropMode.dragging = handle;
-            state.isDragging = true;
-            return;
-        }
-    }
-    
     // Check if clicking on an entity
+    const worldPos = screenToWorld(x, y);
     const clickedEntity = findEntityAtPoint(worldPos.x, worldPos.y);
     
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -1913,24 +1755,6 @@ function onCanvasMouseMove(e) {
     const worldPos = screenToWorld(x, y);
     elements.cursorPos.textContent = `X: ${worldPos.x.toFixed(1)} Y: ${worldPos.y.toFixed(1)}`;
     
-    // Handle crop mode cursor
-    if (cropMode.active && !state.isDragging) {
-        const handle = getCropHandleAtPoint(worldPos.x, worldPos.y);
-        if (handle === 'left' || handle === 'right') {
-            canvas.style.cursor = 'ew-resize';
-        } else if (handle === 'top' || handle === 'bottom') {
-            canvas.style.cursor = 'ns-resize';
-        } else {
-            canvas.style.cursor = 'default';
-        }
-    }
-    
-    // Handle crop dragging
-    if (state.isDragging && cropMode.active && cropMode.dragging) {
-        updateCropBounds(cropMode.dragging, worldPos.x, worldPos.y);
-        return;
-    }
-    
     if (state.isDragging) {
         if (state.dragMode === 'entity-move') {
             // Move all selected entities
@@ -1964,13 +1788,8 @@ function onCanvasMouseMove(e) {
 }
 
 function onCanvasMouseUp() {
-    if (cropMode.active && cropMode.dragging) {
-        cropMode.dragging = null;
-    }
     state.isDragging = false;
-    if (!cropMode.active) {
-        canvas.style.cursor = 'crosshair';
-    }
+    canvas.style.cursor = 'crosshair';
 }
 
 function onCanvasRightClick(e) {
@@ -3425,7 +3244,7 @@ function updateGeneratorOptions() {
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
             input.step = config.type === 'int' ? 1 : 0.1;
-            input.id = `gen_${key}`;
+        input.id = `gen_${key}`;
         }
         
         group.appendChild(label);
@@ -3617,14 +3436,14 @@ async function generatePattern() {
             } else {
                 // Standard single-turtle output
                 const paths = result.getPaths();
-                const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
-                addEntity(paths, {
-                    algorithm: generator,
-                    algorithmOptions: options,
-                    name: generatorName
-                });
-                elements.plotStatus.textContent = `${paths.length} lines generated`;
-                logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+            const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
+            addEntity(paths, {
+                algorithm: generator,
+                algorithmOptions: options,
+                name: generatorName
+            });
+            elements.plotStatus.textContent = `${paths.length} lines generated`;
+            logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
             }
         } catch (err) {
             console.error('[CLIENT] Generate error:', err);
@@ -3659,15 +3478,15 @@ async function generatePattern() {
             elements.plotStatus.textContent = `${totalPaths} lines in ${result.layers.length} layers`;
             logConsole(`Generated ${generator} pattern (${result.layers.length} color layers)`, 'msg-info');
         } else {
-            // Create entity from server result
-            const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
-            const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
-            addEntity(paths, {
-                algorithm: generator,
-                algorithmOptions: options,
-                name: generatorName
-            });
-            elements.plotStatus.textContent = `${result.lines} lines generated`;
+        // Create entity from server result
+        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+        const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
+        addEntity(paths, {
+            algorithm: generator,
+            algorithmOptions: options,
+            name: generatorName
+        });
+        elements.plotStatus.textContent = `${result.lines} lines generated`;
         }
     } else {
         logConsole(`Generate failed: ${result.error}`, 'msg-error');
@@ -3901,17 +3720,17 @@ async function convertImage() {
             } else {
                 // Single turtle result
                 const turtle = result;
-                const paths = turtle.getPaths();
-                
-                const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
-                addEntity(paths, {
-                    algorithm: algorithm,
-                    algorithmOptions: options,
-                    name: `Image (${converterName})`
-                });
-                
-                elements.plotStatus.textContent = `${paths.length} lines converted`;
-                logConsole(`Converted image with ${algorithm} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+            const paths = turtle.getPaths();
+            
+            const converterName = ImageConverter.CONVERTERS[algorithm]?.name || algorithm;
+            addEntity(paths, {
+                algorithm: algorithm,
+                algorithmOptions: options,
+                name: `Image (${converterName})`
+            });
+            
+            elements.plotStatus.textContent = `${paths.length} lines converted`;
+            logConsole(`Converted image with ${algorithm} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
             }
         } catch (err) {
             console.error('Convert error:', err);
@@ -3942,14 +3761,14 @@ async function convertImage() {
             logConsole(`Converted image with ${algorithm} - ${result.layers.length} color layers`, 'msg-info');
         } else {
             // Single layer result
-            const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
-            const converterName = elements.converterSelect.selectedOptions[0]?.textContent || algorithm;
-            addEntity(paths, {
-                algorithm: algorithm,
-                algorithmOptions: options,
-                name: `Image (${converterName})`
-            });
-            elements.plotStatus.textContent = `${result.lines} lines converted`;
+        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+        const converterName = elements.converterSelect.selectedOptions[0]?.textContent || algorithm;
+        addEntity(paths, {
+            algorithm: algorithm,
+            algorithmOptions: options,
+            name: `Image (${converterName})`
+        });
+        elements.plotStatus.textContent = `${result.lines} lines converted`;
         }
     } else {
         logConsole(`Convert failed: ${result.error}`, 'msg-error');
@@ -4197,11 +4016,6 @@ function drawCanvas() {
     }
     
     ctx.restore();
-    
-    // Draw crop overlay (after restore so it's in screen coords)
-    if (cropMode.active) {
-        drawCropOverlay();
-    }
     
     // Update stats
     const totalLines = state.entities.reduce((sum, e) => sum + e.paths.length, 0);
