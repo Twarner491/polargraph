@@ -3064,8 +3064,16 @@ async function generatePattern() {
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
     
-    // Special handling for GPenT - requires server API
+    // Special handling for GPenT - requires server API (not available in client-side mode)
     if (generator === 'gpent') {
+        if (CLIENT_SIDE_MODE) {
+            logConsole('GPenT requires local server connection', 'msg-warn');
+            logConsole('Connect to plotter.local to use AI-powered generation', 'msg-info');
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+        
         try {
             const keywords = options.inspiration || '';
             logConsole('GPenT starting...', 'msg-info');
