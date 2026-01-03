@@ -3080,12 +3080,23 @@ function updateConverterOptions() {
     const selected = elements.converterSelect.selectedOptions[0];
     if (!selected) return;
     
+    const converterId = selected.value;
     const options = JSON.parse(selected.dataset.options || '{}');
     elements.converterOptions.innerHTML = '';
+    
+    // Hide pen color picker for halftone (it creates its own color layers)
+    if (elements.colorPickerSection) {
+        elements.colorPickerSection.style.display = converterId === 'halftone' ? 'none' : 'block';
+    }
+    
+    // Track color_mode for conditional display
+    let colorModeSelect = null;
+    const conditionalGroups = {};
     
     Object.entries(options).forEach(([key, config]) => {
         const group = document.createElement('div');
         group.className = 'form-group';
+        group.dataset.optionKey = key;
         
         const label = document.createElement('label');
         label.textContent = config.label || key.replace(/_/g, ' ');
@@ -3098,13 +3109,61 @@ function updateConverterOptions() {
         } else if (config.type === 'select') {
             input = document.createElement('select');
             input.className = 'menu-select';
+            
+            // Check if this is a color picker (mono_color, duo_color_dark, duo_color_light)
+            const isColorPicker = ['mono_color', 'duo_color_dark', 'duo_color_light'].includes(key);
+            
             config.options.forEach(opt => {
                 const optEl = document.createElement('option');
                 optEl.value = opt.value;
-                optEl.textContent = opt.label;
+                
+                if (isColorPicker) {
+                    // Add color swatch using text + indicator
+                    optEl.textContent = opt.label;
+                    optEl.style.paddingLeft = '24px';
+                } else {
+                    optEl.textContent = opt.label;
+                }
+                
                 if (opt.value === config.default) optEl.selected = true;
                 input.appendChild(optEl);
             });
+            
+            // Add color swatch element for color pickers
+            if (isColorPicker) {
+                const wrapper = document.createElement('div');
+                wrapper.style.display = 'flex';
+                wrapper.style.alignItems = 'center';
+                wrapper.style.gap = '8px';
+                
+                const swatch = document.createElement('span');
+                swatch.className = 'color-swatch';
+                swatch.style.width = '20px';
+                swatch.style.height = '20px';
+                swatch.style.borderRadius = '3px';
+                swatch.style.border = '1px solid rgba(255,255,255,0.3)';
+                swatch.style.flexShrink = '0';
+                updateSwatchColor(swatch, config.default);
+                
+                input.addEventListener('change', () => {
+                    updateSwatchColor(swatch, input.value);
+                });
+                
+                wrapper.appendChild(swatch);
+                wrapper.appendChild(input);
+                input.style.flex = '1';
+                
+                group.appendChild(label);
+                group.appendChild(wrapper);
+            } else {
+                group.appendChild(label);
+                group.appendChild(input);
+            }
+            
+            // Track color_mode select for conditional logic
+            if (key === 'color_mode') {
+                colorModeSelect = input;
+            }
         } else {
             input = document.createElement('input');
             input.type = 'number';
@@ -3112,13 +3171,63 @@ function updateConverterOptions() {
             if (config.min !== undefined) input.min = config.min;
             if (config.max !== undefined) input.max = config.max;
             input.step = config.type === 'int' ? 1 : 0.1;
+            group.appendChild(label);
+            group.appendChild(input);
         }
         input.id = `conv_${key}`;
         
-        group.appendChild(label);
-        group.appendChild(input);
+        // Track conditional groups
+        if (key === 'mono_color') {
+            conditionalGroups.mono_color = group;
+        } else if (key === 'duo_color_dark' || key === 'duo_color_light') {
+            conditionalGroups[key] = group;
+        }
+        
+        // Only append non-color-picker groups here (color pickers already appended above)
+        if (config.type !== 'select' || !['mono_color', 'duo_color_dark', 'duo_color_light'].includes(key)) {
+            if (!group.querySelector('input, select')) {
+                // Already handled above
+            }
+        }
+        
         elements.converterOptions.appendChild(group);
     });
+    
+    // Set up conditional visibility for mono/duo tone options
+    function updateConditionalVisibility() {
+        if (!colorModeSelect) return;
+        const mode = colorModeSelect.value;
+        
+        if (conditionalGroups.mono_color) {
+            conditionalGroups.mono_color.style.display = mode === 'monotone' ? 'block' : 'none';
+        }
+        if (conditionalGroups.duo_color_dark) {
+            conditionalGroups.duo_color_dark.style.display = mode === 'duotone' ? 'block' : 'none';
+        }
+        if (conditionalGroups.duo_color_light) {
+            conditionalGroups.duo_color_light.style.display = mode === 'duotone' ? 'block' : 'none';
+        }
+    }
+    
+    if (colorModeSelect) {
+        colorModeSelect.addEventListener('change', updateConditionalVisibility);
+        updateConditionalVisibility(); // Initial state
+    }
+}
+
+function updateSwatchColor(swatch, colorName) {
+    const colors = {
+        black: '#3b363c',
+        blue: '#5989e7',
+        red: '#f45d4e',
+        green: '#3fada9',
+        purple: '#653d7d',
+        pink: '#ee9bb5',
+        orange: '#b06451',
+        yellow: '#f7a515',
+        brown: '#544548'
+    };
+    swatch.style.backgroundColor = colors[colorName] || '#888';
 }
 
 async function convertImage() {
