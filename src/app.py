@@ -815,6 +815,114 @@ def handle_ping():
 
 
 # ============================================================================
+# dcode - Text to G-code via Stable Diffusion (HuggingFace Space proxy)
+# ============================================================================
+
+DCODE_SPACE_URL = "https://twarner-dcode.hf.space"
+
+@app.route('/api/dcode', methods=['POST'])
+def dcode_generate():
+    """Proxy dcode requests to HuggingFace Space to avoid CORS issues."""
+    import requests as http_requests
+    
+    data = request.json
+    prompt = data.get('prompt', '')
+    temperature = float(data.get('temperature', 0.5))
+    max_tokens = int(data.get('max_tokens', 2048))
+    diffusion_steps = int(data.get('diffusion_steps', 35))
+    guidance = float(data.get('guidance', 10.0))
+    seed = int(data.get('seed', -1))
+    
+    if not prompt.strip():
+        return jsonify({'success': False, 'error': 'Prompt is required'}), 400
+    
+    print(f"[dcode] Generating for prompt: {prompt}", flush=True)
+    
+    try:
+        # Try queue-based API first (Gradio 4.x+)
+        call_response = http_requests.post(
+            f"{DCODE_SPACE_URL}/call/generate",
+            json={'data': [prompt, temperature, max_tokens, diffusion_steps, guidance, seed]},
+            timeout=30
+        )
+        
+        if call_response.ok:
+            call_result = call_response.json()
+            event_id = call_result.get('event_id')
+            
+            if event_id:
+                print(f"[dcode] Got event_id: {event_id}", flush=True)
+                
+                # Stream the result (may take a while for diffusion)
+                result_response = http_requests.get(
+                    f"{DCODE_SPACE_URL}/call/generate/{event_id}",
+                    timeout=300  # 5 minute timeout for diffusion
+                )
+                
+                # Parse SSE format
+                gcode = None
+                for line in result_response.text.split('\n'):
+                    if line.startswith('data:'):
+                        try:
+                            data_parsed = json.loads(line[5:].strip())
+                            if isinstance(data_parsed, list) and len(data_parsed) >= 2:
+                                gcode = data_parsed[0]
+                                break
+                        except json.JSONDecodeError:
+                            pass
+                
+                if gcode:
+                    print(f"[dcode] Got G-code: {len(gcode)} chars", flush=True)
+                    return jsonify({'success': True, 'gcode': gcode})
+        
+        # Fallback to /api/predict
+        print("[dcode] Trying /api/predict...", flush=True)
+        predict_response = http_requests.post(
+            f"{DCODE_SPACE_URL}/api/predict",
+            json={
+                'fn_index': 0,
+                'data': [prompt, temperature, max_tokens, diffusion_steps, guidance, seed],
+                'session_hash': os.urandom(8).hex()
+            },
+            timeout=300
+        )
+        
+        if predict_response.ok:
+            predict_result = predict_response.json()
+            if 'data' in predict_result and len(predict_result['data']) >= 2:
+                gcode = predict_result['data'][0]
+                print(f"[dcode] Got G-code via predict: {len(gcode)} chars", flush=True)
+                return jsonify({'success': True, 'gcode': gcode})
+        
+        # Try /run/generate
+        print("[dcode] Trying /run/generate...", flush=True)
+        run_response = http_requests.post(
+            f"{DCODE_SPACE_URL}/run/generate",
+            json={'data': [prompt, temperature, max_tokens, diffusion_steps, guidance, seed]},
+            timeout=300
+        )
+        
+        if run_response.ok:
+            run_result = run_response.json()
+            if 'data' in run_result and len(run_result['data']) >= 2:
+                gcode = run_result['data'][0]
+                print(f"[dcode] Got G-code via run: {len(gcode)} chars", flush=True)
+                return jsonify({'success': True, 'gcode': gcode})
+        
+        return jsonify({
+            'success': False,
+            'error': 'Could not get response from dcode space. It may be sleeping - visit the space directly to wake it.'
+        }), 503
+        
+    except http_requests.exceptions.Timeout:
+        return jsonify({'success': False, 'error': 'dcode request timed out (diffusion can take 1-2 minutes)'}), 504
+    except Exception as e:
+        import traceback
+        print(f"[dcode] Error: {e}", flush=True)
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+
+# ============================================================================
 # GPenT - Generative Pen-trained Transformer
 # ============================================================================
 

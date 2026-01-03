@@ -3583,7 +3583,7 @@ async function generatePattern() {
         return;
     }
     
-    // Special handling for dcode - uses HuggingFace Space API
+    // Special handling for dcode - uses server proxy (local) or HuggingFace Space API (static site)
     if (generator === 'dcode') {
         try {
             const prompt = options.prompt || '';
@@ -3597,78 +3597,46 @@ async function generatePattern() {
             logConsole('dcode starting...', 'msg-info');
             logConsole(`Prompt: "${prompt}"`, 'msg-info');
             
-            // Call HuggingFace Space API (Gradio endpoint)
             const temperature = parseFloat(options.temperature) || 0.5;
             const maxTokens = parseInt(options.max_tokens) || 2048;
             const diffusionSteps = parseInt(options.diffusion_steps) || 35;
             const guidance = parseFloat(options.guidance) || 10.0;
             const seed = parseInt(options.seed) || -1;
             
-            logConsole('Calling dcode diffusion model...', 'msg-info');
-            
-            // Try Gradio API - first attempt with /api/predict (older format)
             let gcode = null;
-            let svg = null;
             
-            // Try the queue-based API first (Gradio 4.x+)
-            try {
-                const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
+            // Use server proxy when available (avoids CORS issues)
+            if (!CLIENT_SIDE_MODE) {
+                logConsole('Calling dcode via server...', 'msg-info');
+                
+                const response = await fetch('/api/dcode', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                        prompt,
+                        temperature,
+                        max_tokens: maxTokens,
+                        diffusion_steps: diffusionSteps,
+                        guidance,
+                        seed
                     })
                 });
                 
-                if (callResponse.ok) {
-                    const callResult = await callResponse.json();
-                    const eventId = callResult.event_id;
-                    
-                    if (eventId) {
-                        logConsole('Processing diffusion...', 'msg-info');
-                        
-                        // Stream the result
-                        const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
-                        const resultText = await resultResponse.text();
-                        
-                        // Parse SSE format - look for "data:" lines
-                        const lines = resultText.split('\n');
-                        for (const line of lines) {
-                            if (line.startsWith('data:')) {
-                                try {
-                                    const data = JSON.parse(line.substring(5).trim());
-                                    if (Array.isArray(data) && data.length >= 2) {
-                                        gcode = data[0];
-                                        svg = data[1];
-                                    }
-                                } catch (e) {
-                                    // Not JSON, skip
-                                }
-                            }
-                        }
-                    }
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'dcode generation failed');
                 }
-            } catch (queueError) {
-                console.log('Queue API failed, trying predict API:', queueError);
-            }
-            
-            // Fallback to /api/predict if queue API didn't work
-            if (!gcode) {
-                logConsole('Trying alternate API...', 'msg-info');
                 
-                const predictResponse = await fetch(`${DCODE_SPACE_URL}/api/predict`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fn_index: 0,
-                        data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed],
-                        session_hash: Math.random().toString(36).substring(7)
-                    })
-                });
+                gcode = result.gcode;
+            } else {
+                // CLIENT_SIDE_MODE - try direct HuggingFace API (may have CORS issues)
+                logConsole('Calling dcode diffusion model...', 'msg-info');
+                logConsole('Note: Direct API may have CORS issues. Use plotter.local for best results.', 'msg-warn');
                 
-                if (!predictResponse.ok) {
-                    // Try one more format - /run/generate
-                    const runResponse = await fetch(`${DCODE_SPACE_URL}/run/generate`, {
+                // Try the queue-based API first (Gradio 4.x+)
+                try {
+                    const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -3676,21 +3644,35 @@ async function generatePattern() {
                         })
                     });
                     
-                    if (!runResponse.ok) {
-                        throw new Error(`dcode API error: Space may be sleeping or unavailable. Visit ${DCODE_SPACE_URL} to wake it up.`);
+                    if (callResponse.ok) {
+                        const callResult = await callResponse.json();
+                        const eventId = callResult.event_id;
+                        
+                        if (eventId) {
+                            logConsole('Processing diffusion...', 'msg-info');
+                            
+                            const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
+                            const resultText = await resultResponse.text();
+                            
+                            for (const line of resultText.split('\n')) {
+                                if (line.startsWith('data:')) {
+                                    try {
+                                        const data = JSON.parse(line.substring(5).trim());
+                                        if (Array.isArray(data) && data.length >= 2) {
+                                            gcode = data[0];
+                                            break;
+                                        }
+                                    } catch (e) {}
+                                }
+                            }
+                        }
                     }
-                    
-                    const runResult = await runResponse.json();
-                    if (runResult.data && runResult.data.length >= 2) {
-                        gcode = runResult.data[0];
-                        svg = runResult.data[1];
-                    }
-                } else {
-                    const predictResult = await predictResponse.json();
-                    if (predictResult.data && predictResult.data.length >= 2) {
-                        gcode = predictResult.data[0];
-                        svg = predictResult.data[1];
-                    }
+                } catch (queueError) {
+                    console.log('Queue API failed:', queueError);
+                }
+                
+                if (!gcode) {
+                    throw new Error(`dcode requires server proxy. Connect to plotter.local or visit ${DCODE_SPACE_URL} directly.`);
                 }
             }
             
