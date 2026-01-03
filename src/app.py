@@ -8,6 +8,11 @@ import os
 import json
 import threading
 import time
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 
@@ -18,6 +23,7 @@ from modules.image_converter import ImageConverter
 from modules.turtle_generator import TurtleGenerator
 from modules.file_handler import FileHandler
 from modules.plotter_settings import PlotterSettings
+from modules import gpent
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
@@ -806,6 +812,70 @@ def handle_ping():
     """Ping the plotter for status."""
     if serial_handler.is_connected():
         serial_handler.send_command('M114')
+
+
+# ============================================================================
+# GPenT - Generative Pen-trained Transformer
+# ============================================================================
+
+@app.route('/api/gpent', methods=['POST'])
+def gpent_generate():
+    """Generate artwork using GPenT (Gemini-powered art generation)."""
+    data = request.json
+    keywords = data.get('keywords', '')
+    
+    logs = []
+    def log_callback(msg):
+        logs.append(msg)
+        print(f"[GPenT] {msg}", flush=True)
+    
+    try:
+        result = gpent.generate_artwork(keywords=keywords, log_callback=log_callback)
+        
+        # Process the commands into entities
+        entities = []
+        for cmd in result.get('entities', []):
+            # Generate the pattern
+            generator_id = cmd.get('generator_id', 'spiral')
+            options = cmd.get('options', {})
+            
+            try:
+                gen_result = turtle_generator.generate(generator_id, options)
+                
+                # Handle single turtle result
+                if hasattr(gen_result, 'get_paths'):
+                    paths = gen_result.get_paths()
+                else:
+                    paths = gen_result.get('layers', [{}])[0].get('turtle', {}).get_paths() if isinstance(gen_result, dict) else []
+                
+                if paths:
+                    entities.append({
+                        'paths': paths,
+                        'color': cmd.get('color_id', 'black'),
+                        'name': f"GPenT: {gpent.GENERATORS.get(cmd.get('generator', 1), {}).get('name', 'Shape')}",
+                        'scale': cmd.get('scale', 100) / 100.0,
+                        'rotation': cmd.get('rotation', 0),
+                        'offsetX': cmd.get('offset_x', 0),
+                        'offsetY': cmd.get('offset_y', 0),
+                    })
+            except Exception as e:
+                logs.append(f"⚠️ Failed to generate {generator_id}: {str(e)}")
+        
+        return jsonify({
+            'success': True,
+            'entities': entities,
+            'logs': logs,
+            'is_finished': result.get('is_finished', False)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+            'logs': logs
+        }), 500
 
 
 # ============================================================================

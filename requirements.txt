@@ -13,4 +13,5 @@ python-engineio>=4.8.0
 python-socketio>=5.10.0
 paho-mqtt>=2.0.0
 requests>=2.31.0
+python-dotenv>=1.0.0
 

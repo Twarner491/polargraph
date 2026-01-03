@@ -20,6 +20,7 @@ env/
 src/uploads/*
 !src/uploads/.gitkeep
 src/config/settings.json
+.env
 
 # OS
 .DS_Store

@@ -54,6 +54,7 @@
                     <div class="mode-toggle">
                         <button class="mode-btn active" data-mode="generate" id="modeGenerate">Generate</button>
                         <button class="mode-btn" data-mode="upload" id="modeUpload">Upload</button>
+                        <button class="mode-btn" data-mode="gpent" id="modeGpent">GPenT</button>
                     </div>
 
                     <!-- Color Picker -->
@@ -87,6 +88,25 @@
                                 <div id="converterOptions" class="menu-options"></div>
                                 <button class="menu-btn primary" id="convertBtn">Convert</button>
                             </div>
+                        </div>
+
+                        <!-- GPenT Mode Content -->
+                        <div class="mode-content" id="content-gpent">
+                            <div class="gpent-header">
+                                <div class="gpent-title">🎨 GPenT</div>
+                                <div class="gpent-subtitle">Generative Pen-trained Transformer</div>
+                            </div>
+                            <div class="gpent-description">
+                                Let Gemini AI create generative art with full creative control over patterns, colors, and composition.
+                            </div>
+                            <div class="option-group">
+                                <label class="option-label">Inspiration Keywords (optional)</label>
+                                <textarea id="gpentKeywords" class="gpent-keywords" placeholder="e.g., ocean waves, geometric harmony, cosmic dance..." rows="3"></textarea>
+                            </div>
+                            <button class="menu-btn primary gpent-btn" id="gpentBtn">
+                                <span class="gpent-btn-text">✨ Let GPenT Create</span>
+                                <span class="gpent-btn-loading" style="display:none;">🎨 Creating...</span>
+                            </button>
                         </div>
                     </div>
 

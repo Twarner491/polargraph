@@ -270,8 +270,13 @@ const elements = {
     // Mode Toggle
     modeGenerate: document.getElementById('modeGenerate'),
     modeUpload: document.getElementById('modeUpload'),
+    modeGpent: document.getElementById('modeGpent'),
     menuContent: document.getElementById('menuContent'),
     menuFooter: document.getElementById('menuFooter'),
+    
+    // GPenT
+    gpentBtn: document.getElementById('gpentBtn'),
+    gpentKeywords: document.getElementById('gpentKeywords'),
     
     // Color Picker
     colorPickerSection: document.getElementById('colorPickerSection'),
@@ -1242,6 +1247,10 @@ function initEventListeners() {
     // Mode toggle
     elements.modeGenerate.addEventListener('click', () => setMode('generate'));
     elements.modeUpload.addEventListener('click', () => setMode('upload'));
+    elements.modeGpent.addEventListener('click', () => setMode('gpent'));
+    
+    // GPenT
+    elements.gpentBtn.addEventListener('click', gpentGenerate);
 
     // Connection
     elements.refreshPorts.addEventListener('click', loadPorts);
@@ -1349,10 +1358,17 @@ function setMode(mode) {
     // Update toggle buttons
     elements.modeGenerate.classList.toggle('active', mode === 'generate');
     elements.modeUpload.classList.toggle('active', mode === 'upload');
+    elements.modeGpent.classList.toggle('active', mode === 'gpent');
     
     // Show/hide content
     document.getElementById('content-generate').classList.toggle('active', mode === 'generate');
     document.getElementById('content-upload').classList.toggle('active', mode === 'upload');
+    document.getElementById('content-gpent').classList.toggle('active', mode === 'gpent');
+    
+    // Hide color picker for GPenT (AI chooses colors)
+    if (elements.colorPickerSection) {
+        elements.colorPickerSection.style.display = mode === 'gpent' ? 'none' : '';
+    }
 }
 
 // ============================================================================
@@ -3031,6 +3047,85 @@ function updateGeneratorOptions() {
         group.appendChild(input);
         elements.generatorOptions.appendChild(group);
     });
+}
+
+// ============================================================================
+// GPenT - Generative Pen-trained Transformer
+// ============================================================================
+
+async function gpentGenerate() {
+    const keywords = elements.gpentKeywords.value.trim();
+    
+    // Show loading state
+    const btn = elements.gpentBtn;
+    const btnText = btn.querySelector('.gpent-btn-text');
+    const btnLoading = btn.querySelector('.gpent-btn-loading');
+    btn.disabled = true;
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'inline-flex';
+    
+    logConsole('═'.repeat(50), 'msg-info');
+    logConsole('🎨 GPenT - Generative Pen-trained Transformer', 'msg-info');
+    if (keywords) {
+        logConsole(`💭 Inspiration: "${keywords}"`, 'msg-info');
+    }
+    logConsole('═'.repeat(50), 'msg-info');
+    
+    try {
+        const response = await fetch('/api/gpent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keywords })
+        });
+        
+        const result = await response.json();
+        
+        // Log all messages from GPenT
+        if (result.logs) {
+            result.logs.forEach(log => {
+                logConsole(log, 'msg-info');
+            });
+        }
+        
+        if (!result.success) {
+            logConsole(`❌ GPenT Error: ${result.error}`, 'msg-error');
+            return;
+        }
+        
+        // Add all generated entities
+        if (result.entities && result.entities.length > 0) {
+            result.entities.forEach(entity => {
+                addEntity(entity.paths, {
+                    name: entity.name || 'GPenT Element',
+                    color: entity.color || 'black',
+                    scale: entity.scale || 1,
+                    rotation: entity.rotation || 0,
+                    offsetX: entity.offsetX || 0,
+                    offsetY: entity.offsetY || 0
+                });
+            });
+            
+            logConsole(`✅ Created ${result.entities.length} elements`, 'msg-info');
+            drawCanvas();
+            updateEntityList();
+            updateExportInfo();
+            
+            if (result.is_finished) {
+                logConsole('🎉 GPenT declares the artwork complete!', 'msg-info');
+            }
+        } else {
+            logConsole('⚠️ GPenT did not generate any elements', 'msg-warn');
+        }
+        
+    } catch (error) {
+        logConsole(`❌ Error: ${error.message}`, 'msg-error');
+        console.error('GPenT error:', error);
+    } finally {
+        // Reset button state
+        btn.disabled = false;
+        btnText.style.display = 'inline';
+        btnLoading.style.display = 'none';
+    }
 }
 
 async function generatePattern() {
