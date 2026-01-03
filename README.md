@@ -4,9 +4,11 @@
 
 Wall mounted, web accessible polargraph pen plotter. Full project writeup at [teddywarner.org/Projects/Polargraph](https://teddywarner.org/Projects/Polargraph/).
 
+<img alt="polargrapg" src="docs\static\thumb.png" />
+
 ---
 
-## BOM
+### BOM
 
 | Qty | Description | Price | Link |
 |-----|-------------|-------|------|
@@ -18,7 +20,7 @@ All project CAD may be found in the [hardware](https://github.com/Twarner491/pol
 
 ---
 
-## 1. Raspberry Pi Setup
+**Raspberry Pi Setup**
 
 Flash Raspberry Pi OS Lite (64-bit) and configure WiFi. SSH in:
 
@@ -42,9 +44,7 @@ sudo apt install -y python3-pip python3-venv avahi-daemon git
 sudo systemctl enable avahi-daemon
 ```
 
----
-
-## 2. Clone Repository
+**Clone Repository**
 
 ```bash
 git clone https://github.com/Twarner491/polargraph.git ~/polargraph
@@ -54,9 +54,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
-
-## 3. USB Permissions
+**USB Permissions**
 
 Set permissions for the plotter's USB serial connection:
 
@@ -66,9 +64,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo usermod -a -G dialout pi
 ```
 
----
-
-## 4. Start Flask Server
+**Start Flask Server**
 
 Enable the service to auto-start on boot:
 
@@ -80,13 +76,11 @@ sudo systemctl enable --now polargraph.service
 
 Access at **http://plotter.local**
 
----
-
-## 5. Home Assistant Integration (Optional)
+**Home Assistant Integration *(Optional)***
 
 For remote access via `plotter.onethreenine.net` → Home Assistant → MQTT → Pi.
 
-### Home Assistant Automation
+*Home Assistant Automation*
 
 Add to `automations.yaml`:
 
@@ -104,7 +98,7 @@ action:
       payload_template: "{{ trigger.json | tojson }}"
 ```
 
-### Enable CORS
+*Enable CORS*
 
 Add to `configuration.yaml`:
 
@@ -114,7 +108,7 @@ http:
     - https://plotter.onethreenine.net
 ```
 
-### Pi MQTT Setup
+*Pi MQTT Setup*
 
 Edit `src/mqtt_subscriber.py` with your MQTT broker IP:
 
@@ -130,7 +124,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now polargraph-mqtt.service
 ```
 
-### Frontend Configuration
+*Frontend Configuration*
 
 Edit `build_static.py` and set your webhook URL:
 
@@ -146,8 +140,6 @@ git add docs/
 git commit -m "Update static site"
 git push
 ```
-
-The site will be available at **https://plotter.onethreenine.net** via GitHub Pages + Cloudflare.
 
 ---
 
