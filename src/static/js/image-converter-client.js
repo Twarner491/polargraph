@@ -1072,12 +1072,12 @@ class ImageConverter {
         for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
             const channelData = cmyk[cmykChannel];
             
-            // Skip if channel has no significant content
+            // Skip only if channel is completely empty
             let maxVal = 0;
             for (let i = 0; i < channelData.length; i++) {
                 if (channelData[i] > maxVal) maxVal = channelData[i];
             }
-            if (maxVal < 0.1) continue;
+            if (maxVal < 0.001) continue;
             
             const turtle = new Turtle();
             const angle = angles[cmykChannel];
@@ -1103,6 +1103,14 @@ class ImageConverter {
         
         const maxDist = Math.floor(Math.sqrt(w * w + h * h));
         
+        // 4x4 ordered dithering matrix (Bayer) for proper halftone effect
+        const ditherMatrix = [
+            [0.0, 0.5, 0.125, 0.625],
+            [0.75, 0.25, 0.875, 0.375],
+            [0.1875, 0.6875, 0.0625, 0.5625],
+            [0.9375, 0.4375, 0.8125, 0.3125]
+        ];
+        
         for (let d = -maxDist; d < maxDist; d += baseSpacing) {
             let inSegment = false;
             let startPt = null;
@@ -1114,7 +1122,9 @@ class ImageConverter {
                 
                 if (px >= 0 && px < w && py >= 0 && py < h) {
                     const ink = intensity[py * w + px];
-                    const draw = ink > 0.1 && (ink > 0.5 || ((px + py) % 3 === 0));
+                    // Use ordered dithering - even low ink values get some representation
+                    const threshold = ditherMatrix[py % 4][px % 4];
+                    const draw = ink > threshold;
                     
                     if (draw) {
                         if (!inSegment) {

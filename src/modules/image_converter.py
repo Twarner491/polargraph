@@ -1083,8 +1083,8 @@ class ImageConverter:
         for cmyk_channel, pen in self.CMYK_PENS.items():
             channel_data = cmyk[:, :, list(self.CMYK_PENS.keys()).index(cmyk_channel)]
             
-            # Skip if channel has no significant content
-            if np.max(channel_data) < 0.1:
+            # Skip only if channel is completely empty
+            if np.max(channel_data) < 0.001:
                 continue
             
             turtle = Turtle()
@@ -1124,8 +1124,16 @@ class ImageConverter:
                 
                 if 0 <= px < w and 0 <= py < h:
                     ink = intensity[py, px]
-                    # Draw if intensity is above threshold (modulated by position for dithering effect)
-                    draw = ink > 0.1 and (ink > 0.5 or ((px + py) % 3 == 0))
+                    # Use ordered dithering pattern - threshold varies by position
+                    # This creates halftone-like patterns where even low ink values get representation
+                    dither_matrix = [
+                        [0.0, 0.5, 0.125, 0.625],
+                        [0.75, 0.25, 0.875, 0.375],
+                        [0.1875, 0.6875, 0.0625, 0.5625],
+                        [0.9375, 0.4375, 0.8125, 0.3125]
+                    ]
+                    threshold = dither_matrix[py % 4][px % 4]
+                    draw = ink > threshold
                     
                     if draw:
                         if not in_segment:
