@@ -89,8 +89,8 @@ class ImageConverter {
                     default: 'dither',
                     label: 'Halftone Method',
                     options: [
-                        { value: 'dither', label: 'Floyd-Steinberg Dithering' },
-                        { value: 'crosshatch', label: 'Crosshatch (Screen Angles)' },
+                        { value: 'dither', label: 'Floyd-Steinberg' },
+                        { value: 'crosshatch', label: 'Crosshatch' },
                         { value: 'horizontal', label: 'Horizontal Lines' },
                         { value: 'dots', label: 'Dot Pattern' }
                     ]
@@ -1442,7 +1442,7 @@ class ImageConverter {
         const density = options.density || 50;
         const whiteThresh = options.white_threshold || 250;
         
-        // Convert entire image to CMYK (flip Y during conversion to fix orientation)
+        // Convert entire image to CMYK (flip Y to correct orientation)
         const cmyk = {
             cyan: new Float32Array(w * h),
             magenta: new Float32Array(w * h),
@@ -1451,9 +1451,9 @@ class ImageConverter {
         };
         
         for (let row = 0; row < h; row++) {
+            // Flip vertically: image row 0 = top, but we draw y+ = up
+            const srcRow = h - 1 - row;
             for (let col = 0; col < w; col++) {
-                // Flip vertically: read from bottom of image array for top of output
-                const srcRow = h - 1 - row;
                 const idx = (srcRow * w + col) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
@@ -1701,7 +1701,7 @@ class ImageConverter {
         const rad = angle * Math.PI / 180;
         const cosA = Math.cos(rad);
         const sinA = Math.sin(rad);
-        const maxDist = Math.floor(Math.sqrt(w * w + h * h));
+        const maxDist = Math.floor(Math.sqrt(w * w + h * h)) + baseSpacing;
         
         const ditherMatrix = [
             [0.0, 0.5, 0.125, 0.625],
@@ -1710,14 +1710,17 @@ class ImageConverter {
             [0.9375, 0.4375, 0.8125, 0.3125]
         ];
         
+        // Draw lines perpendicular to angle
         for (let d = -maxDist; d < maxDist; d += baseSpacing) {
             let inSegment = false;
             let startPt = null;
             let lastPt = null;
             
+            // Sample along the line
             for (let t = -maxDist; t < maxDist; t++) {
-                const px = Math.floor(d * cosA - t * sinA + w / 2);
-                const py = Math.floor(d * sinA + t * cosA + h / 2);
+                // Calculate position along line perpendicular to angle
+                const px = Math.floor(w / 2 + d * cosA + t * sinA);
+                const py = Math.floor(h / 2 + d * sinA - t * cosA);
                 
                 if (px >= 0 && px < w && py >= 0 && py < h) {
                     const ink = intensity[py * w + px];
@@ -1732,15 +1735,8 @@ class ImageConverter {
                         lastPt = { x: px, y: py };
                     } else {
                         if (inSegment && startPt && lastPt) {
-                            const dx1 = startPt.x + offsetX;
-                            const dy1 = startPt.y + offsetY;
-                            const dx2 = lastPt.x + offsetX;
-                            const dy2 = lastPt.y + offsetY;
-                            
-                            if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
-                                turtle.jumpTo(dx1, dy1);
-                                turtle.moveTo(dx2, dy2);
-                            }
+                            turtle.jumpTo(startPt.x + offsetX, startPt.y + offsetY);
+                            turtle.moveTo(lastPt.x + offsetX, lastPt.y + offsetY);
                         }
                         inSegment = false;
                         startPt = null;
@@ -1748,15 +1744,8 @@ class ImageConverter {
                     }
                 } else {
                     if (inSegment && startPt && lastPt) {
-                        const dx1 = startPt.x + offsetX;
-                        const dy1 = startPt.y + offsetY;
-                        const dx2 = lastPt.x + offsetX;
-                        const dy2 = lastPt.y + offsetY;
-                        
-                        if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
-                            turtle.jumpTo(dx1, dy1);
-                            turtle.moveTo(dx2, dy2);
-                        }
+                        turtle.jumpTo(startPt.x + offsetX, startPt.y + offsetY);
+                        turtle.moveTo(lastPt.x + offsetX, lastPt.y + offsetY);
                     }
                     inSegment = false;
                     startPt = null;
@@ -1764,16 +1753,10 @@ class ImageConverter {
                 }
             }
             
+            // Handle end of line
             if (inSegment && startPt && lastPt) {
-                const dx1 = startPt.x + offsetX;
-                const dy1 = startPt.y + offsetY;
-                const dx2 = lastPt.x + offsetX;
-                const dy2 = lastPt.y + offsetY;
-                
-                if (Math.abs(dx2 - dx1) > 1 || Math.abs(dy2 - dy1) > 1) {
-                    turtle.jumpTo(dx1, dy1);
-                    turtle.moveTo(dx2, dy2);
-                }
+                turtle.jumpTo(startPt.x + offsetX, startPt.y + offsetY);
+                turtle.moveTo(lastPt.x + offsetX, lastPt.y + offsetY);
             }
         }
     }

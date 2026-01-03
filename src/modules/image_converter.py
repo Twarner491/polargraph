@@ -104,8 +104,8 @@ class ImageConverter:
                     'default': 'dither',
                     'label': 'Halftone Method',
                     'options': [
-                        {'value': 'dither', 'label': 'Floyd-Steinberg Dithering'},
-                        {'value': 'crosshatch', 'label': 'Crosshatch (Screen Angles)'},
+                        {'value': 'dither', 'label': 'Floyd-Steinberg'},
+                        {'value': 'crosshatch', 'label': 'Crosshatch'},
                         {'value': 'horizontal', 'label': 'Horizontal Lines'},
                         {'value': 'dots', 'label': 'Dot Pattern'}
                     ]
@@ -1219,13 +1219,14 @@ class ImageConverter:
         density = options.get('density', 50)
         white_thresh = options.get('white_threshold', 250)
         
-        # Convert entire image to CMYK (flip Y during conversion to fix orientation)
+        # Flip image vertically to correct orientation (image row 0 = top, but we draw y+ = up)
+        rgb_flipped = np.flipud(rgb)
+        
+        # Convert entire image to CMYK
         cmyk = np.zeros((h, w, 4), dtype=np.float32)
         for row in range(h):
             for col in range(w):
-                # Flip vertically: read from bottom of image array for top of output
-                src_row = h - 1 - row
-                r, g, b = rgb[src_row, col]
+                r, g, b = rgb_flipped[row, col]
                 # Skip pure white (paper)
                 if r >= white_thresh and g >= white_thresh and b >= white_thresh:
                     continue
@@ -1444,7 +1445,8 @@ class ImageConverter:
         cos_a = math.cos(rad)
         sin_a = math.sin(rad)
         
-        max_dist = int(math.sqrt(w**2 + h**2))
+        # Calculate line range to cover entire image
+        max_dist = int(math.sqrt(w**2 + h**2)) + base_spacing
         
         dither_matrix = [
             [0.0, 0.5, 0.125, 0.625],
@@ -1453,14 +1455,17 @@ class ImageConverter:
             [0.9375, 0.4375, 0.8125, 0.3125]
         ]
         
+        # Draw lines perpendicular to angle
         for d in range(-max_dist, max_dist, base_spacing):
             in_segment = False
             start_pt = None
             last_pt = None
             
+            # Sample along the line
             for t in range(-max_dist, max_dist, 1):
-                px = int(d * cos_a - t * sin_a + w/2)
-                py = int(d * sin_a + t * cos_a + h/2)
+                # Calculate position along line perpendicular to angle
+                px = int(w/2 + d * cos_a + t * sin_a)
+                py = int(h/2 + d * sin_a - t * cos_a)
                 
                 if 0 <= px < w and 0 <= py < h:
                     ink = intensity[py, px]
@@ -1476,14 +1481,8 @@ class ImageConverter:
                         if in_segment and start_pt and last_pt:
                             x1, y1 = start_pt
                             x2, y2 = last_pt
-                            dx1 = x1 + offset_x
-                            dy1 = y1 + offset_y
-                            dx2 = x2 + offset_x
-                            dy2 = y2 + offset_y
-                            
-                            if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
-                                turtle.jump_to(dx1, dy1)
-                                turtle.move_to(dx2, dy2)
+                            turtle.jump_to(x1 + offset_x, y1 + offset_y)
+                            turtle.move_to(x2 + offset_x, y2 + offset_y)
                         in_segment = False
                         start_pt = None
                         last_pt = None
@@ -1491,27 +1490,16 @@ class ImageConverter:
                     if in_segment and start_pt and last_pt:
                         x1, y1 = start_pt
                         x2, y2 = last_pt
-                        dx1 = x1 + offset_x
-                        dy1 = y1 + offset_y
-                        dx2 = x2 + offset_x
-                        dy2 = y2 + offset_y
-                        
-                        if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
-                            turtle.jump_to(dx1, dy1)
-                            turtle.move_to(dx2, dy2)
+                        turtle.jump_to(x1 + offset_x, y1 + offset_y)
+                        turtle.move_to(x2 + offset_x, y2 + offset_y)
                     in_segment = False
                     start_pt = None
                     last_pt = None
             
+            # Handle end of line
             if in_segment and start_pt and last_pt:
                 x1, y1 = start_pt
                 x2, y2 = last_pt
-                dx1 = x1 + offset_x
-                dy1 = y1 + offset_y
-                dx2 = x2 + offset_x
-                dy2 = y2 + offset_y
-                
-                if abs(dx2 - dx1) > 1 or abs(dy2 - dy1) > 1:
-                    turtle.jump_to(dx1, dy1)
-                    turtle.move_to(dx2, dy2)
+                turtle.jump_to(x1 + offset_x, y1 + offset_y)
+                turtle.move_to(x2 + offset_x, y2 + offset_y)
 
