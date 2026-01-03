@@ -515,10 +515,20 @@ function initKeyboardShortcuts() {
             return;
         }
         
-        // Escape - Deselect
+        // Escape - Cancel crop mode or Deselect
         if (e.key === 'Escape') {
+            if (cropMode.active) {
+                exitCropMode(false);
+                return;
+            }
             clearSelection();
             hideContextMenu();
+            return;
+        }
+        
+        // Enter - Apply crop mode
+        if (e.key === 'Enter' && cropMode.active) {
+            exitCropMode(true);
             return;
         }
         
@@ -913,6 +923,15 @@ function checkScaleWarning(entity) {
     }
 }
 
+// Crop mode state
+let cropMode = {
+    active: false,
+    entities: [],
+    originalBounds: null,
+    cropBounds: null,
+    dragging: null // 'left', 'right', 'top', 'bottom', or null
+};
+
 function promptCropEntities() {
     const selected = getSelectedEntities();
     if (selected.length === 0) return;
@@ -932,92 +951,166 @@ function promptCropEntities() {
         });
     });
     
-    const width = maxX - minX;
-    const height = maxY - minY;
+    // Enter crop mode
+    cropMode.active = true;
+    cropMode.entities = selected;
+    cropMode.originalBounds = { left: minX, right: maxX, top: maxY, bottom: minY };
+    cropMode.cropBounds = { left: minX, right: maxX, top: maxY, bottom: minY };
+    cropMode.dragging = null;
     
-    // Create crop dialog
-    const dialog = document.createElement('div');
-    dialog.className = 'crop-dialog-overlay';
-    dialog.innerHTML = `
-        <div class="crop-dialog">
-            <div class="crop-dialog-title">Crop Selection</div>
-            <div class="crop-dialog-info">Current bounds: ${width.toFixed(1)}mm × ${height.toFixed(1)}mm</div>
-            <div class="crop-inputs">
-                <div class="crop-row">
-                    <label>Top (mm):</label>
-                    <input type="number" id="cropTop" value="0" step="1">
-                </div>
-                <div class="crop-row">
-                    <label>Right (mm):</label>
-                    <input type="number" id="cropRight" value="0" step="1">
-                </div>
-                <div class="crop-row">
-                    <label>Bottom (mm):</label>
-                    <input type="number" id="cropBottom" value="0" step="1">
-                </div>
-                <div class="crop-row">
-                    <label>Left (mm):</label>
-                    <input type="number" id="cropLeft" value="0" step="1">
-                </div>
-            </div>
-            <div class="crop-dialog-buttons">
-                <button class="crop-btn crop-btn-cancel">Cancel</button>
-                <button class="crop-btn crop-btn-apply">Apply</button>
-            </div>
-        </div>
-    `;
+    logConsole('Crop mode: Drag edges to adjust, Enter to apply, Escape to cancel', 'msg-info');
+    drawCanvas();
+}
+
+function exitCropMode(apply = false) {
+    if (!cropMode.active) return;
     
-    document.body.appendChild(dialog);
-    
-    // Focus first input
-    dialog.querySelector('#cropTop').focus();
-    
-    // Handle cancel
-    dialog.querySelector('.crop-btn-cancel').onclick = () => dialog.remove();
-    dialog.onclick = (e) => { if (e.target === dialog) dialog.remove(); };
-    
-    // Handle apply
-    dialog.querySelector('.crop-btn-apply').onclick = () => {
-        const cropTop = parseFloat(dialog.querySelector('#cropTop').value) || 0;
-        const cropRight = parseFloat(dialog.querySelector('#cropRight').value) || 0;
-        const cropBottom = parseFloat(dialog.querySelector('#cropBottom').value) || 0;
-        const cropLeft = parseFloat(dialog.querySelector('#cropLeft').value) || 0;
+    if (apply) {
+        const bounds = cropMode.cropBounds;
+        const orig = cropMode.originalBounds;
         
-        if (cropTop === 0 && cropRight === 0 && cropBottom === 0 && cropLeft === 0) {
-            dialog.remove();
-            return;
+        // Check if any cropping was done
+        if (bounds.left !== orig.left || bounds.right !== orig.right || 
+            bounds.top !== orig.top || bounds.bottom !== orig.bottom) {
+            
+            saveHistoryState();
+            
+            let totalRemoved = 0;
+            cropMode.entities.forEach(entity => {
+                const result = cropEntityPaths(entity, bounds);
+                totalRemoved += result.removed;
+            });
+            
+            updateEntityList();
+            logConsole(`Cropped ${cropMode.entities.length} element${cropMode.entities.length > 1 ? 's' : ''}`, 'msg-info');
         }
-        
-        // Calculate new crop bounds
-        const cropBounds = {
-            left: minX + cropLeft,
-            right: maxX - cropRight,
-            top: maxY - cropTop,
-            bottom: minY + cropBottom
-        };
-        
-        saveHistoryState();
-        
-        let totalRemoved = 0;
-        selected.forEach(entity => {
-            const result = cropEntityPaths(entity, cropBounds);
-            totalRemoved += result.removed;
-        });
-        
-        drawCanvas();
-        updateEntityList();
-        logConsole(`Cropped ${selected.length} element${selected.length > 1 ? 's' : ''} (${totalRemoved} path segments removed)`, 'msg-info');
-        dialog.remove();
-    };
+    } else {
+        logConsole('Crop cancelled', 'msg-info');
+    }
     
-    // Handle Enter key
-    dialog.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            dialog.querySelector('.crop-btn-apply').click();
-        } else if (e.key === 'Escape') {
-            dialog.remove();
-        }
+    cropMode.active = false;
+    cropMode.entities = [];
+    cropMode.originalBounds = null;
+    cropMode.cropBounds = null;
+    cropMode.dragging = null;
+    
+    drawCanvas();
+}
+
+function getCropHandleAtPoint(worldX, worldY) {
+    if (!cropMode.active) return null;
+    
+    const bounds = cropMode.cropBounds;
+    const handleSize = 15 / getCanvasScale(); // Size in world coords
+    
+    // Check each edge
+    if (Math.abs(worldX - bounds.left) < handleSize && worldY >= bounds.bottom && worldY <= bounds.top) {
+        return 'left';
+    }
+    if (Math.abs(worldX - bounds.right) < handleSize && worldY >= bounds.bottom && worldY <= bounds.top) {
+        return 'right';
+    }
+    if (Math.abs(worldY - bounds.top) < handleSize && worldX >= bounds.left && worldX <= bounds.right) {
+        return 'top';
+    }
+    if (Math.abs(worldY - bounds.bottom) < handleSize && worldX >= bounds.left && worldX <= bounds.right) {
+        return 'bottom';
+    }
+    
+    return null;
+}
+
+function updateCropBounds(handle, worldX, worldY) {
+    if (!cropMode.active || !handle) return;
+    
+    const orig = cropMode.originalBounds;
+    
+    switch (handle) {
+        case 'left':
+            cropMode.cropBounds.left = Math.min(Math.max(worldX, orig.left - 100), orig.right - 10);
+            break;
+        case 'right':
+            cropMode.cropBounds.right = Math.max(Math.min(worldX, orig.right + 100), orig.left + 10);
+            break;
+        case 'top':
+            cropMode.cropBounds.top = Math.max(Math.min(worldY, orig.top + 100), orig.bottom + 10);
+            break;
+        case 'bottom':
+            cropMode.cropBounds.bottom = Math.min(Math.max(worldY, orig.bottom - 100), orig.top - 10);
+            break;
+    }
+    
+    drawCanvas();
+}
+
+function drawCropOverlay() {
+    if (!cropMode.active) return;
+    
+    const bounds = cropMode.cropBounds;
+    const scale = getCanvasScale();
+    const dpr = window.devicePixelRatio;
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+    
+    // Convert world to screen coords
+    const toScreen = (wx, wy) => ({
+        x: cw / 2 + wx * scale,
+        y: ch / 2 - wy * scale
     });
+    
+    const topLeft = toScreen(bounds.left, bounds.top);
+    const bottomRight = toScreen(bounds.right, bounds.bottom);
+    
+    // Draw semi-transparent overlay outside crop area
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    
+    // Top region
+    ctx.fillRect(0, 0, cw, topLeft.y);
+    // Bottom region
+    ctx.fillRect(0, bottomRight.y, cw, ch - bottomRight.y);
+    // Left region
+    ctx.fillRect(0, topLeft.y, topLeft.x, bottomRight.y - topLeft.y);
+    // Right region
+    ctx.fillRect(bottomRight.x, topLeft.y, cw - bottomRight.x, bottomRight.y - topLeft.y);
+    
+    // Draw crop boundary
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+    ctx.setLineDash([]);
+    
+    // Draw drag handles
+    const handleSize = 8;
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    
+    // Left handle
+    const leftMid = (topLeft.y + bottomRight.y) / 2;
+    ctx.fillRect(topLeft.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
+    ctx.strokeRect(topLeft.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
+    
+    // Right handle
+    ctx.fillRect(bottomRight.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
+    ctx.strokeRect(bottomRight.x - handleSize/2, leftMid - handleSize, handleSize, handleSize * 2);
+    
+    // Top handle
+    const topMid = (topLeft.x + bottomRight.x) / 2;
+    ctx.fillRect(topMid - handleSize, topLeft.y - handleSize/2, handleSize * 2, handleSize);
+    ctx.strokeRect(topMid - handleSize, topLeft.y - handleSize/2, handleSize * 2, handleSize);
+    
+    // Bottom handle
+    ctx.fillRect(topMid - handleSize, bottomRight.y - handleSize/2, handleSize * 2, handleSize);
+    ctx.strokeRect(topMid - handleSize, bottomRight.y - handleSize/2, handleSize * 2, handleSize);
+    
+    // Show dimensions
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    const width = Math.abs(bounds.right - bounds.left).toFixed(1);
+    const height = Math.abs(bounds.top - bounds.bottom).toFixed(1);
+    ctx.fillText(`${width} × ${height} mm`, (topLeft.x + bottomRight.x) / 2, bottomRight.y + 20);
 }
 
 function cropEntityPaths(entity, bounds) {
@@ -1748,8 +1841,19 @@ function onCanvasMouseDown(e) {
     state.dragStartX = x;
     state.dragStartY = y;
     
-    // Check if clicking on an entity
     const worldPos = screenToWorld(x, y);
+    
+    // Handle crop mode
+    if (cropMode.active) {
+        const handle = getCropHandleAtPoint(worldPos.x, worldPos.y);
+        if (handle) {
+            cropMode.dragging = handle;
+            state.isDragging = true;
+            return;
+        }
+    }
+    
+    // Check if clicking on an entity
     const clickedEntity = findEntityAtPoint(worldPos.x, worldPos.y);
     
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -1809,6 +1913,24 @@ function onCanvasMouseMove(e) {
     const worldPos = screenToWorld(x, y);
     elements.cursorPos.textContent = `X: ${worldPos.x.toFixed(1)} Y: ${worldPos.y.toFixed(1)}`;
     
+    // Handle crop mode cursor
+    if (cropMode.active && !state.isDragging) {
+        const handle = getCropHandleAtPoint(worldPos.x, worldPos.y);
+        if (handle === 'left' || handle === 'right') {
+            canvas.style.cursor = 'ew-resize';
+        } else if (handle === 'top' || handle === 'bottom') {
+            canvas.style.cursor = 'ns-resize';
+        } else {
+            canvas.style.cursor = 'default';
+        }
+    }
+    
+    // Handle crop dragging
+    if (state.isDragging && cropMode.active && cropMode.dragging) {
+        updateCropBounds(cropMode.dragging, worldPos.x, worldPos.y);
+        return;
+    }
+    
     if (state.isDragging) {
         if (state.dragMode === 'entity-move') {
             // Move all selected entities
@@ -1842,8 +1964,13 @@ function onCanvasMouseMove(e) {
 }
 
 function onCanvasMouseUp() {
+    if (cropMode.active && cropMode.dragging) {
+        cropMode.dragging = null;
+    }
     state.isDragging = false;
-    canvas.style.cursor = 'crosshair';
+    if (!cropMode.active) {
+        canvas.style.cursor = 'crosshair';
+    }
 }
 
 function onCanvasRightClick(e) {
@@ -4070,6 +4197,11 @@ function drawCanvas() {
     }
     
     ctx.restore();
+    
+    // Draw crop overlay (after restore so it's in screen coords)
+    if (cropMode.active) {
+        drawCropOverlay();
+    }
     
     // Update stats
     const totalLines = state.entities.reduce((sum, e) => sum + e.paths.length, 0);
