@@ -92,8 +92,58 @@ class ImageConverter {
                         { value: 'cmyk', label: 'CMYK' },
                         { value: 'rgb', label: 'RGB' },
                         { value: 'grayscale', label: 'Grayscale' },
+                        { value: 'monotone', label: 'Monotone' },
+                        { value: 'duotone', label: 'Duotone' },
                         { value: 'primary', label: 'Primary (RYB)' },
                         { value: 'warm_cool', label: 'Warm/Cool' }
+                    ]
+                },
+                mono_color: {
+                    type: 'select',
+                    default: 'blue',
+                    label: 'Monotone Color',
+                    options: [
+                        { value: 'black', label: 'Black' },
+                        { value: 'blue', label: 'Blue' },
+                        { value: 'red', label: 'Red' },
+                        { value: 'green', label: 'Green' },
+                        { value: 'purple', label: 'Purple' },
+                        { value: 'pink', label: 'Pink' },
+                        { value: 'orange', label: 'Orange' },
+                        { value: 'yellow', label: 'Yellow' },
+                        { value: 'brown', label: 'Brown' }
+                    ]
+                },
+                duo_color_dark: {
+                    type: 'select',
+                    default: 'blue',
+                    label: 'Duotone Dark',
+                    options: [
+                        { value: 'black', label: 'Black' },
+                        { value: 'blue', label: 'Blue' },
+                        { value: 'red', label: 'Red' },
+                        { value: 'green', label: 'Green' },
+                        { value: 'purple', label: 'Purple' },
+                        { value: 'pink', label: 'Pink' },
+                        { value: 'orange', label: 'Orange' },
+                        { value: 'yellow', label: 'Yellow' },
+                        { value: 'brown', label: 'Brown' }
+                    ]
+                },
+                duo_color_light: {
+                    type: 'select',
+                    default: 'orange',
+                    label: 'Duotone Light',
+                    options: [
+                        { value: 'black', label: 'Black' },
+                        { value: 'blue', label: 'Blue' },
+                        { value: 'red', label: 'Red' },
+                        { value: 'green', label: 'Green' },
+                        { value: 'purple', label: 'Purple' },
+                        { value: 'pink', label: 'Pink' },
+                        { value: 'orange', label: 'Orange' },
+                        { value: 'yellow', label: 'Yellow' },
+                        { value: 'brown', label: 'Brown' }
                     ]
                 },
                 method: {
@@ -1484,11 +1534,26 @@ class ImageConverter {
         const density = options.density || 50;
         const whiteThresh = options.white_threshold || 250;
         
-        // Get color mode config
-        const modeConfig = ImageConverter.COLOR_MODES[colorMode] || ImageConverter.COLOR_MODES.cmyk;
-        const channels = modeConfig.channels;
-        const pens = modeConfig.pens;
-        const angles = modeConfig.angles;
+        // Handle monotone and duotone with user-selected colors
+        let channels, pens, angles;
+        if (colorMode === 'monotone') {
+            const monoColor = options.mono_color || 'blue';
+            channels = ['tone'];
+            pens = { tone: monoColor };
+            angles = { tone: 45 };
+        } else if (colorMode === 'duotone') {
+            const duoDark = options.duo_color_dark || 'blue';
+            const duoLight = options.duo_color_light || 'orange';
+            channels = ['dark', 'light'];
+            pens = { dark: duoDark, light: duoLight };
+            angles = { dark: 45, light: 135 };
+        } else {
+            // Get color mode config from predefined modes
+            const modeConfig = ImageConverter.COLOR_MODES[colorMode] || ImageConverter.COLOR_MODES.cmyk;
+            channels = modeConfig.channels;
+            pens = modeConfig.pens;
+            angles = modeConfig.angles;
+        }
         
         // Initialize channel data
         const channelData = {};
@@ -1509,6 +1574,7 @@ class ImageConverter {
                 if (r >= whiteThresh && g >= whiteThresh && b >= whiteThresh) continue;
                 
                 const i = row * w + col;
+                const grayVal = gray[srcRow * w + col];
                 
                 if (colorMode === 'cmyk') {
                     const { c, m, y, k } = this._rgbToCmyk(r, g, b);
@@ -1521,8 +1587,15 @@ class ImageConverter {
                     channelData.green[i] = g / 255.0;
                     channelData.blue[i] = b / 255.0;
                 } else if (colorMode === 'grayscale') {
-                    const grayVal = gray[srcRow * w + col];
                     channelData.black[i] = 1.0 - (grayVal / 255.0);
+                } else if (colorMode === 'monotone') {
+                    channelData.tone[i] = 1.0 - (grayVal / 255.0);
+                } else if (colorMode === 'duotone') {
+                    const lum = grayVal / 255.0;
+                    // Dark channel: stronger in shadows
+                    channelData.dark[i] = 1.0 - lum;
+                    // Light channel: stronger in midtones/highlights
+                    channelData.light[i] = Math.min(lum * 2, 1.0) * (1.0 - lum * 0.5);
                 } else if (colorMode === 'primary') {
                     channelData.red[i] = r / 255.0;
                     channelData.yellow[i] = Math.min(r, g) / 255.0;

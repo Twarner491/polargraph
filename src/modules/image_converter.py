@@ -107,8 +107,58 @@ class ImageConverter:
                         {'value': 'cmyk', 'label': 'CMYK'},
                         {'value': 'rgb', 'label': 'RGB'},
                         {'value': 'grayscale', 'label': 'Grayscale'},
+                        {'value': 'monotone', 'label': 'Monotone'},
+                        {'value': 'duotone', 'label': 'Duotone'},
                         {'value': 'primary', 'label': 'Primary (RYB)'},
                         {'value': 'warm_cool', 'label': 'Warm/Cool'}
+                    ]
+                },
+                'mono_color': {
+                    'type': 'select',
+                    'default': 'blue',
+                    'label': 'Monotone Color',
+                    'options': [
+                        {'value': 'black', 'label': 'Black'},
+                        {'value': 'blue', 'label': 'Blue'},
+                        {'value': 'red', 'label': 'Red'},
+                        {'value': 'green', 'label': 'Green'},
+                        {'value': 'purple', 'label': 'Purple'},
+                        {'value': 'pink', 'label': 'Pink'},
+                        {'value': 'orange', 'label': 'Orange'},
+                        {'value': 'yellow', 'label': 'Yellow'},
+                        {'value': 'brown', 'label': 'Brown'}
+                    ]
+                },
+                'duo_color_dark': {
+                    'type': 'select',
+                    'default': 'blue',
+                    'label': 'Duotone Dark',
+                    'options': [
+                        {'value': 'black', 'label': 'Black'},
+                        {'value': 'blue', 'label': 'Blue'},
+                        {'value': 'red', 'label': 'Red'},
+                        {'value': 'green', 'label': 'Green'},
+                        {'value': 'purple', 'label': 'Purple'},
+                        {'value': 'pink', 'label': 'Pink'},
+                        {'value': 'orange', 'label': 'Orange'},
+                        {'value': 'yellow', 'label': 'Yellow'},
+                        {'value': 'brown', 'label': 'Brown'}
+                    ]
+                },
+                'duo_color_light': {
+                    'type': 'select',
+                    'default': 'orange',
+                    'label': 'Duotone Light',
+                    'options': [
+                        {'value': 'black', 'label': 'Black'},
+                        {'value': 'blue', 'label': 'Blue'},
+                        {'value': 'red', 'label': 'Red'},
+                        {'value': 'green', 'label': 'Green'},
+                        {'value': 'purple', 'label': 'Purple'},
+                        {'value': 'pink', 'label': 'Pink'},
+                        {'value': 'orange', 'label': 'Orange'},
+                        {'value': 'yellow', 'label': 'Yellow'},
+                        {'value': 'brown', 'label': 'Brown'}
                     ]
                 },
                 'method': {
@@ -1265,11 +1315,24 @@ class ImageConverter:
         rgb_flipped = np.flipud(rgb)
         gray_flipped = np.flipud(gray)
         
-        # Get color mode config
-        mode_config = self.COLOR_MODES.get(color_mode, self.COLOR_MODES['cmyk'])
-        channels = mode_config['channels']
-        pens = mode_config['pens']
-        angles = mode_config['angles']
+        # Handle monotone and duotone with user-selected colors
+        if color_mode == 'monotone':
+            mono_color = options.get('mono_color', 'blue')
+            channels = ['tone']
+            pens = {'tone': mono_color}
+            angles = {'tone': 45}
+        elif color_mode == 'duotone':
+            duo_dark = options.get('duo_color_dark', 'blue')
+            duo_light = options.get('duo_color_light', 'orange')
+            channels = ['dark', 'light']
+            pens = {'dark': duo_dark, 'light': duo_light}
+            angles = {'dark': 45, 'light': 135}
+        else:
+            # Get color mode config from predefined modes
+            mode_config = self.COLOR_MODES.get(color_mode, self.COLOR_MODES['cmyk'])
+            channels = mode_config['channels']
+            pens = mode_config['pens']
+            angles = mode_config['angles']
         
         # Convert image to channel data based on color mode
         channel_data = {}
@@ -1295,6 +1358,16 @@ class ImageConverter:
                     channel_data['blue'][row, col] = b / 255.0
                 elif color_mode == 'grayscale':
                     channel_data['black'][row, col] = 1.0 - (gray_flipped[row, col] / 255.0)
+                elif color_mode == 'monotone':
+                    # Single channel based on luminance
+                    channel_data['tone'][row, col] = 1.0 - (gray_flipped[row, col] / 255.0)
+                elif color_mode == 'duotone':
+                    # Split into dark (shadows) and light (highlights)
+                    lum = gray_flipped[row, col] / 255.0
+                    # Dark channel: stronger in shadows
+                    channel_data['dark'][row, col] = 1.0 - lum
+                    # Light channel: stronger in midtones/highlights
+                    channel_data['light'][row, col] = min(lum * 2, 1.0) * (1.0 - lum * 0.5)
                 elif color_mode == 'primary':
                     # RYB approximation from RGB
                     channel_data['red'][row, col] = r / 255.0
