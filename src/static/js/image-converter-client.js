@@ -80,10 +80,22 @@ class ImageConverter {
                 fill_density: { type: 'float', default: 50, min: 10, max: 100, label: 'Fill Density (%)' }
             }
         },
-        cmyk: {
-            name: 'CMYK Halftone',
-            description: 'Full color reproduction using CMYK separation',
+        halftone: {
+            name: 'Halftone',
+            description: 'Full color reproduction using color separation',
             options: {
+                color_mode: {
+                    type: 'select',
+                    default: 'cmyk',
+                    label: 'Color Mode',
+                    options: [
+                        { value: 'cmyk', label: 'CMYK' },
+                        { value: 'rgb', label: 'RGB' },
+                        { value: 'grayscale', label: 'Grayscale' },
+                        { value: 'primary', label: 'Primary (RYB)' },
+                        { value: 'warm_cool', label: 'Warm/Cool' }
+                    ]
+                },
                 method: {
                     type: 'select',
                     default: 'dither',
@@ -168,9 +180,9 @@ class ImageConverter {
         const offsetX = -newWidth / 2;
         const offsetY = -newHeight / 2;
         
-        // For color modes (CMYK, color trace), use RGB image data
-        if (algorithm === 'cmyk') {
-            return this._convert_cmyk(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
+        // For color modes (halftone, color trace), use RGB image data
+        if (algorithm === 'halftone') {
+            return this._convert_halftone(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
         }
         if (algorithm === 'trace' && options.trace_mode && options.trace_mode !== 'outline') {
             return this._convert_trace_color(imageData, grayData, newWidth, newHeight, offsetX, offsetY, options);
@@ -1433,25 +1445,59 @@ class ImageConverter {
     }
     
     // =========================================================================
-    // Full Image CMYK Converter
+    // Full Image Halftone Converter
     // =========================================================================
     
-    _convert_cmyk(imageData, gray, w, h, offsetX, offsetY, options) {
+    // Color mode definitions
+    static COLOR_MODES = {
+        cmyk: {
+            channels: ['cyan', 'magenta', 'yellow', 'black'],
+            pens: { cyan: 'blue', magenta: 'pink', yellow: 'yellow', black: 'black' },
+            angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 }
+        },
+        rgb: {
+            channels: ['red', 'green', 'blue'],
+            pens: { red: 'red', green: 'green', blue: 'blue' },
+            angles: { red: 15, green: 75, blue: 45 }
+        },
+        grayscale: {
+            channels: ['black'],
+            pens: { black: 'black' },
+            angles: { black: 45 }
+        },
+        primary: {
+            channels: ['red', 'yellow', 'blue'],
+            pens: { red: 'red', yellow: 'yellow', blue: 'blue' },
+            angles: { red: 15, yellow: 0, blue: 75 }
+        },
+        warm_cool: {
+            channels: ['warm', 'cool'],
+            pens: { warm: 'orange', cool: 'blue' },
+            angles: { warm: 30, cool: 60 }
+        }
+    };
+    
+    _convert_halftone(imageData, gray, w, h, offsetX, offsetY, options) {
         const data = imageData.data;
+        const colorMode = options.color_mode || 'cmyk';
         const method = options.method || 'dither';
         const density = options.density || 50;
         const whiteThresh = options.white_threshold || 250;
         
-        // Convert entire image to CMYK (flip Y to correct orientation)
-        const cmyk = {
-            cyan: new Float32Array(w * h),
-            magenta: new Float32Array(w * h),
-            yellow: new Float32Array(w * h),
-            black: new Float32Array(w * h)
-        };
+        // Get color mode config
+        const modeConfig = ImageConverter.COLOR_MODES[colorMode] || ImageConverter.COLOR_MODES.cmyk;
+        const channels = modeConfig.channels;
+        const pens = modeConfig.pens;
+        const angles = modeConfig.angles;
         
+        // Initialize channel data
+        const channelData = {};
+        for (const channel of channels) {
+            channelData[channel] = new Float32Array(w * h);
+        }
+        
+        // Convert image to channel data based on color mode (flip Y to correct orientation)
         for (let row = 0; row < h; row++) {
-            // Flip vertically: image row 0 = top, but we draw y+ = up
             const srcRow = h - 1 - row;
             for (let col = 0; col < w; col++) {
                 const idx = (srcRow * w + col) * 4;
@@ -1462,40 +1508,57 @@ class ImageConverter {
                 // Skip pure white (paper)
                 if (r >= whiteThresh && g >= whiteThresh && b >= whiteThresh) continue;
                 
-                const { c, m, y, k } = this._rgbToCmyk(r, g, b);
                 const i = row * w + col;
-                cmyk.cyan[i] = c;
-                cmyk.magenta[i] = m;
-                cmyk.yellow[i] = y;
-                cmyk.black[i] = k;
+                
+                if (colorMode === 'cmyk') {
+                    const { c, m, y, k } = this._rgbToCmyk(r, g, b);
+                    channelData.cyan[i] = c;
+                    channelData.magenta[i] = m;
+                    channelData.yellow[i] = y;
+                    channelData.black[i] = k;
+                } else if (colorMode === 'rgb') {
+                    channelData.red[i] = r / 255.0;
+                    channelData.green[i] = g / 255.0;
+                    channelData.blue[i] = b / 255.0;
+                } else if (colorMode === 'grayscale') {
+                    const grayVal = gray[srcRow * w + col];
+                    channelData.black[i] = 1.0 - (grayVal / 255.0);
+                } else if (colorMode === 'primary') {
+                    channelData.red[i] = r / 255.0;
+                    channelData.yellow[i] = Math.min(r, g) / 255.0;
+                    channelData.blue[i] = b / 255.0;
+                } else if (colorMode === 'warm_cool') {
+                    channelData.warm[i] = Math.max(r - b, 0) / 255.0;
+                    channelData.cool[i] = Math.max(b - r, 0) / 255.0;
+                }
             }
         }
         
         // Route to appropriate method
         if (method === 'dither') {
-            return this._cmykDither(cmyk, w, h, offsetX, offsetY, density);
+            return this._halftoneDither(channelData, channels, pens, w, h, offsetX, offsetY, density);
         } else if (method === 'crosshatch') {
-            return this._cmykCrosshatch(cmyk, w, h, offsetX, offsetY, density);
+            return this._halftoneCrosshatch(channelData, channels, pens, angles, w, h, offsetX, offsetY, density);
         } else if (method === 'horizontal') {
-            return this._cmykHorizontal(cmyk, w, h, offsetX, offsetY, density);
+            return this._halftoneHorizontal(channelData, channels, pens, w, h, offsetX, offsetY, density);
         } else if (method === 'dots') {
-            return this._cmykDots(cmyk, w, h, offsetX, offsetY, density);
+            return this._halftoneDots(channelData, channels, pens, w, h, offsetX, offsetY, density);
         } else {
-            return this._cmykDither(cmyk, w, h, offsetX, offsetY, density);
+            return this._halftoneDither(channelData, channels, pens, w, h, offsetX, offsetY, density);
         }
     }
     
-    _cmykDither(cmyk, w, h, offsetX, offsetY, density) {
+    _halftoneDither(channelData, channels, pens, w, h, offsetX, offsetY, density) {
         const dithered = {};
-        for (const channel of ['cyan', 'magenta', 'yellow', 'black']) {
-            dithered[channel] = this._floydSteinbergDither(cmyk[channel], w, h);
+        for (const channel of channels) {
+            dithered[channel] = this._floydSteinbergDither(channelData[channel], w, h);
         }
         
         const spacing = Math.max(1, Math.floor(100 / density * 2));
         const layers = [];
         
-        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
-            const mask = dithered[cmykChannel];
+        for (const channel of channels) {
+            const mask = dithered[channel];
             if (!mask.some(v => v === 1)) continue;
             
             const turtle = new Turtle();
@@ -1537,8 +1600,8 @@ class ImageConverter {
             
             if (turtle.getPaths().length > 0) {
                 layers.push({
-                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
-                    color: pen,
+                    name: channel.charAt(0).toUpperCase() + channel.slice(1),
+                    color: pens[channel],
                     turtle: turtle
                 });
             }
@@ -1547,29 +1610,28 @@ class ImageConverter {
         return { multiLayer: true, layers };
     }
     
-    _cmykCrosshatch(cmyk, w, h, offsetX, offsetY, density) {
+    _halftoneCrosshatch(channelData, channels, pens, angles, w, h, offsetX, offsetY, density) {
         const baseSpacing = Math.max(2, Math.floor(100 / density * 3));
-        const angles = { cyan: 15, magenta: 75, yellow: 0, black: 45 };
         const layers = [];
         
-        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
-            const channelData = cmyk[cmykChannel];
+        for (const channel of channels) {
+            const data = channelData[channel];
             
             let maxVal = 0;
-            for (let i = 0; i < channelData.length; i++) {
-                if (channelData[i] > maxVal) maxVal = channelData[i];
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > maxVal) maxVal = data[i];
             }
             if (maxVal < 0.001) continue;
             
             const turtle = new Turtle();
-            const angle = angles[cmykChannel];
+            const angle = angles[channel];
             
-            this._drawCmykCrosshatchLines(turtle, channelData, w, h, offsetX, offsetY, baseSpacing, angle);
+            this._drawHalftoneCrosshatchLines(turtle, data, w, h, offsetX, offsetY, baseSpacing, angle);
             
             if (turtle.getPaths().length > 0) {
                 layers.push({
-                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
-                    color: pen,
+                    name: channel.charAt(0).toUpperCase() + channel.slice(1),
+                    color: pens[channel],
                     turtle: turtle
                 });
             }
@@ -1578,7 +1640,7 @@ class ImageConverter {
         return { multiLayer: true, layers };
     }
     
-    _cmykHorizontal(cmyk, w, h, offsetX, offsetY, density) {
+    _halftoneHorizontal(channelData, channels, pens, w, h, offsetX, offsetY, density) {
         const spacing = Math.max(2, Math.floor(100 / density * 3));
         const ditherMatrix = [
             [0.0, 0.5, 0.125, 0.625],
@@ -1588,12 +1650,12 @@ class ImageConverter {
         ];
         const layers = [];
         
-        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
-            const channel = cmyk[cmykChannel];
+        for (const channel of channels) {
+            const data = channelData[channel];
             
             let maxVal = 0;
-            for (let i = 0; i < channel.length; i++) {
-                if (channel[i] > maxVal) maxVal = channel[i];
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > maxVal) maxVal = data[i];
             }
             if (maxVal < 0.001) continue;
             
@@ -1604,7 +1666,7 @@ class ImageConverter {
                 let startX = null;
                 
                 for (let col = 0; col < w; col++) {
-                    const ink = channel[row * w + col];
+                    const ink = data[row * w + col];
                     const threshold = ditherMatrix[row % 4][col % 4];
                     
                     if (ink > threshold) {
@@ -1639,8 +1701,8 @@ class ImageConverter {
             
             if (turtle.getPaths().length > 0) {
                 layers.push({
-                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
-                    color: pen,
+                    name: channel.charAt(0).toUpperCase() + channel.slice(1),
+                    color: pens[channel],
                     turtle: turtle
                 });
             }
@@ -1649,7 +1711,7 @@ class ImageConverter {
         return { multiLayer: true, layers };
     }
     
-    _cmykDots(cmyk, w, h, offsetX, offsetY, density) {
+    _halftoneDots(channelData, channels, pens, w, h, offsetX, offsetY, density) {
         const spacing = Math.max(2, Math.floor(100 / density * 3));
         const dotSize = Math.max(0.5, spacing / 4);
         const ditherMatrix = [
@@ -1660,12 +1722,12 @@ class ImageConverter {
         ];
         const layers = [];
         
-        for (const [cmykChannel, pen] of Object.entries(ImageConverter.CMYK_PENS)) {
-            const channel = cmyk[cmykChannel];
+        for (const channel of channels) {
+            const data = channelData[channel];
             
             let maxVal = 0;
-            for (let i = 0; i < channel.length; i++) {
-                if (channel[i] > maxVal) maxVal = channel[i];
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > maxVal) maxVal = data[i];
             }
             if (maxVal < 0.001) continue;
             
@@ -1673,7 +1735,7 @@ class ImageConverter {
             
             for (let row = 0; row < h; row += spacing) {
                 for (let col = 0; col < w; col += spacing) {
-                    const ink = channel[row * w + col];
+                    const ink = data[row * w + col];
                     const threshold = ditherMatrix[row % 4][col % 4];
                     
                     if (ink > threshold) {
@@ -1687,8 +1749,8 @@ class ImageConverter {
             
             if (turtle.getPaths().length > 0) {
                 layers.push({
-                    name: `CMYK (${cmykChannel.charAt(0).toUpperCase() + cmykChannel.slice(1)})`,
-                    color: pen,
+                    name: channel.charAt(0).toUpperCase() + channel.slice(1),
+                    color: pens[channel],
                     turtle: turtle
                 });
             }
@@ -1697,7 +1759,7 @@ class ImageConverter {
         return { multiLayer: true, layers };
     }
     
-    _drawCmykCrosshatchLines(turtle, intensity, w, h, offsetX, offsetY, baseSpacing, angle) {
+    _drawHalftoneCrosshatchLines(turtle, intensity, w, h, offsetX, offsetY, baseSpacing, angle) {
         const rad = angle * Math.PI / 180;
         const cosA = Math.cos(rad);
         const sinA = Math.sin(rad);
@@ -1710,15 +1772,12 @@ class ImageConverter {
             [0.9375, 0.4375, 0.8125, 0.3125]
         ];
         
-        // Draw lines perpendicular to angle
         for (let d = -maxDist; d < maxDist; d += baseSpacing) {
             let inSegment = false;
             let startPt = null;
             let lastPt = null;
             
-            // Sample along the line
             for (let t = -maxDist; t < maxDist; t++) {
-                // Calculate position along line perpendicular to angle
                 const px = Math.floor(w / 2 + d * cosA + t * sinA);
                 const py = Math.floor(h / 2 + d * sinA - t * cosA);
                 
@@ -1753,7 +1812,6 @@ class ImageConverter {
                 }
             }
             
-            // Handle end of line
             if (inSegment && startPt && lastPt) {
                 turtle.jumpTo(startPt.x + offsetX, startPt.y + offsetY);
                 turtle.moveTo(lastPt.x + offsetX, lastPt.y + offsetY);

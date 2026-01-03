@@ -95,10 +95,22 @@ class ImageConverter:
                 'fill_density': {'type': 'float', 'default': 50, 'min': 10, 'max': 100, 'label': 'Fill Density (%)'}
             }
         },
-        'cmyk': {
-            'name': 'CMYK Halftone',
-            'description': 'Full color reproduction using CMYK separation',
+        'halftone': {
+            'name': 'Halftone',
+            'description': 'Full color reproduction using color separation',
             'options': {
+                'color_mode': {
+                    'type': 'select',
+                    'default': 'cmyk',
+                    'label': 'Color Mode',
+                    'options': [
+                        {'value': 'cmyk', 'label': 'CMYK'},
+                        {'value': 'rgb', 'label': 'RGB'},
+                        {'value': 'grayscale', 'label': 'Grayscale'},
+                        {'value': 'primary', 'label': 'Primary (RYB)'},
+                        {'value': 'warm_cool', 'label': 'Warm/Cool'}
+                    ]
+                },
                 'method': {
                     'type': 'select',
                     'default': 'dither',
@@ -159,15 +171,15 @@ class ImageConverter:
         offset_x = -new_width / 2
         offset_y = -new_height / 2
         
-        # For color modes (trace color, CMYK), load RGB image
-        if algorithm == 'cmyk' or \
+        # For color modes (trace color, halftone), load RGB image
+        if algorithm == 'halftone' or \
            (algorithm == 'trace' and options.get('trace_mode', 'outline') != 'outline'):
             img_rgb = Image.open(filepath).convert('RGB')
             img_rgb = img_rgb.resize((new_width, new_height), Image.Resampling.LANCZOS)
             rgb_array = np.array(img_rgb)
             
-            if algorithm == 'cmyk':
-                return self._convert_cmyk(gray_array, rgb_array, offset_x, offset_y, options)
+            if algorithm == 'halftone':
+                return self._convert_halftone(gray_array, rgb_array, offset_x, offset_y, options)
             else:
                 return self._convert_trace_color(gray_array, rgb_array, offset_x, offset_y, options)
         
@@ -1207,57 +1219,117 @@ class ImageConverter:
                     turtle.move_to(dx2, dy2)
     
     # =========================================================================
-    # Full Image CMYK Converter
+    # Full Image Halftone Converter
     # =========================================================================
     
-    def _convert_cmyk(self, gray: np.ndarray, rgb: np.ndarray,
-                      offset_x: float, offset_y: float,
-                      options: Dict[str, Any]) -> Dict:
-        """Convert full image to CMYK using selected halftone method."""
+    # Color mode definitions
+    COLOR_MODES = {
+        'cmyk': {
+            'channels': ['cyan', 'magenta', 'yellow', 'black'],
+            'pens': {'cyan': 'blue', 'magenta': 'pink', 'yellow': 'yellow', 'black': 'black'},
+            'angles': {'cyan': 15, 'magenta': 75, 'yellow': 0, 'black': 45}
+        },
+        'rgb': {
+            'channels': ['red', 'green', 'blue'],
+            'pens': {'red': 'red', 'green': 'green', 'blue': 'blue'},
+            'angles': {'red': 15, 'green': 75, 'blue': 45}
+        },
+        'grayscale': {
+            'channels': ['black'],
+            'pens': {'black': 'black'},
+            'angles': {'black': 45}
+        },
+        'primary': {
+            'channels': ['red', 'yellow', 'blue'],
+            'pens': {'red': 'red', 'yellow': 'yellow', 'blue': 'blue'},
+            'angles': {'red': 15, 'yellow': 0, 'blue': 75}
+        },
+        'warm_cool': {
+            'channels': ['warm', 'cool'],
+            'pens': {'warm': 'orange', 'cool': 'blue'},
+            'angles': {'warm': 30, 'cool': 60}
+        }
+    }
+    
+    def _convert_halftone(self, gray: np.ndarray, rgb: np.ndarray,
+                          offset_x: float, offset_y: float,
+                          options: Dict[str, Any]) -> Dict:
+        """Convert full image using selected halftone method and color mode."""
         h, w = gray.shape
+        color_mode = options.get('color_mode', 'cmyk')
         method = options.get('method', 'dither')
         density = options.get('density', 50)
         white_thresh = options.get('white_threshold', 250)
         
-        # Flip image vertically to correct orientation (image row 0 = top, but we draw y+ = up)
+        # Flip image vertically to correct orientation
         rgb_flipped = np.flipud(rgb)
+        gray_flipped = np.flipud(gray)
         
-        # Convert entire image to CMYK
-        cmyk = np.zeros((h, w, 4), dtype=np.float32)
+        # Get color mode config
+        mode_config = self.COLOR_MODES.get(color_mode, self.COLOR_MODES['cmyk'])
+        channels = mode_config['channels']
+        pens = mode_config['pens']
+        angles = mode_config['angles']
+        
+        # Convert image to channel data based on color mode
+        channel_data = {}
+        for channel in channels:
+            channel_data[channel] = np.zeros((h, w), dtype=np.float32)
+        
         for row in range(h):
             for col in range(w):
                 r, g, b = rgb_flipped[row, col]
                 # Skip pure white (paper)
                 if r >= white_thresh and g >= white_thresh and b >= white_thresh:
                     continue
-                cmyk[row, col] = self._rgb_to_cmyk(r, g, b)
+                
+                if color_mode == 'cmyk':
+                    c, m, y, k = self._rgb_to_cmyk(r, g, b)
+                    channel_data['cyan'][row, col] = c
+                    channel_data['magenta'][row, col] = m
+                    channel_data['yellow'][row, col] = y
+                    channel_data['black'][row, col] = k
+                elif color_mode == 'rgb':
+                    channel_data['red'][row, col] = r / 255.0
+                    channel_data['green'][row, col] = g / 255.0
+                    channel_data['blue'][row, col] = b / 255.0
+                elif color_mode == 'grayscale':
+                    channel_data['black'][row, col] = 1.0 - (gray_flipped[row, col] / 255.0)
+                elif color_mode == 'primary':
+                    # RYB approximation from RGB
+                    channel_data['red'][row, col] = r / 255.0
+                    channel_data['yellow'][row, col] = min(r, g) / 255.0
+                    channel_data['blue'][row, col] = b / 255.0
+                elif color_mode == 'warm_cool':
+                    # Warm = red/orange contribution, Cool = blue contribution
+                    channel_data['warm'][row, col] = max(r - b, 0) / 255.0
+                    channel_data['cool'][row, col] = max(b - r, 0) / 255.0
         
         # Route to appropriate method
         if method == 'dither':
-            return self._cmyk_dither(cmyk, w, h, offset_x, offset_y, density)
+            return self._halftone_dither(channel_data, channels, pens, w, h, offset_x, offset_y, density)
         elif method == 'crosshatch':
-            return self._cmyk_crosshatch(cmyk, w, h, offset_x, offset_y, density)
+            return self._halftone_crosshatch(channel_data, channels, pens, angles, w, h, offset_x, offset_y, density)
         elif method == 'horizontal':
-            return self._cmyk_horizontal(cmyk, w, h, offset_x, offset_y, density)
+            return self._halftone_horizontal(channel_data, channels, pens, w, h, offset_x, offset_y, density)
         elif method == 'dots':
-            return self._cmyk_dots(cmyk, w, h, offset_x, offset_y, density)
+            return self._halftone_dots(channel_data, channels, pens, w, h, offset_x, offset_y, density)
         else:
-            return self._cmyk_dither(cmyk, w, h, offset_x, offset_y, density)
+            return self._halftone_dither(channel_data, channels, pens, w, h, offset_x, offset_y, density)
     
-    def _cmyk_dither(self, cmyk: np.ndarray, w: int, h: int,
-                     offset_x: float, offset_y: float, density: float) -> Dict:
-        """Floyd-Steinberg dithering for CMYK."""
+    def _halftone_dither(self, channel_data: Dict, channels: List, pens: Dict,
+                         w: int, h: int, offset_x: float, offset_y: float, density: float) -> Dict:
+        """Floyd-Steinberg dithering for halftone."""
         # Apply dithering to each channel
         dithered = {}
-        for idx, channel in enumerate(['cyan', 'magenta', 'yellow', 'black']):
-            channel_data = cmyk[:, :, idx].copy()
-            dithered[channel] = self._floyd_steinberg_dither(channel_data)
+        for channel in channels:
+            dithered[channel] = self._floyd_steinberg_dither(channel_data[channel].copy())
         
         spacing = max(1, int(100 / density * 2))
         
         layers = []
-        for cmyk_channel, pen in self.CMYK_PENS.items():
-            mask = dithered[cmyk_channel]
+        for channel in channels:
+            mask = dithered[channel]
             if np.sum(mask) == 0:
                 continue
             
@@ -1292,50 +1364,45 @@ class ImageConverter:
             
             if turtle.get_paths():
                 layers.append({
-                    'name': f'CMYK ({cmyk_channel.capitalize()})',
-                    'color': pen,
+                    'name': channel.capitalize(),
+                    'color': pens[channel],
                     'turtle': turtle
                 })
         
         return {'layers': layers}
     
-    def _cmyk_crosshatch(self, cmyk: np.ndarray, w: int, h: int,
-                         offset_x: float, offset_y: float, density: float) -> Dict:
-        """Crosshatch at screen angles for CMYK."""
+    def _halftone_crosshatch(self, channel_data: Dict, channels: List, pens: Dict, angles: Dict,
+                             w: int, h: int, offset_x: float, offset_y: float, density: float) -> Dict:
+        """Crosshatch at screen angles for halftone."""
         base_spacing = max(2, int(100 / density * 3))
         
-        # Traditional CMYK screen angles
-        angles = {'cyan': 15, 'magenta': 75, 'yellow': 0, 'black': 45}
-        
         layers = []
-        for cmyk_channel, pen in self.CMYK_PENS.items():
-            idx = list(self.CMYK_PENS.keys()).index(cmyk_channel)
-            channel_data = cmyk[:, :, idx]
+        for channel in channels:
+            data = channel_data[channel]
             
-            if np.max(channel_data) < 0.001:
+            if np.max(data) < 0.001:
                 continue
             
             turtle = Turtle()
-            angle = angles[cmyk_channel]
+            angle = angles[channel]
             
-            self._draw_cmyk_crosshatch_lines(turtle, channel_data, w, h,
-                                             offset_x, offset_y, base_spacing, angle)
+            self._draw_halftone_crosshatch_lines(turtle, data, w, h,
+                                                  offset_x, offset_y, base_spacing, angle)
             
             if turtle.get_paths():
                 layers.append({
-                    'name': f'CMYK ({cmyk_channel.capitalize()})',
-                    'color': pen,
+                    'name': channel.capitalize(),
+                    'color': pens[channel],
                     'turtle': turtle
                 })
         
         return {'layers': layers}
     
-    def _cmyk_horizontal(self, cmyk: np.ndarray, w: int, h: int,
-                         offset_x: float, offset_y: float, density: float) -> Dict:
-        """Horizontal lines with varying density for CMYK."""
+    def _halftone_horizontal(self, channel_data: Dict, channels: List, pens: Dict,
+                             w: int, h: int, offset_x: float, offset_y: float, density: float) -> Dict:
+        """Horizontal lines with varying density for halftone."""
         spacing = max(2, int(100 / density * 3))
         
-        # Bayer dither matrix for ordered dithering
         dither_matrix = [
             [0.0, 0.5, 0.125, 0.625],
             [0.75, 0.25, 0.875, 0.375],
@@ -1344,11 +1411,10 @@ class ImageConverter:
         ]
         
         layers = []
-        for cmyk_channel, pen in self.CMYK_PENS.items():
-            idx = list(self.CMYK_PENS.keys()).index(cmyk_channel)
-            channel = cmyk[:, :, idx]
+        for channel in channels:
+            data = channel_data[channel]
             
-            if np.max(channel) < 0.001:
+            if np.max(data) < 0.001:
                 continue
             
             turtle = Turtle()
@@ -1358,7 +1424,7 @@ class ImageConverter:
                 start_x = None
                 
                 for col in range(w):
-                    ink = channel[row, col]
+                    ink = data[row, col]
                     threshold = dither_matrix[row % 4][col % 4]
                     
                     if ink > threshold:
@@ -1385,20 +1451,19 @@ class ImageConverter:
             
             if turtle.get_paths():
                 layers.append({
-                    'name': f'CMYK ({cmyk_channel.capitalize()})',
-                    'color': pen,
+                    'name': channel.capitalize(),
+                    'color': pens[channel],
                     'turtle': turtle
                 })
         
         return {'layers': layers}
     
-    def _cmyk_dots(self, cmyk: np.ndarray, w: int, h: int,
-                   offset_x: float, offset_y: float, density: float) -> Dict:
-        """Dot pattern for CMYK (small marks at each pixel)."""
+    def _halftone_dots(self, channel_data: Dict, channels: List, pens: Dict,
+                       w: int, h: int, offset_x: float, offset_y: float, density: float) -> Dict:
+        """Dot pattern for halftone."""
         spacing = max(2, int(100 / density * 3))
         dot_size = max(0.5, spacing / 4)
         
-        # Bayer dither matrix
         dither_matrix = [
             [0.0, 0.5, 0.125, 0.625],
             [0.75, 0.25, 0.875, 0.375],
@@ -1407,40 +1472,38 @@ class ImageConverter:
         ]
         
         layers = []
-        for cmyk_channel, pen in self.CMYK_PENS.items():
-            idx = list(self.CMYK_PENS.keys()).index(cmyk_channel)
-            channel = cmyk[:, :, idx]
+        for channel in channels:
+            data = channel_data[channel]
             
-            if np.max(channel) < 0.001:
+            if np.max(data) < 0.001:
                 continue
             
             turtle = Turtle()
             
             for row in range(0, h, spacing):
                 for col in range(0, w, spacing):
-                    ink = channel[row, col]
+                    ink = data[row, col]
                     threshold = dither_matrix[row % 4][col % 4]
                     
                     if ink > threshold:
                         x = col + offset_x
                         y = row + offset_y
-                        # Draw a small horizontal line as a "dot"
                         turtle.jump_to(x, y)
                         turtle.move_to(x + dot_size, y)
             
             if turtle.get_paths():
                 layers.append({
-                    'name': f'CMYK ({cmyk_channel.capitalize()})',
-                    'color': pen,
+                    'name': channel.capitalize(),
+                    'color': pens[channel],
                     'turtle': turtle
                 })
         
         return {'layers': layers}
     
-    def _draw_cmyk_crosshatch_lines(self, turtle: Turtle, intensity: np.ndarray,
-                                     w: int, h: int, offset_x: float, offset_y: float,
-                                     base_spacing: int, angle: float):
-        """Draw crosshatch lines with ordered dithering for CMYK."""
+    def _draw_halftone_crosshatch_lines(self, turtle: Turtle, intensity: np.ndarray,
+                                         w: int, h: int, offset_x: float, offset_y: float,
+                                         base_spacing: int, angle: float):
+        """Draw crosshatch lines with ordered dithering for halftone."""
         rad = math.radians(angle)
         cos_a = math.cos(rad)
         sin_a = math.sin(rad)
