@@ -695,6 +695,9 @@ function handleContextAction(action) {
         case 'cropToPaper':
             cropSelectedToPaper();
             break;
+        case 'cropAllToPaper':
+            cropAllToPaper();
+            break;
         case 'bringToFront':
             saveHistoryState();
             selected.forEach(entity => bringEntityToFront(entity.id));
@@ -1103,22 +1106,61 @@ function cropSelectedToPaper() {
     
     saveHistoryState();
     const bounds = getWorkAreaBounds();
-    let totalOriginal = 0;
-    let totalCropped = 0;
+    let totalOriginalSegments = 0;
+    let totalClippedSegments = 0;
+    let entitiesCropped = 0;
+    
+    console.log('[CROP] Bounds:', bounds);
     
     selected.forEach(entity => {
-        totalOriginal += entity.paths.length;
+        // Count original segments
+        let originalSegments = 0;
+        entity.paths.forEach(p => {
+            originalSegments += Math.max(0, p.points.length - 1);
+        });
+        totalOriginalSegments += originalSegments;
+        
+        console.log(`[CROP] Entity "${entity.name}": ${entity.paths.length} paths, ${originalSegments} segments`);
+        console.log(`[CROP] Entity transform: scale=${entity.scale}, rotation=${entity.rotation}, offset=(${entity.offsetX}, ${entity.offsetY})`);
+        
         const croppedPaths = cropEntityToPaper(entity);
+        
+        // Count cropped segments
+        let croppedSegments = 0;
+        croppedPaths.forEach(p => {
+            croppedSegments += Math.max(0, p.points.length - 1);
+        });
+        totalClippedSegments += croppedSegments;
+        
         entity.paths = croppedPaths;
-        totalCropped += croppedPaths.length;
+        entitiesCropped++;
+        
+        console.log(`[CROP] After crop: ${croppedPaths.length} paths, ${croppedSegments} segments`);
     });
     
     drawCanvas();
     updateEntityList();
     updateExportInfo();
     
-    const removed = totalOriginal - totalCropped;
-    logConsole(`Cropped to paper: ${totalCropped} paths (${removed > 0 ? removed + ' segments clipped' : 'nothing outside bounds'})`, 'msg-info');
+    const removed = totalOriginalSegments - totalClippedSegments;
+    if (removed > 0) {
+        logConsole(`Cropped ${entitiesCropped} elements: removed ${removed} segments outside bounds`, 'msg-info');
+    } else {
+        logConsole(`Cropped ${entitiesCropped} elements: all content within bounds`, 'msg-info');
+    }
+}
+
+function cropAllToPaper() {
+    // Select all entities temporarily, crop them, then restore selection
+    const originalSelection = new Set(state.selectedEntityIds);
+    state.selectedEntityIds.clear();
+    state.entities.forEach(e => state.selectedEntityIds.add(e.id));
+    
+    cropSelectedToPaper();
+    
+    // Restore original selection
+    state.selectedEntityIds = originalSelection;
+    updateEntityList();
 }
 
 function changeEntityColor(entityId, colorId) {
