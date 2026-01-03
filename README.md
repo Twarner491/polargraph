@@ -4,19 +4,17 @@
 
 Wall mounted, web accessible polargraph pen plotter. Full project writeup at [teddywarner.org/Projects/Polargraph](https://teddywarner.org/Projects/Polargraph/).
 
-<img alt="polargrapg" src="docs\static\thumb.png" />
+<img alt="polargraph" src="docs\static\thumb.png" />
 
 ---
+
+All project CAD may be found in the [hardware](https://github.com/Twarner491/polargraph/hardware) directory in this repo. Full assembly instructions may be found in the [full project writeup](https://teddywarner.org/Projects/Polargraph/).
 
 ### BOM
 
 | Qty | Description | Price | Link |
 |-----|-------------|-------|------|
 | 1 | thingy| $XXX | [Amazon](link) |
-
----
-
-All project CAD may be found in the [hardware](https://github.com/Twarner491/polargraph/hardware) directory in this repo. Full assembly instructions may be found in the [full project writeup](https://teddywarner.org/Projects/Polargraph/).
 
 ---
 
