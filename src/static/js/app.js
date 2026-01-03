@@ -692,6 +692,9 @@ function handleContextAction(action) {
             drawCanvas();
             logConsole(`Reset transform on ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
             break;
+        case 'crop':
+            promptCropEntities();
+            break;
         case 'bringToFront':
             saveHistoryState();
             selected.forEach(entity => bringEntityToFront(entity.id));
@@ -906,8 +909,270 @@ function checkScaleWarning(entity) {
     const scaledSpacing = minSpacing * entity.scale;
     
     if (scaledSpacing < state.penKerf && minSpacing !== Infinity) {
-        logConsole(`⚠️ Warning: Lines in "${entity.name}" at ${Math.round(entity.scale * 100)}% scale are ~${scaledSpacing.toFixed(2)}mm apart, less than pen kerf (${state.penKerf}mm). Lines may overlap.`, 'msg-warn');
+        logConsole(`Warning: Lines in "${entity.name}" at ${Math.round(entity.scale * 100)}% scale are ~${scaledSpacing.toFixed(2)}mm apart, less than pen kerf (${state.penKerf}mm). Lines may overlap.`, 'msg-warn');
     }
+}
+
+function promptCropEntities() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    // Calculate combined bounds of all selected entities
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    selected.forEach(entity => {
+        entity.paths.forEach(path => {
+            path.points.forEach(p => {
+                const px = p.x * entity.scale + entity.offsetX;
+                const py = p.y * entity.scale + entity.offsetY;
+                minX = Math.min(minX, px);
+                minY = Math.min(minY, py);
+                maxX = Math.max(maxX, px);
+                maxY = Math.max(maxY, py);
+            });
+        });
+    });
+    
+    const width = maxX - minX;
+    const height = maxY - minY;
+    
+    // Create crop dialog
+    const dialog = document.createElement('div');
+    dialog.className = 'crop-dialog-overlay';
+    dialog.innerHTML = `
+        <div class="crop-dialog">
+            <div class="crop-dialog-title">Crop Selection</div>
+            <div class="crop-dialog-info">Current bounds: ${width.toFixed(1)}mm × ${height.toFixed(1)}mm</div>
+            <div class="crop-inputs">
+                <div class="crop-row">
+                    <label>Top (mm):</label>
+                    <input type="number" id="cropTop" value="0" step="1">
+                </div>
+                <div class="crop-row">
+                    <label>Right (mm):</label>
+                    <input type="number" id="cropRight" value="0" step="1">
+                </div>
+                <div class="crop-row">
+                    <label>Bottom (mm):</label>
+                    <input type="number" id="cropBottom" value="0" step="1">
+                </div>
+                <div class="crop-row">
+                    <label>Left (mm):</label>
+                    <input type="number" id="cropLeft" value="0" step="1">
+                </div>
+            </div>
+            <div class="crop-dialog-buttons">
+                <button class="crop-btn crop-btn-cancel">Cancel</button>
+                <button class="crop-btn crop-btn-apply">Apply</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(dialog);
+    
+    // Focus first input
+    dialog.querySelector('#cropTop').focus();
+    
+    // Handle cancel
+    dialog.querySelector('.crop-btn-cancel').onclick = () => dialog.remove();
+    dialog.onclick = (e) => { if (e.target === dialog) dialog.remove(); };
+    
+    // Handle apply
+    dialog.querySelector('.crop-btn-apply').onclick = () => {
+        const cropTop = parseFloat(dialog.querySelector('#cropTop').value) || 0;
+        const cropRight = parseFloat(dialog.querySelector('#cropRight').value) || 0;
+        const cropBottom = parseFloat(dialog.querySelector('#cropBottom').value) || 0;
+        const cropLeft = parseFloat(dialog.querySelector('#cropLeft').value) || 0;
+        
+        if (cropTop === 0 && cropRight === 0 && cropBottom === 0 && cropLeft === 0) {
+            dialog.remove();
+            return;
+        }
+        
+        // Calculate new crop bounds
+        const cropBounds = {
+            left: minX + cropLeft,
+            right: maxX - cropRight,
+            top: maxY - cropTop,
+            bottom: minY + cropBottom
+        };
+        
+        saveHistoryState();
+        
+        let totalRemoved = 0;
+        selected.forEach(entity => {
+            const result = cropEntityPaths(entity, cropBounds);
+            totalRemoved += result.removed;
+        });
+        
+        drawCanvas();
+        updateEntityList();
+        logConsole(`Cropped ${selected.length} element${selected.length > 1 ? 's' : ''} (${totalRemoved} path segments removed)`, 'msg-info');
+        dialog.remove();
+    };
+    
+    // Handle Enter key
+    dialog.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            dialog.querySelector('.crop-btn-apply').click();
+        } else if (e.key === 'Escape') {
+            dialog.remove();
+        }
+    });
+}
+
+function cropEntityPaths(entity, bounds) {
+    let removed = 0;
+    const newPaths = [];
+    
+    entity.paths.forEach(path => {
+        const clippedPath = clipPathToBounds(path, entity, bounds);
+        if (clippedPath.length > 0) {
+            clippedPath.forEach(segment => {
+                if (segment.points.length >= 2) {
+                    newPaths.push(segment);
+                }
+            });
+        } else {
+            removed++;
+        }
+    });
+    
+    const originalCount = entity.paths.length;
+    entity.paths = newPaths;
+    
+    return { removed: originalCount - newPaths.length + removed };
+}
+
+function clipPathToBounds(path, entity, bounds) {
+    // Transform points to world coordinates and clip
+    const segments = [];
+    let currentSegment = null;
+    
+    for (let i = 0; i < path.points.length; i++) {
+        const p = path.points[i];
+        const worldX = p.x * entity.scale + entity.offsetX;
+        const worldY = p.y * entity.scale + entity.offsetY;
+        
+        const inside = worldX >= bounds.left && worldX <= bounds.right &&
+                       worldY >= bounds.bottom && worldY <= bounds.top;
+        
+        if (inside) {
+            if (!currentSegment) {
+                currentSegment = { points: [] };
+            }
+            currentSegment.points.push({ x: p.x, y: p.y });
+        } else {
+            // Point is outside - if we have a segment, try to clip the edge
+            if (currentSegment && currentSegment.points.length > 0) {
+                // Add intersection point at boundary
+                if (i > 0) {
+                    const prevP = path.points[i - 1];
+                    const prevWorldX = prevP.x * entity.scale + entity.offsetX;
+                    const prevWorldY = prevP.y * entity.scale + entity.offsetY;
+                    
+                    const intersect = lineRectIntersection(
+                        prevWorldX, prevWorldY, worldX, worldY,
+                        bounds.left, bounds.bottom, bounds.right, bounds.top
+                    );
+                    
+                    if (intersect) {
+                        // Convert back to entity coordinates
+                        currentSegment.points.push({
+                            x: (intersect.x - entity.offsetX) / entity.scale,
+                            y: (intersect.y - entity.offsetY) / entity.scale
+                        });
+                    }
+                }
+                
+                segments.push(currentSegment);
+                currentSegment = null;
+            } else if (i > 0) {
+                // Check if line segment crosses the bounds
+                const prevP = path.points[i - 1];
+                const prevWorldX = prevP.x * entity.scale + entity.offsetX;
+                const prevWorldY = prevP.y * entity.scale + entity.offsetY;
+                const prevInside = prevWorldX >= bounds.left && prevWorldX <= bounds.right &&
+                                   prevWorldY >= bounds.bottom && prevWorldY <= bounds.top;
+                
+                if (!prevInside) {
+                    // Both points outside - check if line crosses bounds
+                    const intersections = lineRectAllIntersections(
+                        prevWorldX, prevWorldY, worldX, worldY,
+                        bounds.left, bounds.bottom, bounds.right, bounds.top
+                    );
+                    
+                    if (intersections.length >= 2) {
+                        segments.push({
+                            points: intersections.map(int => ({
+                                x: (int.x - entity.offsetX) / entity.scale,
+                                y: (int.y - entity.offsetY) / entity.scale
+                            }))
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    if (currentSegment && currentSegment.points.length >= 2) {
+        segments.push(currentSegment);
+    }
+    
+    return segments;
+}
+
+function lineRectIntersection(x1, y1, x2, y2, left, bottom, right, top) {
+    // Find first intersection point of line with rectangle
+    const intersections = lineRectAllIntersections(x1, y1, x2, y2, left, bottom, right, top);
+    return intersections.length > 0 ? intersections[0] : null;
+}
+
+function lineRectAllIntersections(x1, y1, x2, y2, left, bottom, right, top) {
+    const intersections = [];
+    
+    // Check all four edges
+    const edges = [
+        { x1: left, y1: bottom, x2: left, y2: top },     // Left
+        { x1: right, y1: bottom, x2: right, y2: top },   // Right
+        { x1: left, y1: top, x2: right, y2: top },       // Top
+        { x1: left, y1: bottom, x2: right, y2: bottom }  // Bottom
+    ];
+    
+    edges.forEach(edge => {
+        const int = lineLineIntersection(x1, y1, x2, y2, edge.x1, edge.y1, edge.x2, edge.y2);
+        if (int) {
+            // Check if intersection is on the original line segment
+            const t = (int.x - x1) / (x2 - x1 || 0.0001);
+            if (t >= 0 && t <= 1) {
+                intersections.push(int);
+            }
+        }
+    });
+    
+    // Sort by distance from start point
+    intersections.sort((a, b) => {
+        const distA = (a.x - x1) ** 2 + (a.y - y1) ** 2;
+        const distB = (b.x - x1) ** 2 + (b.y - y1) ** 2;
+        return distA - distB;
+    });
+    
+    return intersections;
+}
+
+function lineLineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
+    const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(denom) < 0.0001) return null;
+    
+    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+    const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+    
+    if (u >= 0 && u <= 1) {
+        return {
+            x: x1 + t * (x2 - x1),
+            y: y1 + t * (y2 - y1)
+        };
+    }
+    return null;
 }
 
 function changeEntityColor(entityId, colorId) {
