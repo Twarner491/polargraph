@@ -202,39 +202,39 @@ def generate_artwork(keywords: str = '', log_callback: Callable = None) -> Dict[
     Returns a list of entities to be created.
     """
     if log_callback:
-        log_callback("🎨 GPenT is contemplating the canvas...")
+        log_callback("GPenT contemplating the canvas...")
     
     system_prompt = build_system_prompt(keywords)
     
     if log_callback:
-        log_callback("🤔 Summoning creative inspiration...")
+        log_callback("Summoning creative inspiration...")
     
     try:
         response = call_gemini("Create artwork", system_prompt)
         
         if log_callback:
-            log_callback("💭 Processing artistic vision...")
+            log_callback("Processing artistic vision...")
         
         commands, thoughts, is_finished = parse_commands(response)
         
         # Log the chain of thought
         if log_callback and thoughts:
-            log_callback("═" * 50)
-            log_callback("🧠 GPenT's Chain of Thought:")
+            log_callback("-" * 50)
+            log_callback("GPenT Chain of Thought:")
             for i, thought in enumerate(thoughts, 1):
                 log_callback(f"  {i}. {thought}")
-            log_callback("═" * 50)
+            log_callback("-" * 50)
         
         if not commands:
             if log_callback:
-                log_callback("⚠️ No valid commands parsed from response")
+                log_callback("Warning: No valid commands parsed from response")
                 log_callback(f"Raw response: {response[:500]}...")
             return {'entities': [], 'raw_response': response}
         
         if log_callback:
-            log_callback(f"✅ GPenT generated {len(commands)} elements")
+            log_callback(f"GPenT generated {len(commands)} elements")
             if is_finished:
-                log_callback("🎉 GPenT declares the artwork FINISHED!")
+                log_callback("GPenT declares the artwork complete")
         
         return {
             'entities': commands,
@@ -245,7 +245,7 @@ def generate_artwork(keywords: str = '', log_callback: Callable = None) -> Dict[
         
     except Exception as e:
         if log_callback:
-            log_callback(f"❌ Error: {str(e)}")
+            log_callback(f"Error: {str(e)}")
         raise
 
 

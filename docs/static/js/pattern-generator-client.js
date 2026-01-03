@@ -174,6 +174,14 @@ class PatternGenerator {
                 diagonal_width: { type: 'int', label: 'Diagonal Width', default: 40, min: 20, max: 80 },
                 num_duration_rows: { type: 'int', label: 'Duration Rows', default: 4, min: 1, max: 8 }
             }
+        },
+        gpent: {
+            name: 'GPenT',
+            description: 'Generative Pen-trained Transformer - AI-powered art generation',
+            options: {
+                inspiration: { type: 'text', label: 'Inspiration (optional)', default: '' }
+            },
+            serverOnly: true  // GPenT requires server API call
         }
     };
     
