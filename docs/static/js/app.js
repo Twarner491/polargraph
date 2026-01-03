@@ -221,6 +221,9 @@ const state = {
     selectedEntityIds: new Set(),  // Set of selected entity IDs (supports multi-select)
     activeColor: 'black',  // Currently selected pen color
     
+    // Pen settings (loaded from server)
+    penKerf: 0.45,  // mm - effective line width for overlap calculations
+    
     zoom: 1,
     minZoom: 0.2,
     maxZoom: 5,
@@ -560,6 +563,7 @@ function initKeyboardShortcuts() {
                 const factor = e.key === ']' ? 1.1 : 0.9;
                 selected.forEach(entity => {
                     entity.scale = Math.max(0.1, Math.min(10, entity.scale * factor));
+                    if (factor < 1) checkScaleWarning(entity);
                 });
                 drawCanvas();
                 logConsole(`Scaled ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
@@ -664,10 +668,15 @@ function handleContextAction(action) {
         case 'scaleDown':
             saveHistoryState();
             selected.forEach(entity => {
-                entity.scale = Math.max(0.1, entity.scale * 0.9);
+                const newScale = Math.max(0.1, entity.scale * 0.9);
+                entity.scale = newScale;
+                checkScaleWarning(entity);
             });
             drawCanvas();
             logConsole(`Scaled down ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+            break;
+        case 'scaleCustom':
+            promptSelectedEntitiesScale();
             break;
         case 'resetTransform':
             saveHistoryState();
@@ -834,6 +843,67 @@ function promptSelectedEntitiesRotation() {
         });
         drawCanvas();
         logConsole(`Set rotation to ${normalizedRotation}° for ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+    }
+}
+
+function promptSelectedEntitiesScale() {
+    const selected = getSelectedEntities();
+    if (selected.length === 0) return;
+    
+    // Show current scale as percentage if single selection
+    const currentScale = selected.length === 1 ? Math.round(selected[0].scale * 100) : 100;
+    const input = prompt('Scale (%):', String(currentScale));
+    
+    if (input !== null) {
+        saveHistoryState();
+        const scalePercent = parseFloat(input) || 100;
+        const scale = Math.max(0.1, Math.min(10, scalePercent / 100));
+        selected.forEach(entity => {
+            entity.scale = scale;
+            checkScaleWarning(entity);
+        });
+        drawCanvas();
+        logConsole(`Set scale to ${Math.round(scale * 100)}% for ${selected.length} element${selected.length > 1 ? 's' : ''}`, 'msg-info');
+    }
+}
+
+function calculateMinLineSpacing(entity) {
+    // Sample a subset of lines to find minimum spacing
+    // This is an approximation - checking every line pair would be O(n²)
+    const allPoints = [];
+    entity.paths.forEach(path => {
+        path.points.forEach(p => allPoints.push(p));
+    });
+    
+    if (allPoints.length < 2) return Infinity;
+    
+    // Sample up to 200 random pairs to estimate minimum spacing
+    const sampleSize = Math.min(200, Math.floor(allPoints.length * (allPoints.length - 1) / 2));
+    let minSpacing = Infinity;
+    
+    for (let i = 0; i < sampleSize; i++) {
+        const idx1 = Math.floor(Math.random() * allPoints.length);
+        let idx2 = Math.floor(Math.random() * (allPoints.length - 1));
+        if (idx2 >= idx1) idx2++;
+        
+        const dx = allPoints[idx1].x - allPoints[idx2].x;
+        const dy = allPoints[idx1].y - allPoints[idx2].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > 0.01 && dist < minSpacing) { // Ignore coincident points
+            minSpacing = dist;
+        }
+    }
+    
+    return minSpacing;
+}
+
+function checkScaleWarning(entity) {
+    const minSpacing = calculateMinLineSpacing(entity);
+    const scaledSpacing = minSpacing * entity.scale;
+    
+    if (scaledSpacing < state.penKerf && minSpacing !== Infinity) {
+        logConsole(`⚠️ Warning: Lines in "${entity.name}" at ${Math.round(entity.scale * 100)}% scale are ~${scaledSpacing.toFixed(2)}mm apart, less than pen kerf (${state.penKerf}mm). Lines may overlap.`, 'msg-warn');
     }
 }
 
@@ -3440,6 +3510,8 @@ async function loadSettings() {
         document.getElementById('limitRight').value = result.limit_right || 420.5;
         document.getElementById('limitTop').value = result.limit_top || 594.5;
         document.getElementById('limitBottom').value = result.limit_bottom || -594.5;
+        state.penKerf = result.pen_kerf || 0.45;
+        document.getElementById('penKerf').value = state.penKerf;
         document.getElementById('penUpAngle').value = result.pen_angle_up || 90;
         document.getElementById('penDownAngle').value = result.pen_angle_down || 40;
         document.getElementById('feedTravel').value = result.feed_rate_travel || 1000;
@@ -3455,12 +3527,14 @@ async function saveSettings() {
         limit_right: parseFloat(document.getElementById('limitRight').value),
         limit_top: parseFloat(document.getElementById('limitTop').value),
         limit_bottom: parseFloat(document.getElementById('limitBottom').value),
+        pen_kerf: parseFloat(document.getElementById('penKerf').value),
         pen_angle_up: parseFloat(document.getElementById('penUpAngle').value),
         pen_angle_down: parseFloat(document.getElementById('penDownAngle').value),
         feed_rate_travel: parseFloat(document.getElementById('feedTravel').value),
         feed_rate_draw: parseFloat(document.getElementById('feedDraw').value)
     };
     
+    state.penKerf = settings.pen_kerf;
     const result = await sendCommand('/api/settings', 'POST', settings);
     if (result.success) {
         logConsole('Settings saved', 'msg-in');

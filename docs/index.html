@@ -146,6 +146,9 @@
                                 <span class="context-icon">−</span> Scale Down
                                 <span class="context-shortcut">[</span>
                             </button>
+                            <button class="context-item" data-action="scaleCustom">
+                                <span class="context-icon">%</span> Set Scale...
+                            </button>
                             <button class="context-item" data-action="resetTransform">
                                 <span class="context-icon">⟲</span> Reset Transform
                             </button>
@@ -329,6 +332,10 @@
 
                     <div class="panel-section">
                         <div class="section-title">Pen</div>
+                        <div class="setting-row">
+                            <label>Pen Kerf (mm)</label>
+                            <input type="number" id="penKerf" class="input-num" value="0.45" step="0.01" min="0.1">
+                        </div>
                         <div class="setting-row">
                             <label>Up Angle</label>
                             <input type="number" id="penUpAngle" class="input-num" value="90">

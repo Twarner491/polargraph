@@ -39,6 +39,7 @@ DEFAULT_SETTINGS = {
     
     # Pen settings
     'pen_diameter': 0.8,       # mm
+    'pen_kerf': 0.45,          # mm - effective line width for overlap calculations
     
     # Planner settings
     'block_buffer_size': 16,
