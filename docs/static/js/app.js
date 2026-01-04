@@ -11,7 +11,7 @@ var POLARGRAPH_WEBHOOK_URL = "";
 var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/";
 
 // dcode Cloudflare Worker URL - set this after deploying the worker
-var DCODE_WORKER_URL = "";
+var DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/";
 
 // dcode HuggingFace Space URL (fallback for direct API calls)
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";

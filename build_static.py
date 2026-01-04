@@ -22,7 +22,7 @@ GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
 
 # dcode Cloudflare Worker URL for diffusion G-code generation on the public site
 # Deploy workers/dcode-worker.js to Cloudflare and set the URL here
-DCODE_WORKER_URL = ""  # e.g., "https://dcode-proxy.your-subdomain.workers.dev/"
+DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/"
 
 
 def build():
