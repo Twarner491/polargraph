@@ -10,7 +10,10 @@ var POLARGRAPH_WEBHOOK_URL = "";
 // GPenT Cloudflare Worker URL - set this after deploying the worker
 var GPENT_WORKER_URL = "";
 
-// dcode HuggingFace Space URL
+// dcode Cloudflare Worker URL - set this after deploying the worker
+var DCODE_WORKER_URL = "";
+
+// dcode HuggingFace Space URL (fallback for direct API calls)
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 
 // Check if we're in client-side mode (static site or server unreachable)
@@ -3630,49 +3633,75 @@ async function generatePattern() {
                 
                 gcode = result.gcode;
             } else {
-                // CLIENT_SIDE_MODE - try direct HuggingFace API (may have CORS issues)
-                logConsole('Calling dcode diffusion model...', 'msg-info');
-                logConsole('Note: Direct API may have CORS issues. Use plotter.local for best results.', 'msg-warn');
-                
-                // Try the queue-based API first (Gradio 4.x+)
-                try {
-                    const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
+                // CLIENT_SIDE_MODE - use Cloudflare Worker if available
+                if (DCODE_WORKER_URL) {
+                    logConsole('Calling dcode via Cloudflare Worker...', 'msg-info');
+                    
+                    const response = await fetch(DCODE_WORKER_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                            prompt,
+                            temperature,
+                            max_tokens: maxTokens,
+                            diffusion_steps: diffusionSteps,
+                            guidance,
+                            seed
                         })
                     });
                     
-                    if (callResponse.ok) {
-                        const callResult = await callResponse.json();
-                        const eventId = callResult.event_id;
+                    const result = await response.json();
+                    
+                    if (!result.success) {
+                        throw new Error(result.error || 'dcode generation failed');
+                    }
+                    
+                    gcode = result.gcode;
+                } else {
+                    // Fallback: try direct HuggingFace API (may have CORS issues)
+                    logConsole('Calling dcode diffusion model directly...', 'msg-info');
+                    logConsole('Note: Direct API may have CORS issues. Use plotter.local for best results.', 'msg-warn');
+                    
+                    // Try the queue-based API (Gradio 4.x+)
+                    try {
+                        const callResponse = await fetch(`${DCODE_SPACE_URL}/call/generate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                data: [prompt, temperature, maxTokens, diffusionSteps, guidance, seed]
+                            })
+                        });
                         
-                        if (eventId) {
-                            logConsole('Processing diffusion...', 'msg-info');
+                        if (callResponse.ok) {
+                            const callResult = await callResponse.json();
+                            const eventId = callResult.event_id;
                             
-                            const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
-                            const resultText = await resultResponse.text();
-                            
-                            for (const line of resultText.split('\n')) {
-                                if (line.startsWith('data:')) {
-                                    try {
-                                        const data = JSON.parse(line.substring(5).trim());
-                                        if (Array.isArray(data) && data.length >= 2) {
-                                            gcode = data[0];
-                                            break;
-                                        }
-                                    } catch (e) {}
+                            if (eventId) {
+                                logConsole('Processing diffusion...', 'msg-info');
+                                
+                                const resultResponse = await fetch(`${DCODE_SPACE_URL}/call/generate/${eventId}`);
+                                const resultText = await resultResponse.text();
+                                
+                                for (const line of resultText.split('\n')) {
+                                    if (line.startsWith('data:')) {
+                                        try {
+                                            const data = JSON.parse(line.substring(5).trim());
+                                            if (Array.isArray(data) && data.length >= 2) {
+                                                gcode = data[0];
+                                                break;
+                                            }
+                                        } catch (e) {}
+                                    }
                                 }
                             }
                         }
+                    } catch (queueError) {
+                        console.log('Queue API failed:', queueError);
                     }
-                } catch (queueError) {
-                    console.log('Queue API failed:', queueError);
-                }
-                
-                if (!gcode) {
-                    throw new Error(`dcode requires server proxy. Connect to plotter.local or visit ${DCODE_SPACE_URL} directly.`);
+                    
+                    if (!gcode) {
+                        throw new Error(`dcode requires server proxy. Connect to plotter.local or visit ${DCODE_SPACE_URL} directly.`);
+                    }
                 }
             }
             

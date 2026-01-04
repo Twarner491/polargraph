@@ -20,6 +20,10 @@ HA_WEBHOOK_URL = ""  # e.g., "https://your-ha-instance.duckdns.org/api/webhook/p
 # GPenT Cloudflare Worker URL for AI-powered generation on the public site
 GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
 
+# dcode Cloudflare Worker URL for diffusion G-code generation on the public site
+# Deploy workers/dcode-worker.js to Cloudflare and set the URL here
+DCODE_WORKER_URL = ""  # e.g., "https://dcode-proxy.your-subdomain.workers.dev/"
+
 
 def build():
     """Build static files for documentation."""
@@ -62,6 +66,12 @@ def build():
         js_content = js_content.replace(
             'var GPENT_WORKER_URL = "";',
             f'var GPENT_WORKER_URL = "{GPENT_WORKER_URL}";'
+        )
+        
+        # Replace dcode Worker URL placeholder
+        js_content = js_content.replace(
+            'var DCODE_WORKER_URL = "";',
+            f'var DCODE_WORKER_URL = "{DCODE_WORKER_URL}";'
         )
         
         # Force client-side mode for static build
