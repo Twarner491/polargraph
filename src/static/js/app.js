@@ -3038,7 +3038,8 @@ function parseSvgToEntities(svgText) {
             });
             
             if (entityPaths.length > 0) {
-                // Use metadata if available
+                // Use metadata if available for name/color/algorithm info
+                // NOTE: Transforms are already baked into the SVG paths, so we reset them to identity
                 const meta = polargraphMetadata ? polargraphMetadata[entityIndex] : null;
                 
                 entities.push({
@@ -3047,10 +3048,11 @@ function parseSvgToEntities(svgText) {
                     name: dataName || meta?.name || `Layer ${gIdx + 1}`,
                     algorithm: meta?.algorithm || 'imported',
                     algorithmOptions: meta?.algorithmOptions || {},
-                    offsetX: meta?.offsetX || 0,
-                    offsetY: meta?.offsetY || 0,
-                    scale: meta?.scale || 1,
-                    rotation: meta?.rotation || 0
+                    // Transforms are baked into paths - reset to identity
+                    offsetX: 0,
+                    offsetY: 0,
+                    scale: 1,
+                    rotation: 0
                 });
                 entityIndex++;
             }
@@ -3084,7 +3086,12 @@ function parseSvgToEntities(svgText) {
                 paths: entityPaths,
                 color: entityColor,
                 name: 'Imported Paths',
-                algorithm: 'imported'
+                algorithm: 'imported',
+                algorithmOptions: {},
+                offsetX: 0,
+                offsetY: 0,
+                scale: 1,
+                rotation: 0
             });
         }
     }
