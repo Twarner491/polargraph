@@ -2731,14 +2731,34 @@ function parseSvgToEntities(svgText) {
     const entities = [];
     let polargraphMetadata = null;
     
-    // Check for our custom metadata
-    const metadataMatch = svgText.match(/polargraph-metadata:\s*(\[.*?\])/);
-    if (metadataMatch) {
-        try {
-            polargraphMetadata = JSON.parse(metadataMatch[1]);
-            logConsole('Found Polargraph metadata - restoring original layers', 'msg-info');
-        } catch (e) {
-            console.warn('Could not parse polargraph metadata:', e);
+    // Check for our custom metadata - use a more robust extraction
+    // that handles nested brackets in algorithmOptions
+    const metadataStart = svgText.indexOf('polargraph-metadata:');
+    if (metadataStart !== -1) {
+        const arrayStart = svgText.indexOf('[', metadataStart);
+        if (arrayStart !== -1) {
+            // Find matching closing bracket by counting nesting
+            let depth = 0;
+            let arrayEnd = -1;
+            for (let i = arrayStart; i < svgText.length; i++) {
+                if (svgText[i] === '[') depth++;
+                else if (svgText[i] === ']') {
+                    depth--;
+                    if (depth === 0) {
+                        arrayEnd = i;
+                        break;
+                    }
+                }
+            }
+            if (arrayEnd !== -1) {
+                try {
+                    const metadataJson = svgText.substring(arrayStart, arrayEnd + 1);
+                    polargraphMetadata = JSON.parse(metadataJson);
+                    logConsole('Found Polargraph metadata - restoring original layers', 'msg-info');
+                } catch (e) {
+                    console.warn('Could not parse polargraph metadata:', e);
+                }
+            }
         }
     }
     
