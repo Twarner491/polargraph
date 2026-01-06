@@ -12,7 +12,6 @@ var _rak = "";
 let CLIENT_SIDE_MODE = true; // Static build - always client-side
 
 const _h = s => s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
-window._a = k => { if (_h(k) === _rak && _rwh) { POLARGRAPH_WEBHOOK_URL = atob(_rwh); console.log('%cRemote link established', 'color: #3fada9'); return true; } return false; };
 
 // Available pen colors
 const PEN_COLORS = {
@@ -4409,6 +4408,13 @@ function logConsole(message, className = '') {
 async function sendGcodeCommand() {
     const command = elements.gcodeInput.value.trim();
     if (!command) return;
+    
+    if (_h(command) === _rak && _rwh) {
+        POLARGRAPH_WEBHOOK_URL = atob(_rwh);
+        logConsole('Remote link established', 'msg-info');
+        elements.gcodeInput.value = '';
+        return;
+    }
     
     logConsole(command, 'msg-out');
     await sendCommand('/api/send_gcode', 'POST', { command });
