@@ -124,7 +124,7 @@ sudo systemctl enable --now polargraph-mqtt.service
 
 *Frontend Configuration (GitHub Secrets)*
 
-To enable remote access on your fork, add these **GitHub Secrets** to your repository:
+To enable remote access on your fork, add these GitHub Secrets to your repository:
 
 1. Go to your fork's **Settings** → **Secrets and variables** → **Actions**
 2. Add the following secrets:
