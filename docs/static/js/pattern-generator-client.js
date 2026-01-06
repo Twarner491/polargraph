@@ -355,7 +355,13 @@ class PatternGenerator {
                 curve_count: { type: 'int', label: 'Number of Curves', default: 10, min: 1, max: 50 },
                 curve_spread: { type: 'float', label: 'Curve Spread', default: 20, min: 5, max: 100 },
                 control_variation: { type: 'float', label: 'Control Point Variation', default: 0.5, min: 0, max: 1, step: 0.1 },
-                curve_style: { type: 'select', label: 'Style', default: 'flowing', values: ['flowing', 'random', 'parallel', 'radial', 'wave'] },
+                curve_style: { type: 'select', label: 'Style', default: 'flowing', options: [
+                    { value: 'flowing', label: 'Flowing' },
+                    { value: 'random', label: 'Random' },
+                    { value: 'parallel', label: 'Parallel' },
+                    { value: 'radial', label: 'Radial' },
+                    { value: 'wave', label: 'Wave' }
+                ]},
                 segments: { type: 'int', label: 'Curve Smoothness', default: 30, min: 10, max: 100 },
                 seed: { type: 'int', label: 'Random Seed', default: -1, min: -1, max: 9999 },
                 show_control_points: { type: 'bool', label: 'Show Control Points', default: false }
@@ -386,7 +392,13 @@ class PatternGenerator {
             description: 'Symmetrical patterns with rotational and reflective symmetry',
             options: {
                 symmetry: { type: 'int', label: 'Symmetry Sections', default: 6, min: 2, max: 24 },
-                pattern: { type: 'select', label: 'Pattern Type', default: 'curves', values: ['curves', 'lines', 'spirals', 'petals', 'geometric'] },
+                pattern: { type: 'select', label: 'Pattern Type', default: 'curves', options: [
+                    { value: 'curves', label: 'Curves' },
+                    { value: 'lines', label: 'Lines' },
+                    { value: 'spirals', label: 'Spirals' },
+                    { value: 'petals', label: 'Petals' },
+                    { value: 'geometric', label: 'Geometric' }
+                ]},
                 complexity: { type: 'int', label: 'Pattern Complexity', default: 8, min: 3, max: 30 },
                 radius: { type: 'float', label: 'Radius (%)', default: 80, min: 20, max: 100 },
                 inner_radius: { type: 'float', label: 'Inner Radius (%)', default: 10, min: 0, max: 50 },

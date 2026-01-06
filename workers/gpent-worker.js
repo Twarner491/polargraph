@@ -181,6 +181,7 @@ export default {
             const { commands, thoughts, isFinished } = parseCommands(responseText);
 
             return new Response(JSON.stringify({
+                success: true,
                 entities: commands,
                 thoughts: thoughts,
                 is_finished: isFinished,
