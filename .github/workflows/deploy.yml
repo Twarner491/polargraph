@@ -29,6 +29,9 @@ jobs:
           python-version: '3.11'
 
       - name: Build static site
+        env:
+          REMOTE_WEBHOOK_URL: ${{ secrets.REMOTE_WEBHOOK_URL }}
+          REMOTE_ACCESS_KEY: ${{ secrets.REMOTE_ACCESS_KEY }}
         run: python build_static.py
 
       - name: Setup Pages

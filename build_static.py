@@ -2,27 +2,27 @@
 """
 Build script to generate static documentation from the web interface.
 Exports the frontend to the docs/ folder for GitHub Pages.
-
-The static site can optionally connect to a Home Assistant webhook for
-remote plotter control via MQTT.
 """
 
 import os
 import shutil
+import base64
 
 SRC_DIR = 'src'
 DOCS_DIR = 'docs'
 
-# Set this to your Home Assistant webhook URL for remote access
-# Leave empty for local-only mode (connects directly to plotter.local)
-HA_WEBHOOK_URL = ""  # e.g., "https://your-ha-instance.duckdns.org/api/webhook/polargraph_command"
-
-# GPenT Cloudflare Worker URL for AI-powered generation on the public site
+HA_WEBHOOK_URL = ""
 GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
-
-# dcode Cloudflare Worker URL for diffusion G-code generation on the public site
-# Deploy workers/dcode-worker.js to Cloudflare and set the URL here
 DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/"
+
+def _js_hash(s):
+    """Match JS hash: s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)"""
+    result = 0
+    for c in s:
+        result = ((result << 5) - result + ord(c)) & 0xFFFFFFFF
+        if result >= 0x80000000:
+            result -= 0x100000000
+    return result
 
 
 def build():
@@ -73,6 +73,15 @@ def build():
             'var DCODE_WORKER_URL = "";',
             f'var DCODE_WORKER_URL = "{DCODE_WORKER_URL}";'
         )
+        
+        # Remote access configuration from environment
+        rwh = os.environ.get('REMOTE_WEBHOOK_URL', '')
+        rak = os.environ.get('REMOTE_ACCESS_KEY', '')
+        if rwh and rak:
+            rwh_b64 = base64.b64encode(rwh.encode()).decode()
+            rak_hash = _js_hash(rak)
+            js_content = js_content.replace('var _rwh = "";', f'var _rwh = "{rwh_b64}";')
+            js_content = js_content.replace('var _rak = "";', f'var _rak = {rak_hash};')
         
         # Force client-side mode for static build
         js_content = js_content.replace(
