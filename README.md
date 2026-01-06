@@ -122,22 +122,21 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now polargraph-mqtt.service
 ```
 
-*Frontend Configuration*
+*Frontend Configuration (GitHub Secrets)*
 
-Edit `build_static.py` and set your webhook URL:
+To enable remote access on your fork, add these **GitHub Secrets** to your repository:
 
-```python
-HA_WEBHOOK_URL = "https://your-ha-instance.duckdns.org/api/webhook/polargraph_command"
-```
+1. Go to your fork's **Settings** → **Secrets and variables** → **Actions**
+2. Add the following secrets:
 
-Then build and deploy:
+| Secret Name | Value |
+|-------------|-------|
+| `REMOTE_WEBHOOK_URL` | Your Home Assistant webhook URL (e.g., `https://your-ha.duckdns.org/api/webhook/polargraph_command`) |
+| `REMOTE_ACCESS_KEY` | A password of your choosing for activating remote mode |
 
-```bash
-python build_static.py
-git add docs/
-git commit -m "Update static site"
-git push
-```
+3. Push any change or manually trigger the **Deploy to GitHub Pages** workflow
+
+Once deployed, enter your access key in the Console tab to activate remote mode.
 
 ---
 
