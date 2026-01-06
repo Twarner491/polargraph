@@ -182,7 +182,7 @@ export default {
 
             return new Response(JSON.stringify({
                 success: true,
-                entities: commands,
+                commands: commands,
                 thoughts: thoughts,
                 is_finished: isFinished,
                 raw_response: responseText
