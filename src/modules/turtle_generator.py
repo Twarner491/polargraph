@@ -243,9 +243,9 @@ class TurtleGenerator:
             'name': 'Poetry Clouds',
             'description': 'Clouds formed from text characters using Perlin noise',
             'options': {
-                'text_size': {'type': 'float', 'label': 'Letter Size (mm)', 'default': 8, 'min': 3, 'max': 20},
-                'cloud_density': {'type': 'float', 'label': 'Cloud Density', 'default': 0.45, 'min': 0.3, 'max': 0.7, 'step': 0.05},
-                'noise_scale': {'type': 'float', 'label': 'Cloud Scale', 'default': 0.25, 'min': 0.01, 'max': 0.5, 'step': 0.01},
+                'text_size': {'type': 'float', 'label': 'Letter Size (mm)', 'default': 6, 'min': 3, 'max': 20},
+                'cloud_threshold': {'type': 'float', 'label': 'Cloud Threshold (higher=sparser)', 'default': 0.5, 'min': 0.3, 'max': 0.7, 'step': 0.05},
+                'noise_scale': {'type': 'float', 'label': 'Cloud Scale', 'default': 0.01, 'min': 0.005, 'max': 0.05, 'step': 0.001},
                 'seed': {'type': 'int', 'label': 'Random Seed', 'default': -1, 'min': -1, 'max': 9999},
                 'custom_text': {'type': 'string', 'label': 'Custom Text (optional)', 'default': '', 'placeholder': 'Leave empty for random letters'},
                 'uppercase': {'type': 'bool', 'label': 'Uppercase Only', 'default': True}
@@ -1318,25 +1318,28 @@ class TurtleGenerator:
     # =========================================================================
     
     def _generate_poetryclouds(self, options: Dict[str, Any]) -> Turtle:
-        """Generate cloud patterns made of text characters using Perlin noise."""
-        from scipy.ndimage import gaussian_filter
-        import numpy as np
+        """Generate cloud patterns made of text characters using Perlin noise.
         
+        Based on "The Poetry Clouds" by Kyle Geske (stungeye.com)
+        """
         turtle = Turtle()
         
-        text_size = float(options.get('text_size', 8))
-        cloud_threshold = float(options.get('cloud_threshold', 0.55))
-        noise_scale = float(options.get('noise_scale', 0.008))
+        text_size = float(options.get('text_size', 6))
+        cloud_threshold = float(options.get('cloud_threshold', 0.5))
+        noise_scale = float(options.get('noise_scale', 0.01))
         seed = options.get('seed', -1)
         if seed == -1:
             seed = random.randint(1, 9999)
         custom_text = options.get('custom_text', '')
         uppercase = options.get('uppercase', True)
         
+        # Initialize Perlin noise with seed
+        self._init_perlin(seed)
+        
         work_area = self.settings.get_work_area()
         margin = 20
         
-        # Grid step based on text size
+        # Grid step based on text size (like cloudPixelScale in original)
         grid_step = text_size * 1.2
         
         start_x = work_area['left'] + margin
@@ -1344,32 +1347,20 @@ class TurtleGenerator:
         start_y = work_area['bottom'] + margin
         end_y = work_area['top'] - margin
         
-        # Generate noise field
-        np.random.seed(seed)
-        
-        # Calculate grid dimensions
-        nx = int((end_x - start_x) / grid_step) + 1
-        ny = int((end_y - start_y) / grid_step) + 1
-        
-        # Create Perlin-like noise using filtered random values
-        noise_field = np.random.random((ny * 4, nx * 4))
-        # Apply Gaussian blur to create smooth noise
-        noise_field = gaussian_filter(noise_field, sigma=noise_scale * 100)
-        # Normalize to 0-1
-        noise_field = (noise_field - noise_field.min()) / (noise_field.max() - noise_field.min())
-        
         # Character index for custom text
         char_index = 0
         
-        for i, x in enumerate(np.linspace(start_x, end_x, nx)):
-            for j, y in enumerate(np.linspace(start_y, end_y, ny)):
-                # Sample noise at this position
-                ni = min(int(j * 4), noise_field.shape[0] - 1)
-                nj = min(int(i * 4), noise_field.shape[1] - 1)
-                n = noise_field[ni, nj]
+        # Loop through grid positions like original p5.js
+        x = start_x
+        while x <= end_x:
+            y = start_y
+            while y <= end_y:
+                # Sample Perlin noise at this position (like p5.js noise() function)
+                n = self._perlin_noise_2d(x * noise_scale, y * noise_scale)
                 
-                # Skip if below cloud threshold
+                # Skip if below cloud threshold (like original: if (n < cloudCutOff) continue)
                 if n < cloud_threshold:
+                    y += grid_step
                     continue
                 
                 # Get letter for this position
@@ -1377,6 +1368,7 @@ class TurtleGenerator:
                     letter = custom_text[char_index % len(custom_text)]
                     char_index += 1
                 else:
+                    # Use deterministic letter based on position
                     letter = self._get_letter_for_coordinate(x, y)
                 
                 if uppercase:
@@ -1384,6 +1376,9 @@ class TurtleGenerator:
                 
                 # Draw the letter using vector font
                 self._draw_vector_letter(turtle, letter, x, y, text_size * 0.8)
+                
+                y += grid_step
+            x += grid_step
         
         return turtle
     

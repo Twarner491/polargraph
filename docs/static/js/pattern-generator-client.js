@@ -231,9 +231,9 @@ class PatternGenerator {
             name: 'Poetry Clouds',
             description: 'Clouds formed from text characters using Perlin noise',
             options: {
-                text_size: { type: 'float', label: 'Letter Size (mm)', default: 8, min: 3, max: 20 },
-                cloud_threshold: { type: 'float', label: 'Cloud Threshold (higher=sparser)', default: 0.55, min: 0.3, max: 0.8, step: 0.05 },
-                noise_scale: { type: 'float', label: 'Cloud Scale', default: 0.008, min: 0.003, max: 0.03, step: 0.001 },
+                text_size: { type: 'float', label: 'Letter Size (mm)', default: 6, min: 3, max: 20 },
+                cloud_threshold: { type: 'float', label: 'Cloud Threshold (higher=sparser)', default: 0.5, min: 0.3, max: 0.7, step: 0.05 },
+                noise_scale: { type: 'float', label: 'Cloud Scale', default: 0.01, min: 0.005, max: 0.05, step: 0.001 },
                 seed: { type: 'int', label: 'Random Seed', default: -1, min: -1, max: 9999 },
                 custom_text: { type: 'string', label: 'Custom Text (optional)', default: '', placeholder: 'Leave empty for random letters' },
                 uppercase: { type: 'bool', label: 'Uppercase Only', default: true }
@@ -1177,8 +1177,8 @@ class PatternGenerator {
         const turtle = new Turtle();
         
         const textSize = options.text_size || 8;
-        const cloudThreshold = options.cloud_threshold || 0.55;
-        const noiseScale = options.noise_scale || 0.008;
+        const cloudThreshold = options.cloud_threshold || 0.5;
+        const noiseScale = options.noise_scale || 0.01;
         let seed = options.seed;
         if (seed === undefined || seed === -1) {
             seed = Math.floor(Math.random() * 9999);
@@ -1186,10 +1186,13 @@ class PatternGenerator {
         const customText = options.custom_text || '';
         const uppercase = options.uppercase !== false;
         
+        // Initialize Perlin noise with seed
+        this._initNoise(seed);
+        
         const workArea = this.getWorkArea();
         const margin = 20;
         
-        // Grid of text positions
+        // Grid step based on text size (like cloudPixelScale in original)
         const gridStep = textSize * 1.2;
         
         const startX = workArea.left + margin;
@@ -1197,25 +1200,17 @@ class PatternGenerator {
         const startY = workArea.bottom + margin;
         const endY = workArea.top - margin;
         
-        // Calculate grid dimensions
-        const nx = Math.floor((endX - startX) / gridStep) + 1;
-        const ny = Math.floor((endY - startY) / gridStep) + 1;
-        
-        // Generate noise field using Gaussian-blurred random values (matching server)
-        const noiseField = this._generateCloudNoiseField(nx, ny, seed, noiseScale);
-        
         // Character index for custom text
         let charIndex = 0;
         
-        for (let i = 0; i < nx; i++) {
-            for (let j = 0; j < ny; j++) {
-                const x = startX + i * gridStep;
-                const y = startY + j * gridStep;
+        // Loop through grid positions like original p5.js
+        for (let x = startX; x <= endX; x += gridStep) {
+            for (let y = startY; y <= endY; y += gridStep) {
+                // Sample Perlin noise at this position (like p5.js noise() function)
+                // Using 2D noise since we're generating a static snapshot
+                const n = this._perlinNoise(x * noiseScale, y * noiseScale);
                 
-                // Sample from pre-generated noise field
-                const n = noiseField[j * nx + i];
-                
-                // Only draw text where noise exceeds threshold (cloud areas)
+                // Skip if below cloud threshold (like original: if (n < cloudCutOff) continue)
                 if (n < cloudThreshold) continue;
                 
                 // Get letter for this position
@@ -1224,6 +1219,7 @@ class PatternGenerator {
                     letter = customText[charIndex % customText.length];
                     charIndex++;
                 } else {
+                    // Use deterministic letter based on position (like original getLetterForCoordinate)
                     letter = this._getLetterForCoordinate(x, y);
                 }
                 
