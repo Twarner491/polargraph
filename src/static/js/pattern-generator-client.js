@@ -1189,9 +1189,6 @@ class PatternGenerator {
         const workArea = this.getWorkArea();
         const margin = 20;
         
-        // Initialize noise with seed
-        this._initNoise(seed);
-        
         // Grid of text positions
         const gridStep = textSize * 1.2;
         
@@ -1200,13 +1197,23 @@ class PatternGenerator {
         const startY = workArea.bottom + margin;
         const endY = workArea.top - margin;
         
+        // Calculate grid dimensions
+        const nx = Math.floor((endX - startX) / gridStep) + 1;
+        const ny = Math.floor((endY - startY) / gridStep) + 1;
+        
+        // Generate noise field using Gaussian-blurred random values (matching server)
+        const noiseField = this._generateCloudNoiseField(nx, ny, seed, noiseScale);
+        
         // Character index for custom text
         let charIndex = 0;
         
-        for (let x = startX; x <= endX; x += gridStep) {
-            for (let y = startY; y <= endY; y += gridStep) {
-                // Sample 2D Perlin noise - use smaller scale for cloud-like shapes
-                const n = this._perlinNoise(x * noiseScale, y * noiseScale);
+        for (let i = 0; i < nx; i++) {
+            for (let j = 0; j < ny; j++) {
+                const x = startX + i * gridStep;
+                const y = startY + j * gridStep;
+                
+                // Sample from pre-generated noise field
+                const n = noiseField[j * nx + i];
                 
                 // Only draw text where noise exceeds threshold (cloud areas)
                 if (n < cloudThreshold) continue;
@@ -1230,6 +1237,96 @@ class PatternGenerator {
         }
         
         return turtle;
+    }
+    
+    /**
+     * Generate cloud-like noise field matching the server's Gaussian-blurred approach
+     */
+    _generateCloudNoiseField(nx, ny, seed, noiseScale) {
+        // Seeded random
+        let rngState = seed;
+        const seededRandom = () => {
+            rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+            return rngState / 0x7fffffff;
+        };
+        
+        // Create a higher resolution grid for smoothing
+        const scale = 4;
+        const hx = nx * scale;
+        const hy = ny * scale;
+        
+        // Generate random field
+        const randomField = new Array(hx * hy);
+        for (let i = 0; i < hx * hy; i++) {
+            randomField[i] = seededRandom();
+        }
+        
+        // Apply simple box blur (simulating Gaussian blur)
+        const blurRadius = Math.max(3, Math.floor(noiseScale * 400));
+        const blurred = this._boxBlur2D(randomField, hx, hy, blurRadius);
+        
+        // Downsample and normalize
+        const result = new Array(nx * ny);
+        let min = Infinity, max = -Infinity;
+        
+        for (let j = 0; j < ny; j++) {
+            for (let i = 0; i < nx; i++) {
+                const hi = Math.min(i * scale, hx - 1);
+                const hj = Math.min(j * scale, hy - 1);
+                const val = blurred[hj * hx + hi];
+                result[j * nx + i] = val;
+                min = Math.min(min, val);
+                max = Math.max(max, val);
+            }
+        }
+        
+        // Normalize to 0-1
+        const range = max - min || 1;
+        for (let i = 0; i < result.length; i++) {
+            result[i] = (result[i] - min) / range;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Simple 2D box blur
+     */
+    _boxBlur2D(data, width, height, radius) {
+        const result = new Array(data.length);
+        
+        // Horizontal pass
+        const temp = new Array(data.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let sum = 0, count = 0;
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const nx = x + dx;
+                    if (nx >= 0 && nx < width) {
+                        sum += data[y * width + nx];
+                        count++;
+                    }
+                }
+                temp[y * width + x] = sum / count;
+            }
+        }
+        
+        // Vertical pass
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let sum = 0, count = 0;
+                for (let dy = -radius; dy <= radius; dy++) {
+                    const ny = y + dy;
+                    if (ny >= 0 && ny < height) {
+                        sum += temp[ny * width + x];
+                        count++;
+                    }
+                }
+                result[y * width + x] = sum / count;
+            }
+        }
+        
+        return result;
     }
     
     /**
