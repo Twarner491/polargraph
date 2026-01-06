@@ -1388,16 +1388,31 @@ class PatternGenerator {
     // =========================================================================
     
     _generate_glow(options) {
-        const turtle = new Turtle();
-        
-        const numParticles = options.particles || 1500;
+        const colorProfile = options.color_profile || 'rainbow';
+        const numParticles = options.particles || 500;
         const iterations = options.iterations || 200;
-        const noiseInc = options.noise_scale || 0.05;
-        const flowScale = options.flow_scale || 10;
+        const noiseInc = options.noise_scale || 0.01;
+        const flowScale = options.flow_cell_size || 10;
         const maxSpeed = options.max_speed || 1.3;
-        const seed = options.seed || 42;
+        let seed = options.seed;
+        if (seed === undefined || seed === -1) {
+            seed = Math.floor(Math.random() * 999999);
+        }
         const circularBounds = options.circular_bounds || false;
         const drawTrails = options.draw_trails !== false;
+        
+        // Color profile configurations
+        const colorConfigs = {
+            'rainbow': { colors: ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'] },
+            'warm': { colors: ['red', 'orange', 'yellow'] },
+            'cool': { colors: ['blue', 'green', 'purple'] },
+            'monochrome': { colors: ['black'] },
+            'primary': { colors: ['red', 'yellow', 'blue'] },
+            'pastel': { colors: ['pink', 'yellow', 'green', 'blue', 'purple'] }
+        };
+        
+        const config = colorConfigs[colorProfile] || colorConfigs['rainbow'];
+        const numLayers = config.colors.length;
         
         const workArea = this.getWorkArea();
         const margin = 20;
@@ -1413,36 +1428,33 @@ class PatternGenerator {
         // Initialize noise with seed
         this._initNoise(seed);
         
-        // Golden ratio conjugate for HSB color variety
-        const goldenRatioConjugate = 0.618033988749895;
-        let hue = this._seededRandom(seed);
+        // Seeded random for particle positions
+        let rngState = seed;
+        const seededRandom = () => {
+            rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+            return rngState / 0x7fffffff;
+        };
         
         // Flow field grid
         const cols = Math.floor(width / flowScale);
         const rows = Math.floor(height / flowScale);
         const flowfield = new Array(cols * rows);
         
-        // Create particles
+        // Create particles - assign each to a layer
         const particles = [];
         for (let i = 0; i < numParticles; i++) {
-            // Some particles start in center circle for interesting patterns
             let px, py;
-            if (circularBounds && Math.random() > 0.8) {
-                // Random position within circular area
+            if (circularBounds && seededRandom() > 0.8) {
                 let attempts = 0;
                 do {
-                    px = startX + Math.random() * width;
-                    py = startY + Math.random() * height;
+                    px = startX + seededRandom() * width;
+                    py = startY + seededRandom() * height;
                     attempts++;
                 } while (this._dist(centerX, centerY, px, py) >= circleRadius && attempts < 100);
             } else {
-                px = startX + Math.random() * width;
-                py = startY + Math.random() * height;
+                px = startX + seededRandom() * width;
+                py = startY + seededRandom() * height;
             }
-            
-            // Cycle hue using golden ratio
-            hue += goldenRatioConjugate;
-            hue %= 1;
             
             particles.push({
                 x: px,
@@ -1451,8 +1463,8 @@ class PatternGenerator {
                 prevY: py,
                 vx: 0,
                 vy: 0,
-                hue: hue,
-                path: [[px, py]]
+                layerIdx: i % numLayers,  // Distribute across layers
+                paths: [[[px, py]]]  // Array of path segments
             });
         }
         
@@ -1466,7 +1478,7 @@ class PatternGenerator {
                 let xoff = 0;
                 for (let x = 0; x < cols; x++) {
                     const index = x + y * cols;
-                    const angle = this._perlinNoise(xoff, yoff, zoff) * Math.PI * 4;
+                    const angle = this._perlinNoise(xoff, yoff) * Math.PI * 4;
                     flowfield[index] = {
                         x: Math.cos(angle),
                         y: Math.sin(angle)
@@ -1479,7 +1491,6 @@ class PatternGenerator {
             
             // Update particles
             for (const p of particles) {
-                // Get flow field force
                 const gridX = Math.floor((p.x - startX) / flowScale);
                 const gridY = Math.floor((p.y - startY) / flowScale);
                 
@@ -1488,96 +1499,87 @@ class PatternGenerator {
                     const force = flowfield[index];
                     
                     if (force) {
-                        // Apply force
                         p.vx += force.x;
                         p.vy += force.y;
                         
-                        // Limit velocity
                         const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
                         if (speed > maxSpeed) {
                             p.vx = (p.vx / speed) * maxSpeed;
                             p.vy = (p.vy / speed) * maxSpeed;
                         }
                         
-                        // Store previous position
                         p.prevX = p.x;
                         p.prevY = p.y;
-                        
-                        // Update position
                         p.x += p.vx;
                         p.y += p.vy;
                         
-                        // Store path point
+                        // Add to current path
                         if (drawTrails) {
-                            p.path.push([p.x, p.y]);
+                            p.paths[p.paths.length - 1].push([p.x, p.y]);
                         }
                         
-                        // Handle bounds
+                        // Handle bounds - start new path segment on wrap
+                        let wrapped = false;
                         if (circularBounds) {
                             if (this._dist(centerX, centerY, p.x, p.y) > circleRadius) {
-                                // Reset to center area
                                 let attempts = 0;
                                 do {
-                                    p.x = startX + Math.random() * width;
-                                    p.y = startY + Math.random() * height;
+                                    p.x = startX + seededRandom() * width;
+                                    p.y = startY + seededRandom() * height;
                                     attempts++;
                                 } while (this._dist(centerX, centerY, p.x, p.y) >= circleRadius && attempts < 100);
-                                p.vx = 0;
-                                p.vy = 0;
-                                // Start new path
-                                if (drawTrails && p.path.length > 1) {
-                                    this._drawGlowPath(turtle, p.path);
-                                }
-                                p.path = [[p.x, p.y]];
+                                wrapped = true;
                             }
                         } else {
-                            // Wrap around edges
-                            if (p.x > startX + width) {
-                                p.x = startX;
-                                if (drawTrails && p.path.length > 1) {
-                                    this._drawGlowPath(turtle, p.path);
-                                }
-                                p.path = [[p.x, p.y]];
-                            }
-                            if (p.x < startX) {
-                                p.x = startX + width;
-                                if (drawTrails && p.path.length > 1) {
-                                    this._drawGlowPath(turtle, p.path);
-                                }
-                                p.path = [[p.x, p.y]];
-                            }
-                            if (p.y > startY + height) {
-                                p.y = startY;
-                                if (drawTrails && p.path.length > 1) {
-                                    this._drawGlowPath(turtle, p.path);
-                                }
-                                p.path = [[p.x, p.y]];
-                            }
-                            if (p.y < startY) {
-                                p.y = startY + height;
-                                if (drawTrails && p.path.length > 1) {
-                                    this._drawGlowPath(turtle, p.path);
-                                }
-                                p.path = [[p.x, p.y]];
-                            }
+                            if (p.x > startX + width) { p.x = startX; wrapped = true; }
+                            if (p.x < startX) { p.x = startX + width; wrapped = true; }
+                            if (p.y > startY + height) { p.y = startY; wrapped = true; }
+                            if (p.y < startY) { p.y = startY + height; wrapped = true; }
+                        }
+                        
+                        if (wrapped) {
+                            p.vx = 0;
+                            p.vy = 0;
+                            p.paths.push([[p.x, p.y]]);
                         }
                     }
                 }
             }
         }
         
-        // Draw final paths
-        for (const p of particles) {
-            if (drawTrails && p.path.length > 1) {
-                this._drawGlowPath(turtle, p.path);
-            } else if (!drawTrails) {
-                // Just draw a point (small cross)
-                turtle.jumpTo(p.x - 0.5, p.y);
-                turtle.moveTo(p.x + 0.5, p.y);
+        // Create layer turtles and draw particles
+        const layers = [];
+        
+        for (let layerIdx = 0; layerIdx < numLayers; layerIdx++) {
+            const turtle = new Turtle();
+            
+            // Draw all particles belonging to this layer
+            for (const p of particles) {
+                if (p.layerIdx === layerIdx) {
+                    if (drawTrails) {
+                        for (const pathSeg of p.paths) {
+                            if (pathSeg.length > 1) {
+                                this._drawGlowPath(turtle, pathSeg);
+                            }
+                        }
+                    } else {
+                        turtle.jumpTo(p.x - 0.5, p.y);
+                        turtle.moveTo(p.x + 0.5, p.y);
+                    }
+                }
+            }
+            
+            const paths = turtle.getPaths();
+            if (paths.length > 0) {
+                layers.push({
+                    name: `Glow (${config.colors[layerIdx].charAt(0).toUpperCase() + config.colors[layerIdx].slice(1)})`,
+                    color: config.colors[layerIdx],
+                    paths: paths
+                });
             }
         }
         
-        return turtle;
+        return { multiLayer: true, layers: layers };
     }
     
     /**
@@ -2905,10 +2907,7 @@ class PatternGenerator {
     // =========================================================================
     
     _generate_colorfuldots(options) {
-        const turtle = new Turtle();
-        
         const colorMode = options.color_mode || 'cmyk';
-        const layerIndex = (options.layer_index || 1) - 1;  // Convert to 0-based
         const gridSpacing = options.grid_spacing || 15;
         const maxDotSize = options.max_dot_size || 12;
         const layerOffset = options.layer_offset || 4;
@@ -2930,15 +2929,24 @@ class PatternGenerator {
         const width = endX - startX;
         const height = endY - startY;
         
-        // Seeded random
+        // Seeded random - generate circles once
         let rngState = seed;
         const seededRandom = () => {
             rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
             return rngState / 0x7fffffff;
         };
         
-        const numLayers = colorMode === 'cmyk' ? 4 : 3;
-        const clampedLayerIndex = Math.max(0, Math.min(layerIndex, numLayers - 1));
+        // Color mode configurations
+        const colorConfigs = {
+            'cmyk': { count: 4, names: ['Cyan', 'Magenta', 'Yellow', 'Key'], colors: ['teal', 'pink', 'yellow', 'black'] },
+            'rgb': { count: 3, names: ['Red', 'Green', 'Blue'], colors: ['red', 'green', 'blue'] },
+            'primary': { count: 3, names: ['Red', 'Yellow', 'Blue'], colors: ['red', 'yellow', 'blue'] },
+            'warm': { count: 3, names: ['Red', 'Orange', 'Yellow'], colors: ['red', 'orange', 'yellow'] },
+            'cool': { count: 3, names: ['Blue', 'Teal', 'Purple'], colors: ['blue', 'teal', 'purple'] }
+        };
+        
+        const config = colorConfigs[colorMode] || colorConfigs['cmyk'];
+        const numLayers = config.count;
         
         // Generate source circles with random RGB colors
         const circles = [];
@@ -2958,47 +2966,63 @@ class PatternGenerator {
             });
         }
         
-        // Calculate offset for this layer
-        const layerAngle = (clampedLayerIndex / numLayers) * 2 * Math.PI + Math.PI / 6;
-        const ox = Math.cos(layerAngle) * layerOffset;
-        const oy = Math.sin(layerAngle) * layerOffset;
+        // Generate all layers
+        const layers = [];
         
-        // Process grid points
-        for (let y = startY + gridSpacing / 2; y < endY; y += gridSpacing) {
-            for (let x = startX + gridSpacing / 2; x < endX; x += gridSpacing) {
-                // Sample color at this point
-                const rgb = this._sampleColorAtPoint(x, y, circles, seededRandom);
-                
-                // Convert RGB to CMYK
-                const cmyk = this._rgbToCmyk(rgb.r, rgb.g, rgb.b);
-                
-                let intensity;
-                if (colorMode === 'cmyk') {
-                    const channels = [cmyk.c, cmyk.m, cmyk.y, cmyk.k];
-                    intensity = channels[clampedLayerIndex];
-                } else if (colorMode === 'rgb') {
-                    intensity = [rgb.r / 255, rgb.g / 255, rgb.b / 255][clampedLayerIndex];
-                } else if (colorMode === 'primary') {
-                    const rInt = rgb.r / 255;
-                    const yInt = Math.min(rgb.r, rgb.g) / 255;
-                    const bInt = rgb.b / 255;
-                    intensity = [rInt, yInt, bInt][clampedLayerIndex];
-                } else if (colorMode === 'warm') {
-                    intensity = [rgb.r / 255, (rgb.r * 0.5 + rgb.g * 0.5) / 255, rgb.g / 255][clampedLayerIndex];
-                } else if (colorMode === 'cool') {
-                    intensity = [rgb.b / 255, (rgb.g * 0.5 + rgb.b * 0.5) / 255, (rgb.r * 0.3 + rgb.b * 0.7) / 255][clampedLayerIndex];
-                } else {
-                    intensity = cmyk.c;
+        for (let layerIdx = 0; layerIdx < numLayers; layerIdx++) {
+            const turtle = new Turtle();
+            
+            // Calculate offset for this layer
+            const layerAngle = (layerIdx / numLayers) * 2 * Math.PI + Math.PI / 6;
+            const ox = Math.cos(layerAngle) * layerOffset;
+            const oy = Math.sin(layerAngle) * layerOffset;
+            
+            // Process grid points
+            for (let y = startY + gridSpacing / 2; y < endY; y += gridSpacing) {
+                for (let x = startX + gridSpacing / 2; x < endX; x += gridSpacing) {
+                    // Sample color at this point
+                    const rgb = this._sampleColorAtPoint(x, y, circles, seededRandom);
+                    
+                    // Convert RGB to CMYK
+                    const cmyk = this._rgbToCmyk(rgb.r, rgb.g, rgb.b);
+                    
+                    let intensity;
+                    if (colorMode === 'cmyk') {
+                        const channels = [cmyk.c, cmyk.m, cmyk.y, cmyk.k];
+                        intensity = channels[layerIdx];
+                    } else if (colorMode === 'rgb') {
+                        intensity = [rgb.r / 255, rgb.g / 255, rgb.b / 255][layerIdx];
+                    } else if (colorMode === 'primary') {
+                        const rInt = rgb.r / 255;
+                        const yInt = Math.min(rgb.r, rgb.g) / 255;
+                        const bInt = rgb.b / 255;
+                        intensity = [rInt, yInt, bInt][layerIdx];
+                    } else if (colorMode === 'warm') {
+                        intensity = [rgb.r / 255, (rgb.r * 0.5 + rgb.g * 0.5) / 255, rgb.g / 255][layerIdx];
+                    } else if (colorMode === 'cool') {
+                        intensity = [rgb.b / 255, (rgb.g * 0.5 + rgb.b * 0.5) / 255, (rgb.r * 0.3 + rgb.b * 0.7) / 255][layerIdx];
+                    } else {
+                        intensity = cmyk.c;
+                    }
+                    
+                    const dotSize = intensity * maxDotSize;
+                    if (dotSize > 0.8) {
+                        turtle.drawCircle(x + ox, y + oy, dotSize / 2, Math.max(6, Math.floor(dotSize)));
+                    }
                 }
-                
-                const dotSize = intensity * maxDotSize;
-                if (dotSize > 0.8) {
-                    turtle.drawCircle(x + ox, y + oy, dotSize / 2, Math.max(6, Math.floor(dotSize)));
-                }
+            }
+            
+            const paths = turtle.getPaths();
+            if (paths.length > 0) {
+                layers.push({
+                    name: `Colorful Dots (${config.names[layerIdx]})`,
+                    color: config.colors[layerIdx],
+                    paths: paths
+                });
             }
         }
         
-        return turtle;
+        return { multiLayer: true, layers: layers };
     }
     
     /**
@@ -3052,18 +3076,19 @@ class PatternGenerator {
         /**
          * Generate rotating parallel line layers that create moiré interference patterns.
          * Based on p5.js Interlockings by Arden Schager.
+         * Returns multi-layer output with cycling colors.
          */
-        const turtle = new Turtle();
-        
         const numLayers = options.num_layers || 6;
         const linesPerLayer = options.lines_per_layer || 30;
         const lineSpacing = options.line_spacing || 5;
         const centerOffsetPct = options.center_offset || 10;
-        const layerToDraw = options.layer_to_draw || 0;  // 0 = all
         let seed = options.seed;
         if (seed === undefined || seed === -1) {
             seed = Math.floor(Math.random() * 999999);
         }
+        
+        // Color scheme cycling through rainbow
+        const layerColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'teal'];
         
         const workArea = this.getWorkArea();
         const width = workArea.width;
@@ -3075,10 +3100,11 @@ class PatternGenerator {
         // Center offset radius (each layer's center rotates around the main center)
         const centerOffsetRadius = Math.min(width, height) * (centerOffsetPct / 100);
         
+        const layers = [];
+        
         // Each layer gets an evenly distributed angle
         for (let layerIdx = 0; layerIdx < numLayers; layerIdx++) {
-            // Skip if we're only drawing a specific layer
-            if (layerToDraw > 0 && layerToDraw !== layerIdx + 1) continue;
+            const turtle = new Turtle();
             
             // Calculate layer angle - distribute evenly across 180 degrees
             const layerAngle = (layerIdx / numLayers) * Math.PI;
@@ -3124,9 +3150,19 @@ class PatternGenerator {
                 turtle.jumpTo(clipped.x1, clipped.y1);
                 turtle.moveTo(clipped.x2, clipped.y2);
             }
+            
+            const paths = turtle.getPaths();
+            if (paths.length > 0) {
+                const colorIdx = layerIdx % layerColors.length;
+                layers.push({
+                    name: `Interlockings (Layer ${layerIdx + 1} - ${layerColors[colorIdx].charAt(0).toUpperCase() + layerColors[colorIdx].slice(1)})`,
+                    color: layerColors[colorIdx],
+                    paths: paths
+                });
+            }
         }
         
-        return turtle;
+        return { multiLayer: true, layers: layers };
     }
     
     /**
