@@ -3341,9 +3341,13 @@ function updateGeneratorOptions() {
     const options = JSON.parse(selected.dataset.options || '{}');
     elements.generatorOptions.innerHTML = '';
     
-    // Hide color picker for Sonakinatography, GPenT, and dcode (they create multi-color layers or have fixed color)
+    // Hide color picker for generators that have built-in color profiles/layers
     if (elements.colorPickerSection) {
-        const hideColorPicker = generatorId === 'sonakinatography' || generatorId === 'gpent' || generatorId === 'dcode';
+        const generatorsWithColorProfiles = [
+            'sonakinatography', 'gpent', 'dcode',  // Multi-layer generators
+            'glow', 'interlockings', 'colorfuldots', 'zenpots'  // Have color profile options
+        ];
+        const hideColorPicker = generatorsWithColorProfiles.includes(generatorId);
         elements.colorPickerSection.style.display = hideColorPicker ? 'none' : 'block';
     }
     
@@ -3390,6 +3394,31 @@ function updateGeneratorOptions() {
                 if (opt.value === config.default) optEl.selected = true;
                 input.appendChild(optEl);
             });
+        } else if (config.type === 'hidden') {
+            // Hidden input - don't show in UI but include in form
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.id = `gen_${key}`;
+            input.value = config.default || '';
+            group.style.display = 'none';
+            group.appendChild(input);
+            return group;
+        } else if (config.type === 'map') {
+            // Location map for geodata weaving
+            group.className = 'form-group location-map-group';
+            group.innerHTML = `
+                <div class="location-map-container" id="locationMapContainer">
+                    <div id="locationMap"></div>
+                </div>
+                <div class="location-coords">
+                    <span id="locationDisplay">37.7749, -122.4194</span>
+                </div>
+                <input type="hidden" id="gen_latitude" value="37.7749">
+                <input type="hidden" id="gen_longitude" value="-122.4194">
+            `;
+            // Initialize map after DOM update
+            setTimeout(() => initLocationMap(), 50);
+            return group;
         } else {
             input = document.createElement('input');
             input.type = 'number';
@@ -3398,7 +3427,7 @@ function updateGeneratorOptions() {
             if (config.max !== undefined) input.max = config.max;
             if (config.step !== undefined) input.step = config.step;
             else input.step = config.type === 'int' ? 1 : 0.1;
-            input.id = `gen_${key}`;
+        input.id = `gen_${key}`;
         }
         
         group.appendChild(label);
@@ -3425,12 +3454,123 @@ function updateGeneratorOptions() {
         
         collapsibleOptions.forEach(([key, config]) => {
             settingsContainer.appendChild(createInput(key, config));
-        });
+    });
         
         details.appendChild(settingsContainer);
         elements.generatorOptions.appendChild(details);
     }
 }
+
+// =========================================================================
+// LOCATION MAP FOR GEODATA WEAVING
+// =========================================================================
+
+let locationMap = null;
+let locationMarker = null;
+
+function initLocationMap() {
+    const container = document.getElementById('locationMap');
+    if (!container) return;
+    
+    // Clean up existing map if any
+    if (locationMap) {
+        locationMap.remove();
+        locationMap = null;
+    }
+    
+    // Get current lat/lng from inputs or use San Francisco default
+    const latInput = document.getElementById('gen_latitude');
+    const lngInput = document.getElementById('gen_longitude');
+    const lat = latInput ? parseFloat(latInput.value) : 37.7749;
+    const lng = lngInput ? parseFloat(lngInput.value) : -122.4194;
+    
+    // Check if Leaflet is loaded
+    if (typeof L === 'undefined') {
+        console.warn('Leaflet not loaded - location map unavailable');
+        return;
+    }
+    
+    // Create map centered on current coordinates
+    locationMap = L.map('locationMap', {
+        center: [lat, lng],
+        zoom: 10,
+        zoomControl: true,
+        attributionControl: false
+    });
+    
+    // Add tile layer (Mapbox)
+    const mapboxToken = 'pk.eyJ1IjoidHdhcm5lcjQ5MSIsImEiOiJjbWlmanR0c3cwZmxiM2VvbGZ0NDU4OGkwIn0.GTX7iFPDIdbBzsxBZsN5ag';
+    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`, {
+        maxZoom: 19,
+        tileSize: 512,
+        zoomOffset: -1
+    }).addTo(locationMap);
+    
+    // Create custom marker icon
+    const markerIcon = L.divIcon({
+        className: 'location-marker-icon',
+        html: '<svg viewBox="0 0 24 24" style="width:28px;height:28px;fill:#e74c3c;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 28]
+    });
+    
+    // Add marker
+    locationMarker = L.marker([lat, lng], { icon: markerIcon, draggable: true }).addTo(locationMap);
+    
+    // Update coordinates on marker drag
+    locationMarker.on('dragend', function(e) {
+        const pos = e.target.getLatLng();
+        updateLocationCoords(pos.lat, pos.lng);
+    });
+    
+    // Update coordinates on map click
+    locationMap.on('click', function(e) {
+        const pos = e.latlng;
+        locationMarker.setLatLng(pos);
+        updateLocationCoords(pos.lat, pos.lng);
+    });
+    
+    // Fix map size issues when container becomes visible
+    setTimeout(() => {
+        if (locationMap) locationMap.invalidateSize();
+    }, 100);
+}
+
+function updateLocationCoords(lat, lng) {
+    // Round to 6 decimal places
+    lat = Math.round(lat * 1000000) / 1000000;
+    lng = Math.round(lng * 1000000) / 1000000;
+    
+    // Update input fields
+    const latInput = document.getElementById('gen_latitude');
+    const lngInput = document.getElementById('gen_longitude');
+    const display = document.getElementById('locationDisplay');
+    
+    if (latInput) latInput.value = lat;
+    if (lngInput) lngInput.value = lng;
+    if (display) display.textContent = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    
+    // Update map marker position if map exists
+    if (locationMarker) {
+        locationMarker.setLatLng([lat, lng]);
+    }
+}
+
+// Listen for manual coordinate input changes
+document.addEventListener('change', function(e) {
+    if (e.target.id === 'gen_latitude' || e.target.id === 'gen_longitude') {
+        const latInput = document.getElementById('gen_latitude');
+        const lngInput = document.getElementById('gen_longitude');
+        
+        if (latInput && lngInput && locationMap && locationMarker) {
+            const lat = parseFloat(latInput.value) || 0;
+            const lng = parseFloat(lngInput.value) || 0;
+            
+            locationMarker.setLatLng([lat, lng]);
+            locationMap.setView([lat, lng], locationMap.getZoom());
+        }
+    }
+});
 
 async function generatePattern() {
     const generator = elements.generatorSelect.value;
@@ -3765,14 +3905,15 @@ async function generatePattern() {
             } else {
                 // Standard single-turtle output
                 const paths = result.getPaths();
-            const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
-            addEntity(paths, {
-                algorithm: generator,
-                algorithmOptions: options,
-                name: generatorName
-            });
-            elements.plotStatus.textContent = `${paths.length} lines generated`;
-            logConsole(`Generated ${generator} pattern (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
+                const generatorName = PatternGenerator.GENERATORS[generator]?.name || generator;
+                
+                addEntity(paths, {
+                    algorithm: generator,
+                    algorithmOptions: options,
+                    name: generatorName
+                });
+                elements.plotStatus.textContent = `${paths.length} lines generated`;
+                logConsole(`Generated ${generatorName} (${PEN_COLORS[state.activeColor].name})`, 'msg-info');
             }
         } catch (err) {
             console.error('[CLIENT] Generate error:', err);
@@ -3807,15 +3948,17 @@ async function generatePattern() {
             elements.plotStatus.textContent = `${totalPaths} lines in ${result.layers.length} layers`;
             logConsole(`Generated ${generator} pattern (${result.layers.length} color layers)`, 'msg-info');
         } else {
-        // Create entity from server result
-        const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
-        const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
-        addEntity(paths, {
-            algorithm: generator,
-            algorithmOptions: options,
-            name: generatorName
-        });
-        elements.plotStatus.textContent = `${result.lines} lines generated`;
+            // Create entity from server result
+            const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+            const generatorName = elements.generatorSelect.selectedOptions[0]?.textContent || generator;
+            
+            addEntity(paths, {
+                algorithm: generator,
+                algorithmOptions: options,
+                name: generatorName
+            });
+            elements.plotStatus.textContent = `${result.lines} lines generated`;
+            logConsole(`Generated ${generatorName}`, 'msg-info');
         }
     } else {
         logConsole(`Generate failed: ${result.error}`, 'msg-error');

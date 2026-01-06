@@ -579,15 +579,15 @@ def convert_image():
         else:
             # Single turtle result
             current_turtle = result
-            current_gcode = gcode_generator.turtle_to_gcode(current_turtle)
-            preview = get_preview_data()
-            
-            return jsonify({
-                'success': True,
-                'preview': preview,
-                'lines': len(current_gcode),
-                'message': f'Converted using {algorithm}'
-            })
+        current_gcode = gcode_generator.turtle_to_gcode(current_turtle)
+        preview = get_preview_data()
+        
+        return jsonify({
+            'success': True,
+            'preview': preview,
+            'lines': len(current_gcode),
+            'message': f'Converted using {algorithm}'
+        })
     except Exception as e:
         import traceback
         traceback.print_exc()
