@@ -5,6 +5,7 @@ Gives Gemini AI creative control over the polargraph to create art.
 
 import os
 import json
+import random
 import requests
 from typing import Dict, Any, List, Callable
 
@@ -65,14 +66,20 @@ TRANSFORMS = {
 def build_system_prompt(keywords: str = '') -> str:
     """Build the system prompt that gives Gemini its creative powers."""
     
+    # Randomize generator order to avoid primacy bias
+    generator_items = list(GENERATORS.items())
+    random.shuffle(generator_items)
     generators_desc = "\n".join([
         f"  {num}: {g['name']} - options: {', '.join(g['options'])}"
-        for num, g in GENERATORS.items()
+        for num, g in generator_items
     ])
     
+    # Randomize color order too
+    color_items = list(PEN_COLORS.items())
+    random.shuffle(color_items)
     colors_desc = "\n".join([
         f"  {num}: {c['name']}"
-        for num, c in PEN_COLORS.items()
+        for num, c in color_items
     ])
     
     inspiration = ""

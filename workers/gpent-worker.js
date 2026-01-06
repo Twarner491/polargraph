@@ -47,12 +47,26 @@ const PEN_COLORS = {
     9: {id: 'yellow', name: 'Yellow'},
 };
 
+// Fisher-Yates shuffle
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 function buildSystemPrompt(keywords) {
-    const generatorsDesc = Object.entries(GENERATORS)
+    // Randomize generator order to avoid primacy bias
+    const generatorEntries = shuffleArray(Object.entries(GENERATORS));
+    const generatorsDesc = generatorEntries
         .map(([num, g]) => `  ${num}: ${g.name} - options: ${g.options.join(', ')}`)
         .join('\n');
     
-    const colorsDesc = Object.entries(PEN_COLORS)
+    // Randomize color order too
+    const colorEntries = shuffleArray(Object.entries(PEN_COLORS));
+    const colorsDesc = colorEntries
         .map(([num, c]) => `  ${num}: ${c.name}`)
         .join('\n');
     
