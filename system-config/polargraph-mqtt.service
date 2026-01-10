@@ -5,9 +5,9 @@ Requires=polargraph.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/polargraph/src
-ExecStart=/home/pi/polargraph/venv/bin/python mqtt_subscriber.py
+User=monalisa
+WorkingDirectory=/home/monalisa/polargraph/src
+ExecStart=/home/monalisa/polargraph/venv/bin/python mqtt_subscriber.py
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

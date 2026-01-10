@@ -9,7 +9,7 @@ import requests
 import paho.mqtt.client as mqtt
 
 # Configuration - Update these for your setup
-MQTT_BROKER = "192.168.1.XXX"  # Your MQTT broker IP (e.g., Home Assistant)
+MQTT_BROKER = "192.168.4.240"  # Home Assistant IP
 MQTT_PORT = 1883
 MQTT_USER = ""  # Leave empty if no auth
 MQTT_PASS = ""
