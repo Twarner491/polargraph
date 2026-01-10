@@ -103,20 +103,24 @@ Add to `configuration.yaml`:
 ```yaml
 http:
   cors_allowed_origins:
-    - https://plotter.onethreenine.net
+    - https://your-domain.com
 ```
 
 *Pi MQTT Setup*
 
-Edit `src/mqtt_subscriber.py` with your MQTT broker IP:
+Create a `.env` file in the polargraph directory with your MQTT broker settings:
 
-```python
-MQTT_BROKER = "192.168.1.XXX"  # Your Home Assistant IP
+```bash
+MQTT_BROKER=192.168.1.XXX
+MQTT_PORT=1883
+MQTT_USER=
+MQTT_PASS=
 ```
 
 Then enable the MQTT service:
 
 ```bash
+pip install paho-mqtt
 sudo cp system-config/polargraph-mqtt.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now polargraph-mqtt.service

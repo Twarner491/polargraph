@@ -11,6 +11,7 @@ ExecStart=/home/monalisa/polargraph/venv/bin/python mqtt_subscriber.py
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/monalisa/polargraph/.env
 
 [Install]
 WantedBy=multi-user.target

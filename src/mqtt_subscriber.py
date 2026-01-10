@@ -4,19 +4,20 @@ MQTT Subscriber for Polargraph - receives commands from Home Assistant
 and forwards them to the local Flask server.
 """
 
+import os
 import json
 import requests
 import paho.mqtt.client as mqtt
 
-# Configuration - Update these for your setup
-MQTT_BROKER = "192.168.4.240"  # Home Assistant IP
-MQTT_PORT = 1883
-MQTT_USER = ""  # Leave empty if no auth
-MQTT_PASS = ""
-MQTT_TOPIC = "home/polargraph/#"
+# Configuration via environment variables
+MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
+MQTT_PORT = int(os.environ.get('MQTT_PORT', '1883'))
+MQTT_USER = os.environ.get('MQTT_USER', '')
+MQTT_PASS = os.environ.get('MQTT_PASS', '')
+MQTT_TOPIC = os.environ.get('MQTT_TOPIC', 'home/polargraph/#')
 
 # Local Flask server
-FLASK_URL = "http://localhost:80"
+FLASK_URL = os.environ.get('FLASK_URL', 'http://localhost:80')
 
 
 def on_connect(client, userdata, flags, rc):
