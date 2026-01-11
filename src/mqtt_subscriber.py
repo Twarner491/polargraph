@@ -69,11 +69,15 @@ def handle_command(data):
         'start': '/api/plot/start',
         'pause': '/api/plot/pause',
         'resume': '/api/plot/resume',
+        'rewind': '/api/plot/rewind',
+        'step': '/api/plot/step',
+        'jog': '/api/jog',
+        'goto': '/api/goto',
+        'gcode': '/api/send_gcode',
     }
     
     if cmd in endpoints:
         try:
-            # Prepare payload based on command
             payload = {}
             if cmd == 'pen_up':
                 payload = {'action': 'up'}
@@ -85,6 +89,14 @@ def handle_command(data):
                 payload = {'enable': False}
             elif cmd == 'connect':
                 payload = {'port': data.get('port', '/dev/ttyUSB0')}
+            elif cmd == 'jog':
+                payload = {'x': data.get('x', 0), 'y': data.get('y', 0)}
+            elif cmd == 'goto':
+                payload = {'x': data.get('x', 0), 'y': data.get('y', 0)}
+            elif cmd == 'gcode':
+                payload = {'command': data.get('gcode', '')}
+            elif cmd == 'start' and 'gcode' in data:
+                payload = {'gcode': data.get('gcode', [])}
             
             response = requests.post(f"{FLASK_URL}{endpoints[cmd]}", json=payload, timeout=10)
             print(f"Command {cmd}: {response.status_code}")

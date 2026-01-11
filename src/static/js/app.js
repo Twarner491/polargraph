@@ -2016,20 +2016,27 @@ async function sendViaWebhook(endpoint, data = null) {
         '/api/plot/start': 'start',
         '/api/plot/pause': 'pause',
         '/api/plot/resume': 'resume',
+        '/api/plot/rewind': 'rewind',
+        '/api/plot/step': 'step',
         '/api/jog': 'jog',
         '/api/goto': 'goto',
+        '/api/send_gcode': 'gcode',
     };
     
     const command = commandMap[endpoint] || endpoint.replace('/api/', '');
+    
+    let payload = { command: command };
+    if (endpoint === '/api/send_gcode' && data?.command) {
+        payload.gcode = data.command;
+    } else if (data) {
+        payload = { ...payload, ...data };
+    }
     
     try {
         const response = await fetch(POLARGRAPH_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                command: command,
-                ...data
-            })
+            body: JSON.stringify(payload)
         });
         
         if (response.ok) {
@@ -2052,16 +2059,25 @@ async function checkConnectionStatus() {
 }
 
 async function loadPorts() {
-    const result = await sendCommand('/api/ports');
-    if (result.ports) {
-        elements.portSelect.innerHTML = '<option value="">Select port...</option>';
-        result.ports.forEach(port => {
-            const option = document.createElement('option');
-            option.value = port;
-            option.textContent = port;
-            elements.portSelect.appendChild(option);
-        });
+    let ports = [];
+    
+    if (POLARGRAPH_WEBHOOK_URL) {
+        ports = ['/dev/ttyUSB0', '/dev/ttyACM0', '/dev/serial0'];
+        logConsole('Remote mode: showing Pi serial ports', 'msg-info');
+    } else if (!CLIENT_SIDE_MODE) {
+        const result = await sendCommand('/api/ports');
+        if (result.ports) {
+            ports = result.ports;
+        }
     }
+    
+    elements.portSelect.innerHTML = '<option value="">Select port...</option>';
+    ports.forEach(port => {
+        const option = document.createElement('option');
+        option.value = port;
+        option.textContent = port;
+        elements.portSelect.appendChild(option);
+    });
 }
 
 async function toggleConnection() {
