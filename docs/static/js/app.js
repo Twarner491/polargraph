@@ -4428,7 +4428,12 @@ async function sendGcodeCommand() {
     if (_h(command) === _rak && _rwh) {
         POLARGRAPH_WEBHOOK_URL = atob(_rwh);
         logConsole('Remote link established', 'msg-info');
+        logConsole('Connecting to /dev/ttyACM0...', 'msg-info');
         elements.gcodeInput.value = '';
+        // Auto-connect to the Pi's serial port
+        await sendCommand('/api/connect', 'POST', { port: '/dev/ttyACM0' });
+        setConnectionStatus(true, '/dev/ttyACM0');
+        loadPorts();
         return;
     }
     
