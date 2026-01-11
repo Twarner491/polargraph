@@ -6,8 +6,8 @@ Wants=avahi-daemon.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/monalisa/polargraph/src
-ExecStart=/home/monalisa/polargraph/venv/bin/python -m gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:80 app:app
+WorkingDirectory=/home/pi/polargraph/src
+ExecStart=/home/pi/polargraph/venv/bin/python -m gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:80 app:app
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

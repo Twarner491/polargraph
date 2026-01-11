@@ -64,9 +64,10 @@ sudo usermod -a -G dialout pi
 
 **Start Flask Server**
 
-Enable the service to auto-start on boot:
+Enable the service to auto-start on boot. If your username is not `pi`, edit the service files first to replace `/home/pi/` with your home directory:
 
 ```bash
+# Edit if needed: nano system-config/polargraph.service
 sudo cp system-config/polargraph.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now polargraph.service
