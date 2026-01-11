@@ -1461,9 +1461,9 @@ function initClientSideMode() {
     // Use default settings
     state.settings = { ...DEFAULT_SETTINGS };
     
-    // Update UI for remote mode
-    elements.statusLabel.textContent = 'Remote';
-    elements.statusDot.className = 'status-dot remote';
+    // Update UI for client-side mode (disconnected until remote link established)
+    elements.statusLabel.textContent = 'Disconnected';
+    elements.statusDot.className = 'status-dot';
     
     // Hide connect button in client-side mode
     const connectBtn = document.getElementById('connectBtn');
