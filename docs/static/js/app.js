@@ -209,6 +209,7 @@ const state = {
     plotting: false,
     paused: false,
     motorsEnabled: true,
+    penDown: false,
     jogDistance: 10,
     currentImagePath: null,
     currentImageElement: null,  // For client-side conversion
@@ -325,8 +326,8 @@ const elements = {
     // Controls
     homeBtn: document.getElementById('homeBtn'),
     motorsBtn: document.getElementById('motorsBtn'),
-    penUpBtn: document.getElementById('penUpBtn'),
-    penDownBtn: document.getElementById('penDownBtn'),
+    penToggleBtn: document.getElementById('penToggleBtn'),
+    penChangeBtn: document.getElementById('penChangeBtn'),
     emergencyStop: document.getElementById('emergencyStop'),
     
     // Plot
@@ -1544,13 +1545,10 @@ function initEventListeners() {
         sendCommand('/api/home', 'POST');
     });
     elements.motorsBtn.addEventListener('click', toggleMotors);
-    elements.penUpBtn.addEventListener('click', () => {
-        logConsole('Pen Up', 'msg-out');
-        sendCommand('/api/pen', 'POST', { action: 'up' });
-    });
-    elements.penDownBtn.addEventListener('click', () => {
-        logConsole('Pen Down', 'msg-out');
-        sendCommand('/api/pen', 'POST', { action: 'down' });
+    elements.penToggleBtn.addEventListener('click', togglePen);
+    elements.penChangeBtn.addEventListener('click', () => {
+        logConsole('Pen Change - moving to top left', 'msg-out');
+        sendCommand('/api/pen_change', 'POST');
     });
     elements.emergencyStop.addEventListener('click', emergencyStop);
     
@@ -2021,6 +2019,7 @@ async function sendViaWebhook(endpoint, data = null) {
         '/api/jog': 'jog',
         '/api/goto': 'goto',
         '/api/send_gcode': 'gcode',
+        '/api/pen_change': 'pen_change',
     };
     
     const command = commandMap[endpoint] || endpoint.replace('/api/', '');
@@ -2105,8 +2104,8 @@ function setConnectionStatus(connected, port = null) {
     elements.statusLabel.textContent = connected ? `Connected` : 'Disconnected';
     elements.connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
     
-    const controls = [elements.homeBtn, elements.motorsBtn, elements.penUpBtn, 
-                      elements.penDownBtn, elements.emergencyStop, elements.playBtn,
+    const controls = [elements.homeBtn, elements.motorsBtn, elements.penToggleBtn, 
+                      elements.penChangeBtn, elements.emergencyStop, elements.playBtn,
                       elements.rewindBtn, elements.stepBtn, elements.pauseBtn];
     controls.forEach(btn => btn.disabled = !connected);
     
@@ -2119,6 +2118,24 @@ async function toggleMotors() {
     logConsole(`Motors ${state.motorsEnabled ? 'Enable' : 'Disable'}`, 'msg-out');
     await sendCommand('/api/motors', 'POST', { enable: state.motorsEnabled });
     elements.motorsBtn.classList.toggle('active', state.motorsEnabled);
+}
+
+async function togglePen() {
+    state.penDown = !state.penDown;
+    const action = state.penDown ? 'down' : 'up';
+    logConsole(`Pen ${action.charAt(0).toUpperCase() + action.slice(1)}`, 'msg-out');
+    await sendCommand('/api/pen', 'POST', { action });
+    
+    // Update button text and icon
+    const btn = elements.penToggleBtn;
+    const svg = btn.querySelector('svg');
+    if (state.penDown) {
+        btn.classList.add('active');
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>Pen Down`;
+    } else {
+        btn.classList.remove('active');
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
+    }
 }
 
 async function emergencyStop() {

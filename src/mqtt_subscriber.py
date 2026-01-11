@@ -74,6 +74,7 @@ def handle_command(data):
         'jog': '/api/jog',
         'goto': '/api/goto',
         'gcode': '/api/send_gcode',
+        'pen_change': '/api/pen_change',
     }
     
     if cmd in endpoints:

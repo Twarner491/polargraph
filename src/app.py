@@ -207,50 +207,50 @@ def connection_status():
 
 @app.route('/api/home', methods=['POST'])
 def home():
-    """Custom homing sequence for polargraph with dual endstops."""
+    """Homing sequence for polargraph - uses firmware's G28 which handles both motors."""
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
-    # Enable motors
-    serial_handler.send_command('M17')
+    # Pen up first for safety
+    serial_handler.send_command('G0 Z90 F1000')
     time.sleep(0.3)
     
-    # Home left motor first (move left until endstop)
-    serial_handler.send_command('G28 X')
-    time.sleep(0.5)
+    # Enable motors at full power for homing
+    serial_handler.send_command('M17')
+    time.sleep(0.2)
     
-    # Home right motor (move right until endstop)
-    serial_handler.send_command('G28 Y')
-    time.sleep(0.5)
-    
-    # Move to upper center position
-    serial_handler.send_command('G90')  # Absolute mode
-    serial_handler.send_command('G0 X0 Y0 F500')  # Center position
+    # G28 triggers robot_findHome() in firmware which:
+    # 1. Homes left motor (reels in until X min endstop)
+    # 2. Homes right motor (reels in until Y min endstop)
+    # 3. Calculates position from calibration
+    # 4. Moves to home position (top center of work area)
+    serial_handler.send_command('G28')
     
     return jsonify({'success': True})
 
 
 @app.route('/api/jog', methods=['POST'])
 def jog():
-    """Jog the plotter by a relative amount (matches test_hardware.py pattern)."""
+    """Jog the plotter by a relative amount in Cartesian coordinates.
+    The firmware handles polargraph IK internally.
+    """
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
     data = request.json
     x = data.get('x', 0)
     y = data.get('y', 0)
-    feedrate = data.get('feedrate', 50)  # Very slow for smooth jog
+    feedrate = data.get('feedrate', 100)
     
-    # Enable motors and set smooth acceleration
+    # Enable motors
     serial_handler.send_command('M17')
-    time.sleep(0.2)
-    serial_handler.send_command('M201 X50 Y50')  # Low acceleration
     time.sleep(0.1)
-    serial_handler.send_command('G91')  # Relative mode
-    time.sleep(0.1)
+    
+    # Relative move - firmware IK converts to belt lengths
+    serial_handler.send_command('G91')
     serial_handler.send_command(f'G0 X{x} Y{y} F{feedrate}')
-    time.sleep(1.5)  # Wait for move to complete
-    serial_handler.send_command('G90')  # Back to absolute
+    serial_handler.send_command('G90')
+    
     return jsonify({'success': True})
 
 
@@ -293,6 +293,29 @@ def pen_control():
     time.sleep(0.5)
     
     return jsonify({'success': True, 'action': action, 'angle': target_angle})
+
+
+@app.route('/api/pen_change', methods=['POST'])
+def pen_change():
+    """Move gondola to top-left corner for pen/paper change."""
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    
+    # Pen up first
+    serial_handler.send_command('G0 Z90 F1000')
+    time.sleep(0.3)
+    
+    # Enable motors
+    serial_handler.send_command('M17')
+    time.sleep(0.1)
+    
+    # Move to top-left corner of work area
+    # Using machine settings: left edge of work area, near top
+    # Work area is centered, so left edge is negative X
+    serial_handler.send_command('G90')  # Absolute mode
+    serial_handler.send_command('G0 X-400 Y500 F500')  # Top-left corner
+    
+    return jsonify({'success': True})
 
 
 @app.route('/api/motors', methods=['POST'])
