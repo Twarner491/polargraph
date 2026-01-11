@@ -2059,9 +2059,11 @@ async function checkConnectionStatus() {
 
 async function loadPorts() {
     let ports = [];
+    let defaultPort = null;
     
     if (POLARGRAPH_WEBHOOK_URL) {
-        ports = ['/dev/ttyUSB0', '/dev/ttyACM0', '/dev/serial0'];
+        ports = ['/dev/ttyACM0', '/dev/ttyUSB0', '/dev/serial0'];
+        defaultPort = '/dev/ttyACM0';
         logConsole('Remote mode: showing Pi serial ports', 'msg-info');
     } else if (!CLIENT_SIDE_MODE) {
         const result = await sendCommand('/api/ports');
@@ -2075,6 +2077,9 @@ async function loadPorts() {
         const option = document.createElement('option');
         option.value = port;
         option.textContent = port;
+        if (port === defaultPort) {
+            option.selected = true;
+        }
         elements.portSelect.appendChild(option);
     });
 }

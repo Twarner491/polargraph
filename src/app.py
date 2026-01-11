@@ -207,23 +207,23 @@ def connection_status():
 
 @app.route('/api/home', methods=['POST'])
 def home():
-    """Homing sequence for polargraph - uses firmware's G28 which handles both motors."""
+    """Homing sequence for polargraph with smooth movement."""
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
     # Pen up first for safety
-    serial_handler.send_command('G0 Z90 F1000')
+    serial_handler.send_command('M280 P0 S90')
     time.sleep(0.3)
     
-    # Enable motors at full power for homing
+    # Enable motors
     serial_handler.send_command('M17')
     time.sleep(0.2)
     
-    # G28 triggers robot_findHome() in firmware which:
-    # 1. Homes left motor (reels in until X min endstop)
-    # 2. Homes right motor (reels in until Y min endstop)
-    # 3. Calculates position from calibration
-    # 4. Moves to home position (top center of work area)
+    # Use firmware's G28 which implements polargraph homing:
+    # - Reels in both belts until endstops are hit
+    # - Backs off and slowly re-approaches for precision
+    # - Calculates position from calibration values
+    # - Moves to home position (center top of work area)
     serial_handler.send_command('G28')
     
     return jsonify({'success': True})
@@ -271,26 +271,21 @@ def goto():
 
 @app.route('/api/pen', methods=['POST'])
 def pen_control():
-    """Control pen up/down using G0 Z (matches test_hardware.py exactly)."""
+    """Control pen up/down using M280 direct servo command."""
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
     data = request.json
     action = data.get('action', 'up')
     
-    if action == 'up':
-        target_angle = 90
-        # Tell firmware current Z is different so it will move
-        current_angle = 40
-    else:
-        target_angle = 40
-        current_angle = 90
+    # Get angles from settings or use defaults
+    up_angle = plotter_settings.get('pen_up_angle', 90)
+    down_angle = plotter_settings.get('pen_down_angle', 40)
     
-    # Reset Z position to force movement (firmware won't move if it thinks it's already there)
-    serial_handler.send_command(f'G92 Z{current_angle}')
-    time.sleep(0.1)
-    serial_handler.send_command(f'G0 Z{target_angle} F1000')
-    time.sleep(0.5)
+    target_angle = up_angle if action == 'up' else down_angle
+    
+    # M280 P0 S<angle> directly controls servo 0, bypasses planner
+    serial_handler.send_command(f'M280 P0 S{target_angle}')
     
     return jsonify({'success': True, 'action': action, 'angle': target_angle})
 
@@ -301,19 +296,24 @@ def pen_change():
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
-    # Pen up first
-    serial_handler.send_command('G0 Z90 F1000')
-    time.sleep(0.3)
+    # Pen up first using direct servo control
+    serial_handler.send_command('M280 P0 S90')
+    time.sleep(0.5)
     
     # Enable motors
     serial_handler.send_command('M17')
-    time.sleep(0.1)
+    time.sleep(0.2)
     
-    # Move to top-left corner of work area
-    # Using machine settings: left edge of work area, near top
-    # Work area is centered, so left edge is negative X
+    # Get work area from settings
+    left = plotter_settings.get('work_area_left', -420)
+    top = plotter_settings.get('work_area_top', 590)
+    
+    # Move to top-left corner of work area (add 50mm margin from edges)
+    target_x = left + 50
+    target_y = top - 50
+    
     serial_handler.send_command('G90')  # Absolute mode
-    serial_handler.send_command('G0 X-400 Y500 F500')  # Top-left corner
+    serial_handler.send_command(f'G0 X{target_x} Y{target_y} F300')
     
     return jsonify({'success': True})
 
