@@ -732,8 +732,8 @@ function addEntity(paths, options = {}) {
     state.selectedEntityIds.add(entity.id);
     updateEntityList();
     updateExportInfo();
-    updateEtaDisplay();
     drawCanvas();
+    try { updateEtaDisplay(); } catch(e) { console.warn('ETA calc error:', e); }
     return entity;
 }
 
@@ -757,8 +757,8 @@ function deleteSelectedEntities() {
     state.selectedEntityIds.clear();
     updateEntityList();
     updateExportInfo();
-    updateEtaDisplay();
     drawCanvas();
+    try { updateEtaDisplay(); } catch(e) { console.warn('ETA calc error:', e); }
     logConsole(`Deleted ${count} element${count > 1 ? 's' : ''}`, 'msg-info');
 }
 
@@ -2253,17 +2253,17 @@ function calculatePlotEta() {
     let bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
     
     state.entities.forEach(entity => {
-        const transform = getEntityTransform(entity);
+        const transform = getEtaTransform(entity);
         
         entity.paths.forEach(path => {
             if (path.length < 2) return;
             
             // Transform first point
-            const first = transformPoint(path[0].x, path[0].y, transform);
+            const first = transformPointForEta(path[0].x, path[0].y, transform);
             
             // Update bounds
             path.forEach(pt => {
-                const tp = transformPoint(pt.x, pt.y, transform);
+                const tp = transformPointForEta(pt.x, pt.y, transform);
                 bounds.minX = Math.min(bounds.minX, tp.x);
                 bounds.maxX = Math.max(bounds.maxX, tp.x);
                 bounds.minY = Math.min(bounds.minY, tp.y);
@@ -2284,8 +2284,8 @@ function calculatePlotEta() {
             
             // Draw distance along path
             for (let i = 1; i < path.length; i++) {
-                const p1 = transformPoint(path[i-1].x, path[i-1].y, transform);
-                const p2 = transformPoint(path[i].x, path[i].y, transform);
+                const p1 = transformPointForEta(path[i-1].x, path[i-1].y, transform);
+                const p2 = transformPointForEta(path[i].x, path[i].y, transform);
                 totalDrawDist += Math.sqrt(
                     Math.pow(p2.x - p1.x, 2) + 
                     Math.pow(p2.y - p1.y, 2)
@@ -2293,7 +2293,7 @@ function calculatePlotEta() {
             }
             
             // Update last position
-            const last = transformPoint(path[path.length-1].x, path[path.length-1].y, transform);
+            const last = transformPointForEta(path[path.length-1].x, path[path.length-1].y, transform);
             lastPos = { x: last.x, y: last.y };
         });
     });
@@ -2321,7 +2321,7 @@ function calculatePlotEta() {
     };
 }
 
-function getEntityTransform(entity) {
+function getEtaTransform(entity) {
     const rad = (entity.rotation || 0) * Math.PI / 180;
     return {
         offsetX: entity.offsetX || 0,
@@ -2332,7 +2332,7 @@ function getEntityTransform(entity) {
     };
 }
 
-function transformPoint(x, y, t) {
+function transformPointForEta(x, y, t) {
     const sx = x * t.scale;
     const sy = y * t.scale;
     return {
