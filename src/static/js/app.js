@@ -208,6 +208,8 @@ const state = {
     connected: false,
     plotting: false,
     paused: false,
+    plotStartTime: null,
+    totalPlotTime: 0,
     motorsEnabled: true,
     penDown: false,
     jogDistance: 10,
@@ -338,6 +340,8 @@ const elements = {
     playBtn: document.getElementById('playBtn'),
     pauseBtn: document.getElementById('pauseBtn'),
     stepBtn: document.getElementById('stepBtn'),
+    dryRunBtn: document.getElementById('dryRunBtn'),
+    plotEta: document.getElementById('plotEta'),
     
     // Console
     consoleOutput: document.getElementById('consoleOutput'),
@@ -728,6 +732,7 @@ function addEntity(paths, options = {}) {
     state.selectedEntityIds.add(entity.id);
     updateEntityList();
     updateExportInfo();
+    updateEtaDisplay();
     drawCanvas();
     return entity;
 }
@@ -752,6 +757,7 @@ function deleteSelectedEntities() {
     state.selectedEntityIds.clear();
     updateEntityList();
     updateExportInfo();
+    updateEtaDisplay();
     drawCanvas();
     logConsole(`Deleted ${count} element${count > 1 ? 's' : ''}`, 'msg-info');
 }
@@ -1576,6 +1582,7 @@ function initEventListeners() {
         logConsole('Step', 'msg-out');
         sendCommand('/api/plot/step', 'POST');
     });
+    elements.dryRunBtn.addEventListener('click', dryRun);
     
     // Zoom controls
     elements.zoomIn.addEventListener('click', () => setZoom(state.zoom * 1.25));
@@ -2111,7 +2118,7 @@ function setConnectionStatus(connected, port = null) {
     
     const controls = [elements.homeBtn, elements.motorsBtn, elements.penToggleBtn, 
                       elements.penChangeBtn, elements.emergencyStop, elements.playBtn,
-                      elements.rewindBtn, elements.stepBtn, elements.pauseBtn];
+                      elements.rewindBtn, elements.stepBtn, elements.pauseBtn, elements.dryRunBtn];
     controls.forEach(btn => btn.disabled = !connected);
     
     document.querySelectorAll('.jog-btn').forEach(btn => btn.disabled = !connected);
@@ -2187,6 +2194,11 @@ async function startPlot() {
         await sendCommand('/api/plot/resume', 'POST');
     } else {
         logConsole('Start Plot', 'msg-out');
+        // Calculate and store ETA for progress tracking
+        const eta = calculatePlotEta();
+        state.totalPlotTime = eta.totalTime;
+        state.plotStartTime = Date.now();
+        
         // In client-side mode, send the G-code with the start command
         if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
             await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode });
@@ -2218,6 +2230,182 @@ function updateProgress(current, total, percent) {
     elements.progressFill.style.width = `${percent}%`;
     elements.progressText.textContent = `${percent}%`;
     elements.plotStatus.textContent = `Line ${current} of ${total}`;
+    
+    // Update ETA during plotting
+    if (state.plotStartTime && state.totalPlotTime) {
+        const elapsed = (Date.now() - state.plotStartTime) / 1000;
+        const remaining = Math.max(0, state.totalPlotTime - elapsed);
+        elements.plotEta.innerHTML = formatEtaDisplay(elapsed, remaining, true);
+    }
+}
+
+// ============================================================================
+// ETA Calculation
+// ============================================================================
+
+function calculatePlotEta() {
+    // Get all paths from entities to calculate total distance and pen operations
+    let totalDrawDist = 0;
+    let totalTravelDist = 0;
+    let penOps = 0;
+    let lastPos = { x: 0, y: 0 };
+    let penDown = false;
+    let bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    
+    state.entities.forEach(entity => {
+        const transform = getEntityTransform(entity);
+        
+        entity.paths.forEach(path => {
+            if (path.length < 2) return;
+            
+            // Transform first point
+            const first = transformPoint(path[0].x, path[0].y, transform);
+            
+            // Update bounds
+            path.forEach(pt => {
+                const tp = transformPoint(pt.x, pt.y, transform);
+                bounds.minX = Math.min(bounds.minX, tp.x);
+                bounds.maxX = Math.max(bounds.maxX, tp.x);
+                bounds.minY = Math.min(bounds.minY, tp.y);
+                bounds.maxY = Math.max(bounds.maxY, tp.y);
+            });
+            
+            // Travel distance to start of path
+            const travelDist = Math.sqrt(
+                Math.pow(first.x - lastPos.x, 2) + 
+                Math.pow(first.y - lastPos.y, 2)
+            );
+            totalTravelDist += travelDist;
+            
+            // Pen operations (up if was down, then down to draw)
+            if (penDown) penOps++; // pen up
+            penOps++; // pen down
+            penDown = true;
+            
+            // Draw distance along path
+            for (let i = 1; i < path.length; i++) {
+                const p1 = transformPoint(path[i-1].x, path[i-1].y, transform);
+                const p2 = transformPoint(path[i].x, path[i].y, transform);
+                totalDrawDist += Math.sqrt(
+                    Math.pow(p2.x - p1.x, 2) + 
+                    Math.pow(p2.y - p1.y, 2)
+                );
+            }
+            
+            // Update last position
+            const last = transformPoint(path[path.length-1].x, path[path.length-1].y, transform);
+            lastPos = { x: last.x, y: last.y };
+        });
+    });
+    
+    // Get settings
+    const travelSpeed = parseFloat(document.getElementById('feedTravel').value) || 1000; // mm/min
+    const drawSpeed = parseFloat(document.getElementById('feedDraw').value) || 500; // mm/min
+    const penDwell = parseFloat(document.getElementById('penDwell').value) || 150; // ms
+    
+    // Calculate times in seconds
+    const travelTime = (totalTravelDist / travelSpeed) * 60;
+    const drawTime = (totalDrawDist / drawSpeed) * 60;
+    const penTime = (penOps * penDwell) / 1000;
+    const totalTime = travelTime + drawTime + penTime;
+    
+    return {
+        totalTime,
+        travelTime,
+        drawTime,
+        penTime,
+        penOps,
+        totalDrawDist,
+        totalTravelDist,
+        bounds
+    };
+}
+
+function getEntityTransform(entity) {
+    const rad = (entity.rotation || 0) * Math.PI / 180;
+    return {
+        offsetX: entity.offsetX || 0,
+        offsetY: entity.offsetY || 0,
+        scale: entity.scale || 1,
+        cos: Math.cos(rad),
+        sin: Math.sin(rad)
+    };
+}
+
+function transformPoint(x, y, t) {
+    const sx = x * t.scale;
+    const sy = y * t.scale;
+    return {
+        x: sx * t.cos - sy * t.sin + t.offsetX,
+        y: sx * t.sin + sy * t.cos + t.offsetY
+    };
+}
+
+function formatTime(seconds) {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.round(seconds % 60);
+        return `${m}m ${s}s`;
+    }
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+}
+
+function formatEtaDisplay(elapsed, remaining, isPlotting) {
+    if (isPlotting) {
+        return `<span class="eta-elapsed">⏱ ${formatTime(elapsed)}</span> <span class="eta-remaining">· ${formatTime(remaining)} left</span>`;
+    }
+    return `<span class="eta-estimate">Est: ${formatTime(elapsed)}</span>`;
+}
+
+function updateEtaDisplay() {
+    if (state.entities.length === 0) {
+        elements.plotEta.innerHTML = '';
+        return;
+    }
+    
+    const eta = calculatePlotEta();
+    state.totalPlotTime = eta.totalTime;
+    elements.plotEta.innerHTML = formatEtaDisplay(eta.totalTime, 0, false);
+}
+
+async function dryRun() {
+    if (!state.connected || state.entities.length === 0) {
+        logConsole('Connect and load drawing first', 'msg-warn');
+        return;
+    }
+    
+    const eta = calculatePlotEta();
+    const bounds = eta.bounds;
+    
+    if (bounds.minX === Infinity) {
+        logConsole('No paths to trace', 'msg-warn');
+        return;
+    }
+    
+    logConsole(`Dry run: Tracing bounding box (${Math.round(bounds.maxX - bounds.minX)}mm x ${Math.round(bounds.maxY - bounds.minY)}mm)`, 'msg-out');
+    
+    // Generate bounding box trace G-code
+    const gcode = [
+        'M280 P0 S90',  // Pen up (direct servo command)
+        'G90',          // Absolute mode
+        `G0 X${bounds.minX.toFixed(2)} Y${bounds.maxY.toFixed(2)} F1000`,  // Top-left
+        `G0 X${bounds.maxX.toFixed(2)} Y${bounds.maxY.toFixed(2)} F1000`,  // Top-right
+        `G0 X${bounds.maxX.toFixed(2)} Y${bounds.minY.toFixed(2)} F1000`,  // Bottom-right
+        `G0 X${bounds.minX.toFixed(2)} Y${bounds.minY.toFixed(2)} F1000`,  // Bottom-left
+        `G0 X${bounds.minX.toFixed(2)} Y${bounds.maxY.toFixed(2)} F1000`,  // Back to top-left
+    ];
+    
+    // Send via webhook or direct API
+    for (const cmd of gcode) {
+        await sendCommand('/api/send', 'POST', { gcode: cmd });
+        // Small delay between commands
+        await new Promise(r => setTimeout(r, 100));
+    }
+    
+    logConsole('Dry run complete', 'msg-in');
 }
 
 // ============================================================================
@@ -4395,6 +4583,7 @@ async function loadSettings() {
         document.getElementById('penDownAngle').value = result.pen_angle_down || 40;
         document.getElementById('feedTravel').value = result.feed_rate_travel || 1000;
         document.getElementById('feedDraw').value = result.feed_rate_draw || 500;
+        document.getElementById('penDwell').value = result.pen_dwell || 150;
     }
 }
 
@@ -4410,7 +4599,8 @@ async function saveSettings() {
         pen_angle_up: parseFloat(document.getElementById('penUpAngle').value),
         pen_angle_down: parseFloat(document.getElementById('penDownAngle').value),
         feed_rate_travel: parseFloat(document.getElementById('feedTravel').value),
-        feed_rate_draw: parseFloat(document.getElementById('feedDraw').value)
+        feed_rate_draw: parseFloat(document.getElementById('feedDraw').value),
+        pen_dwell: parseFloat(document.getElementById('penDwell').value)
     };
     
     state.penKerf = settings.pen_kerf;

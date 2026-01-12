@@ -979,6 +979,27 @@ html, body {
     color: var(--text-light);
 }
 
+.plot-eta {
+    text-align: center;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-mid);
+    margin-top: 4px;
+    min-height: 14px;
+}
+
+.eta-estimate {
+    color: var(--text-light);
+}
+
+.eta-elapsed {
+    color: var(--accent);
+}
+
+.eta-remaining {
+    color: var(--text-mid);
+}
+
 /* Console - white bg card style matching other panels */
 #panel-console {
     background: rgba(255, 255, 255, 0.95);
