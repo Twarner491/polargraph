@@ -169,7 +169,8 @@ class ImageConverter:
                         {'value': 'dither', 'label': 'Floyd-Steinberg'},
                         {'value': 'crosshatch', 'label': 'Crosshatch'},
                         {'value': 'horizontal', 'label': 'Horizontal Lines'},
-                        {'value': 'dots', 'label': 'Dot Pattern'}
+                        {'value': 'dots', 'label': 'Dot Pattern'},
+                        {'value': 'lenticular', 'label': 'Lenticular'}
                     ]
                 },
                 'density': {'type': 'float', 'default': 50, 'min': 10, 'max': 100, 'label': 'Line Density (%)'},
@@ -1394,6 +1395,8 @@ class ImageConverter:
             return self._halftone_horizontal(channel_data, channels, pens, w, h, offset_x, offset_y, density)
         elif method == 'dots':
             return self._halftone_dots(channel_data, channels, pens, w, h, offset_x, offset_y, density)
+        elif method == 'lenticular':
+            return self._halftone_lenticular(channel_data, channels, pens, angles, w, h, offset_x, offset_y, density)
         else:
             return self._halftone_dither(channel_data, channels, pens, w, h, offset_x, offset_y, density)
     
@@ -1579,6 +1582,119 @@ class ImageConverter:
                 })
         
         return {'layers': layers}
+    
+    def _halftone_lenticular(self, channel_data: Dict, channels: List, pens: Dict, angles: Dict,
+                             w: int, h: int, offset_x: float, offset_y: float, density: float) -> Dict:
+        """Lenticular pattern - parallel lines with varying thickness based on intensity."""
+        base_spacing = max(3, int(100 / density * 4))
+        max_thickness = base_spacing * 0.8  # Maximum line thickness
+        
+        layers = []
+        for channel in channels:
+            data = channel_data[channel]
+            if data is None:
+                continue
+            
+            max_val = np.max(data)
+            if max_val < 0.001:
+                continue
+            
+            turtle = Turtle()
+            angle = angles.get(channel, 45)
+            
+            self._draw_lenticular_lines(turtle, data, w, h, offset_x, offset_y, 
+                                        base_spacing, max_thickness, angle)
+            
+            if turtle.get_paths():
+                layers.append({
+                    'name': channel.capitalize(),
+                    'color': pens[channel],
+                    'turtle': turtle
+                })
+        
+        return {'layers': layers}
+    
+    def _draw_lenticular_lines(self, turtle: Turtle, intensity: np.ndarray,
+                               w: int, h: int, offset_x: float, offset_y: float,
+                               spacing: int, max_thickness: float, angle: float):
+        """Draw lenticular lines - thickness varies with intensity."""
+        rad = math.radians(angle)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        
+        max_dist = int(math.sqrt(w**2 + h**2)) + spacing
+        
+        # For each line position perpendicular to the angle
+        for d in range(-max_dist, max_dist, spacing):
+            # Sample points along this line to build thickness-varying strokes
+            points = []
+            
+            for t in range(-max_dist, max_dist, 2):
+                px = int(w/2 + d * cos_a + t * sin_a)
+                py = int(h/2 + d * sin_a - t * cos_a)
+                
+                if 0 <= px < w and 0 <= py < h:
+                    ink = intensity[py, px]
+                    if ink > 0.02:  # Skip very light areas
+                        points.append((px, py, ink))
+            
+            if not points:
+                continue
+            
+            # Draw the main center line as continuous segments
+            in_segment = False
+            seg_start = None
+            
+            for i, (px, py, ink) in enumerate(points):
+                if ink > 0.05:  # Threshold for drawing
+                    if not in_segment:
+                        in_segment = True
+                        seg_start = (px, py)
+                else:
+                    if in_segment and seg_start:
+                        # End segment
+                        turtle.jump_to(seg_start[0] + offset_x, seg_start[1] + offset_y)
+                        turtle.move_to(px + offset_x, py + offset_y)
+                    in_segment = False
+                    seg_start = None
+            
+            # Close final segment
+            if in_segment and seg_start and points:
+                px, py, _ = points[-1]
+                turtle.jump_to(seg_start[0] + offset_x, seg_start[1] + offset_y)
+                turtle.move_to(px + offset_x, py + offset_y)
+            
+            # Draw parallel offset lines for thickness (darker = more lines)
+            for offset_mult in [0.3, 0.6]:
+                offset_dist = max_thickness * offset_mult
+                
+                for sign in [-1, 1]:
+                    in_segment = False
+                    seg_start = None
+                    
+                    for px, py, ink in points:
+                        # Only draw offset lines where intensity justifies it
+                        if ink > offset_mult:
+                            ox = px + sign * offset_dist * cos_a
+                            oy = py + sign * offset_dist * sin_a
+                            
+                            if not in_segment:
+                                in_segment = True
+                                seg_start = (ox, oy)
+                        else:
+                            if in_segment and seg_start:
+                                turtle.jump_to(seg_start[0] + offset_x, seg_start[1] + offset_y)
+                                turtle.move_to(ox + offset_x, oy + offset_y)
+                            in_segment = False
+                            seg_start = None
+                    
+                    # Close final segment
+                    if in_segment and seg_start and points:
+                        px, py, ink = points[-1]
+                        ox = px + sign * offset_dist * cos_a
+                        oy = py + sign * offset_dist * sin_a
+                        turtle.jump_to(seg_start[0] + offset_x, seg_start[1] + offset_y)
+                        turtle.move_to(ox + offset_x, oy + offset_y)
     
     def _draw_halftone_crosshatch_lines(self, turtle: Turtle, intensity: np.ndarray,
                                          w: int, h: int, offset_x: float, offset_y: float,

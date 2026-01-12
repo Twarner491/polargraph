@@ -154,7 +154,8 @@ class ImageConverter {
                         { value: 'dither', label: 'Floyd-Steinberg' },
                         { value: 'crosshatch', label: 'Crosshatch' },
                         { value: 'horizontal', label: 'Horizontal Lines' },
-                        { value: 'dots', label: 'Dot Pattern' }
+                        { value: 'dots', label: 'Dot Pattern' },
+                        { value: 'lenticular', label: 'Lenticular' }
                     ]
                 },
                 density: { type: 'float', default: 50, min: 10, max: 100, label: 'Line Density (%)' },
@@ -1620,6 +1621,8 @@ class ImageConverter {
             return this._halftoneHorizontal(channelData, channels, pens, w, h, offsetX, offsetY, density);
         } else if (method === 'dots') {
             return this._halftoneDots(channelData, channels, pens, w, h, offsetX, offsetY, density);
+        } else if (method === 'lenticular') {
+            return this._halftoneLenticular(channelData, channels, pens, angles, w, h, offsetX, offsetY, density);
         } else {
             return this._halftoneDither(channelData, channels, pens, w, h, offsetX, offsetY, density);
         }
@@ -1834,6 +1837,132 @@ class ImageConverter {
         }
         
         return { multiLayer: true, layers };
+    }
+    
+    _halftoneLenticular(channelData, channels, pens, angles, w, h, offsetX, offsetY, density) {
+        const baseSpacing = Math.max(3, Math.floor(100 / density * 4));
+        const maxThickness = baseSpacing * 0.8;
+        const layers = [];
+        
+        for (const channel of channels) {
+            const data = channelData[channel];
+            if (!data) continue;
+            
+            let maxVal = 0;
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > maxVal) maxVal = data[i];
+            }
+            if (maxVal < 0.001) continue;
+            
+            const turtle = new Turtle();
+            const angle = angles[channel] || 45;
+            
+            this._drawLenticularLines(turtle, data, w, h, offsetX, offsetY, baseSpacing, maxThickness, angle);
+            
+            if (turtle.getPaths().length > 0) {
+                layers.push({
+                    name: channel.charAt(0).toUpperCase() + channel.slice(1),
+                    color: pens[channel],
+                    turtle: turtle
+                });
+            }
+        }
+        
+        return { multiLayer: true, layers };
+    }
+    
+    _drawLenticularLines(turtle, intensity, w, h, offsetX, offsetY, spacing, maxThickness, angle) {
+        const rad = angle * Math.PI / 180;
+        const cosA = Math.cos(rad);
+        const sinA = Math.sin(rad);
+        const maxDist = Math.floor(Math.sqrt(w * w + h * h)) + spacing;
+        
+        // For each line position perpendicular to the angle
+        for (let d = -maxDist; d < maxDist; d += spacing) {
+            // Sample points along this line
+            const points = [];
+            
+            for (let t = -maxDist; t < maxDist; t += 2) {
+                const px = Math.floor(w / 2 + d * cosA + t * sinA);
+                const py = Math.floor(h / 2 + d * sinA - t * cosA);
+                
+                if (px >= 0 && px < w && py >= 0 && py < h) {
+                    const ink = intensity[py * w + px];
+                    if (ink > 0.02) {
+                        points.push({ x: px, y: py, ink: ink });
+                    }
+                }
+            }
+            
+            if (points.length === 0) continue;
+            
+            // Draw main center line as continuous segments
+            let inSegment = false;
+            let segStart = null;
+            
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                if (p.ink > 0.05) {
+                    if (!inSegment) {
+                        inSegment = true;
+                        segStart = p;
+                    }
+                } else {
+                    if (inSegment && segStart) {
+                        turtle.jumpTo(segStart.x + offsetX, segStart.y + offsetY);
+                        turtle.moveTo(p.x + offsetX, p.y + offsetY);
+                    }
+                    inSegment = false;
+                    segStart = null;
+                }
+            }
+            
+            // Close final segment
+            if (inSegment && segStart && points.length > 0) {
+                const last = points[points.length - 1];
+                turtle.jumpTo(segStart.x + offsetX, segStart.y + offsetY);
+                turtle.moveTo(last.x + offsetX, last.y + offsetY);
+            }
+            
+            // Draw parallel offset lines for thickness
+            const offsets = [0.3, 0.6];
+            for (const offsetMult of offsets) {
+                const offsetDist = maxThickness * offsetMult;
+                
+                for (const sign of [-1, 1]) {
+                    inSegment = false;
+                    segStart = null;
+                    let lastOffset = null;
+                    
+                    for (const p of points) {
+                        if (p.ink > offsetMult) {
+                            const ox = p.x + sign * offsetDist * cosA;
+                            const oy = p.y + sign * offsetDist * sinA;
+                            
+                            if (!inSegment) {
+                                inSegment = true;
+                                segStart = { x: ox, y: oy };
+                            }
+                            lastOffset = { x: ox, y: oy };
+                        } else {
+                            if (inSegment && segStart && lastOffset) {
+                                turtle.jumpTo(segStart.x + offsetX, segStart.y + offsetY);
+                                turtle.moveTo(lastOffset.x + offsetX, lastOffset.y + offsetY);
+                            }
+                            inSegment = false;
+                            segStart = null;
+                            lastOffset = null;
+                        }
+                    }
+                    
+                    // Close final segment
+                    if (inSegment && segStart && lastOffset) {
+                        turtle.jumpTo(segStart.x + offsetX, segStart.y + offsetY);
+                        turtle.moveTo(lastOffset.x + offsetX, lastOffset.y + offsetY);
+                    }
+                }
+            }
+        }
     }
     
     _drawHalftoneCrosshatchLines(turtle, intensity, w, h, offsetX, offsetY, baseSpacing, angle) {
