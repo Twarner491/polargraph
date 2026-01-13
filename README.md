@@ -12,9 +12,35 @@ All project CAD may be found in the [hardware](https://github.com/Twarner491/pol
 
 ### BOM
 
-| Qty | Description | Price | Link |
-|-----|-------------|-------|------|
-| 1 | thingy| $XXX | [Amazon](link) |
+| Qty | Description | Price | Link | Notes |
+|-----|-------------|-------|------|-------|
+| 1 | Raspberry Pi 5 | $89.94 | https://a.co/d/dyTlgbf | 8GB |
+| 1 | Raspberry Pi 5 Active Cooler | $9.90 | https://a.co/d/6Sutyoc | |
+| 1 | Micro SD Card | $16.68 | https://a.co/d/08aiL8c | ≥32GB |
+| 1 | RAMPS 1.4 Shield | $9.39 | https://a.co/d/3rHvSAe | |
+| 2 | A4988 Stepper Drivers | $9.98 | https://a.co/d/6jOYF00 | |
+| 2 | Nema 17 Pancake Stepper | $21.00 | https://a.co/d/hQhMUgQ | 42mm x 23mm |
+| 1 | MG90S Micro Servo | $9.99 | https://a.co/d/3pr14TO | 9G |
+| 2 | Stepper Motor Cables | $10.99 | https://a.co/d/flOQFlG | 2M length |
+| 2 | GT2 Timing Belt | $19.98 | https://a.co/d/0sSRB86 | 6mm width, 5M length |
+| 2 | GT2 Timing Belt Pulley | $6.99 | https://a.co/d/f0aVCd0 | 16 Teeth, 5mm bore |
+| 2 | 6806-2RS Ball Bearings | $30.00 | https://a.co/d/bBzQpT1 | 30mm x 42mm x 7mm |
+| 1 | 12V Power Supply | $35.00 | https://a.co/d/4VRNVeE | |
+| 1 | DC/DC Buck Boost | $9.99 | https://a.co/d/4VjRFCV | |
+| 1 | C14 AC Inlet | $9.04 | https://a.co/d/cOKApD8 | |
+| 1 | AC Power Cord | $9.39 | https://a.co/d/cSoMPGb | Down angle |
+| - | 14 Gauge Wire | $13.99 | https://a.co/d/foroDOo | A couple feet |
+| 2 | Limit Switch | $5.99 | https://a.co/d/g3yMx06 | |
+| 3 | Tungsten Weights | $89.97 | https://a.co/d/cDbMPfC | |
+| 1 | 1/4" Maple Plywood | $37.71 | https://www.lowes.com/pd/Top-Choice-SkyPly-1-4-in-HPVA-Maple-Plywood-Application-as-4-x-8/1000083311 | 4'x8' sheet |
+| 4 | 1"x3" Spruce Pine Boards | $27.92 | https://www.lowes.com/pd/1-in-x-3-in-x-8-ft-Spruce-Pine-Fir-Furring-Strip/5014776481 | 8' length |
+| 1 | Wood PLA | $25.99 | https://a.co/d/3KssEbi | 1.75mm, 1 spool |
+| 1 | A0 Paper Roll | $29.86 | https://a.co/d/975QRh0 | 36" x 1200" |
+| 1 | SAKURA Pigma Micron 05 Pens | $20.97 | https://a.co/d/biEOxVS | Multicolor pack |
+| - | M2 and M3 Hardware | - | - | Misc nuts and bolts |
+| - | Jumper Wires | - | - | Misc |
+
+*Total: ~$554.85*
 
 ---
 
