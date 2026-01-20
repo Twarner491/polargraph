@@ -81,24 +81,73 @@ class SerialHandler:
         """Check if connected."""
         return self.serial is not None and self.serial.is_open
     
-    def send_command(self, command: str):
-        """Send a G-code command (simple, no line numbers - matches test_hardware.py)."""
+    def send_command(self, command: str, wait_for_ok: bool = False, timeout: float = 5.0):
+        """Send a G-code command and optionally wait for ok response.
+        
+        Args:
+            command: G-code command to send
+            wait_for_ok: If True, block until 'ok' response received
+            timeout: Timeout in seconds when waiting for ok
+        """
         if not self.is_connected():
-            return
+            return False
         
         with self.lock:
             cmd = command.strip()
             try:
+                # Clear input buffer before sending
+                if self.serial.in_waiting > 0:
+                    self.serial.read(self.serial.in_waiting)
+                
                 self.serial.write(f"{cmd}\n".encode('utf-8'))
                 self.serial.flush()
                 print(f"  -> {cmd}")  # Debug output
+                
                 # Notify callback about sent command
                 if self.callback:
                     self.callback(f"TX: {cmd}")
+                
+                # Wait for ok if requested
+                if wait_for_ok:
+                    return self._wait_for_ok(timeout)
+                    
+                return True
             except Exception as e:
                 print(f"Send error: {e}")
                 if self.callback:
                     self.callback(f"ERROR: {e}")
+                return False
+    
+    def _wait_for_ok(self, timeout: float = 5.0) -> bool:
+        """Wait for 'ok' response from firmware."""
+        import time
+        start = time.time()
+        buffer = ""
+        
+        while time.time() - start < timeout:
+            try:
+                if self.serial.in_waiting > 0:
+                    data = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+                    buffer += data
+                    
+                    # Check for ok response
+                    if 'ok' in buffer.lower():
+                        return True
+                    
+                    # Process complete lines for callback
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if line and self.callback:
+                            self.callback(line)
+                else:
+                    time.sleep(0.01)
+            except Exception as e:
+                print(f"Wait error: {e}")
+                return False
+        
+        print(f"Timeout waiting for ok")
+        return False
     
     def send_raw(self, command: str):
         """Send a raw command without line number or checksum."""

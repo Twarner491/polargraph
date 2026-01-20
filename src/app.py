@@ -447,12 +447,21 @@ def plot_start():
     serial_handler.send_command('M17')
     time.sleep(0.5)
     
-    # Set smooth acceleration settings for polargraph
-    serial_handler.send_command('M201 X50 Y50')    # Max acceleration (low for smooth motion)
+    # Set very conservative acceleration settings for polargraph
+    # Lower values = smoother motion but slower
+    serial_handler.send_command('M201 X30 Y30')    # Max acceleration (very low for smooth motion)
     time.sleep(0.1)
-    serial_handler.send_command('M204 P50 T100')   # Print/travel acceleration
+    serial_handler.send_command('M204 P30 T50')    # Print/travel acceleration
     time.sleep(0.1)
-    serial_handler.send_command('M205 X5 Y5')      # Jerk limits (low for smooth corners)
+    serial_handler.send_command('M205 X2 Y2')      # Jerk limits (very low for smooth corners)
+    time.sleep(0.1)
+    
+    # Set absolute positioning mode
+    serial_handler.send_command('G90')
+    time.sleep(0.1)
+    
+    # Set default feedrate (will be overridden by G-code but ensures a safe default)
+    serial_handler.send_command('G0 F100')
     time.sleep(0.1)
     
     # Run homing sequence before plotting (if enabled)
@@ -477,11 +486,12 @@ def plot_start():
     
     print(f"[PLOT] Starting plot with {len(current_gcode)} lines, home={home_before_plot}")
     
-    # Use streaming mode - send lines with timed delays instead of waiting for ok
-    # This is more reliable for various firmware implementations
+    # Use flow-controlled streaming - wait for each command to complete
     import threading
     def stream_gcode():
         global current_line, is_plotting, is_paused, gondola_position
+        
+        print(f"[PLOT] Starting stream of {len(current_gcode)} lines")
         
         while current_line < len(current_gcode) and is_plotting:
             if is_paused:
@@ -492,17 +502,28 @@ def plot_start():
             
             if line.strip() and not line.strip().startswith(';'):
                 # Limit feedrates to safe values for polargraph
-                safe_line = limit_feedrate(line, max_travel=300, max_draw=150)
-                serial_handler.send_command(safe_line)
-                update_gondola_position(safe_line)
+                # Using very conservative speeds for reliability
+                # These are in mm/min: 100 = ~1.7mm/s, 60 = ~1mm/s
+                safe_line = limit_feedrate(line, max_travel=100, max_draw=60)
                 
-                # Calculate delay based on command type
-                # Move commands need time to execute
-                if line.strip().upper().startswith('G0') or line.strip().upper().startswith('G1'):
-                    time.sleep(0.05)  # 50ms between moves
+                # For move commands, wait for ok to ensure proper sequencing
+                is_move = safe_line.strip().upper().startswith(('G0', 'G1'))
+                
+                if is_move:
+                    # Send and wait for acknowledgment (blocking)
+                    success = serial_handler.send_command(safe_line, wait_for_ok=True, timeout=10.0)
+                    if not success:
+                        print(f"[PLOT] Warning: No ack for line {current_line}, continuing...")
+                        # Add extra delay if no ack received
+                        time.sleep(0.2)
                 else:
-                    time.sleep(0.02)  # 20ms for other commands
+                    # Non-move commands (settings, etc) - just send with small delay
+                    serial_handler.send_command(safe_line)
+                    time.sleep(0.1)
+                
+                update_gondola_position(safe_line)
             
+            # Emit progress every line
             socketio.emit('progress', {
                 'current': current_line,
                 'total': len(current_gcode),
@@ -510,7 +531,7 @@ def plot_start():
                 'gondola': gondola_position
             })
             
-            if current_line % 20 == 0:
+            if current_line % 10 == 0:
                 print(f"[PLOT] Progress: {current_line}/{len(current_gcode)}")
             
             current_line += 1
