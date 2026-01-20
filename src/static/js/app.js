@@ -2936,16 +2936,24 @@ function generateGcodeForEntities(entities, colorId = null) {
     // Add settings metadata for reimport
     lines.push(`; polargraph-settings: ${JSON.stringify(settings)}`);
     
-    // Add entity metadata as JSON comment for reimport (includes transforms!)
+    // Add entity metadata as JSON comment for reimport
+    // NOTE: Transforms are APPLIED during export, so coordinates are final
+    // Store identity transforms so reimport doesn't double-apply them
     const metadata = entities.map(e => ({
         name: e.name,
         color: e.color,
         algorithm: e.algorithm,
         pathCount: e.paths.length,
-        scale: e.scale || 1,
-        rotation: e.rotation || 0,
-        offsetX: e.offsetX || 0,
-        offsetY: e.offsetY || 0
+        // Coordinates are already transformed, so store identity transforms
+        scale: 1,
+        rotation: 0,
+        offsetX: 0,
+        offsetY: 0,
+        // Store original transforms for reference only (prefixed with orig_)
+        orig_scale: e.scale || 1,
+        orig_rotation: e.rotation || 0,
+        orig_offsetX: e.offsetX || 0,
+        orig_offsetY: e.offsetY || 0
     }));
     lines.push(`; polargraph-metadata: ${JSON.stringify(metadata)}`);
     lines.push(';');
