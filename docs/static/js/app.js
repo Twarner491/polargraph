@@ -250,6 +250,8 @@ const state = {
     menuOffsetY: 0,
     // Context menu
     contextMenuVisible: false,
+    workplaneMenuVisible: false,
+    showStartPoint: false,
     // Entity drag (multi-select)
     entityDragStarts: {}  // {entityId: {offsetX, offsetY}}
 };
@@ -429,10 +431,14 @@ function setActiveColor(colorId) {
 // ============================================================================
 
 function initContextMenu() {
-    // Close context menu on click outside
+    // Close context menus on click outside
     document.addEventListener('click', (e) => {
         if (state.contextMenuVisible && !elements.contextMenu.contains(e.target)) {
             hideContextMenu();
+        }
+        const workplaneMenu = document.getElementById('workplaneContextMenu');
+        if (state.workplaneMenuVisible && workplaneMenu && !workplaneMenu.contains(e.target)) {
+            hideWorkplaneMenu();
         }
     });
     
@@ -444,6 +450,18 @@ function initContextMenu() {
             hideContextMenu();
         });
     });
+    
+    // Workplane context menu actions
+    const workplaneMenu = document.getElementById('workplaneContextMenu');
+    if (workplaneMenu) {
+        workplaneMenu.querySelectorAll('.context-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const action = item.dataset.action;
+                handleWorkplaneAction(action);
+                hideWorkplaneMenu();
+            });
+        });
+    }
 }
 
 // ============================================================================
@@ -625,6 +643,54 @@ function showContextMenu(x, y, entityId) {
 function hideContextMenu() {
     state.contextMenuVisible = false;
     elements.contextMenu.style.display = 'none';
+}
+
+function showWorkplaneMenu(x, y) {
+    state.workplaneMenuVisible = true;
+    hideContextMenu();
+    
+    const menu = document.getElementById('workplaneContextMenu');
+    if (!menu) return;
+    
+    // Update start point label
+    const label = document.getElementById('startPointLabel');
+    if (label) {
+        label.textContent = state.showStartPoint ? 'Hide Start Point' : 'Show Start Point';
+    }
+    
+    menu.style.display = 'block';
+    
+    // Position menu
+    const rect = menu.getBoundingClientRect();
+    const bodyRect = document.querySelector('.body-panel').getBoundingClientRect();
+    
+    let menuX = x - bodyRect.left;
+    let menuY = y - bodyRect.top;
+    
+    if (menuX + rect.width > bodyRect.width) menuX = bodyRect.width - rect.width - 10;
+    if (menuY + rect.height > bodyRect.height) menuY = bodyRect.height - rect.height - 10;
+    
+    menu.style.left = menuX + 'px';
+    menu.style.top = menuY + 'px';
+}
+
+function hideWorkplaneMenu() {
+    state.workplaneMenuVisible = false;
+    const menu = document.getElementById('workplaneContextMenu');
+    if (menu) menu.style.display = 'none';
+}
+
+function handleWorkplaneAction(action) {
+    switch (action) {
+        case 'toggleStartPoint':
+            state.showStartPoint = !state.showStartPoint;
+            drawCanvas();
+            logConsole(`Start point ${state.showStartPoint ? 'shown' : 'hidden'}`, 'msg-info');
+            break;
+        case 'paste':
+            pasteEntity();
+            break;
+    }
 }
 
 function handleContextAction(action) {
@@ -1873,20 +1939,20 @@ function onCanvasMouseUp() {
 function onCanvasRightClick(e) {
     e.preventDefault();
     
-    if (state.entities.length === 0) return;
-    
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const worldPos = screenToWorld(x, y);
     
     // Find entity under cursor
-    const clickedEntity = findEntityAtPoint(worldPos.x, worldPos.y);
+    const clickedEntity = state.entities.length > 0 ? findEntityAtPoint(worldPos.x, worldPos.y) : null;
     
     if (clickedEntity) {
+        hideWorkplaneMenu();
         showContextMenu(e.clientX, e.clientY, clickedEntity.id);
     } else {
         hideContextMenu();
+        showWorkplaneMenu(e.clientX, e.clientY);
     }
 }
 
@@ -2414,7 +2480,7 @@ async function dryRun() {
     
     // Send via webhook or direct API
     for (const cmd of gcode) {
-        await sendCommand('/api/send', 'POST', { gcode: cmd });
+        await sendCommand('/api/send_gcode', 'POST', { command: cmd });
         // Small delay between commands
         await new Promise(r => setTimeout(r, 100));
     }
@@ -4761,6 +4827,11 @@ function drawCanvas() {
         drawGondola();
     }
     
+    // Draw start point indicator (where plot will begin)
+    if (state.showStartPoint && state.entities.length > 0) {
+        drawStartPoint();
+    }
+    
     ctx.restore();
     
     // Update stats
@@ -5066,6 +5137,73 @@ function drawGondola() {
         ctx.arc(gx, gy, dotSize * 0.4, 0, Math.PI * 2);
         ctx.fill();
     }
+}
+
+function drawStartPoint() {
+    // Find the first point of the first path of the first entity
+    if (state.entities.length === 0) return;
+    
+    // Get first entity with visible paths
+    let startX = 0, startY = 0;
+    let found = false;
+    
+    for (const entity of state.entities) {
+        if (!entity.visible || !entity.paths || entity.paths.length === 0) continue;
+        
+        for (const path of entity.paths) {
+            if (path.points && path.points.length > 0) {
+                // Get first point and apply entity transform
+                const pt = path.points[0];
+                const centerX = entity.bounds ? (entity.bounds.minX + entity.bounds.maxX) / 2 : 0;
+                const centerY = entity.bounds ? (entity.bounds.minY + entity.bounds.maxY) / 2 : 0;
+                const transformed = transformPoint(pt.x, pt.y, entity, centerX, centerY);
+                startX = transformed.x;
+                startY = transformed.y;
+                found = true;
+                break;
+            }
+        }
+        if (found) break;
+    }
+    
+    if (!found) return;
+    
+    const lineScale = 1 / Math.sqrt(state.zoom);
+    const size = 8 * lineScale;
+    
+    // Draw target crosshair
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 2 * lineScale;
+    ctx.setLineDash([4 * lineScale, 2 * lineScale]);
+    
+    // Outer circle
+    ctx.beginPath();
+    ctx.arc(startX, startY, size, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Inner circle
+    ctx.beginPath();
+    ctx.arc(startX, startY, size * 0.4, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Crosshair lines
+    ctx.beginPath();
+    ctx.moveTo(startX - size * 1.5, startY);
+    ctx.lineTo(startX - size * 0.6, startY);
+    ctx.moveTo(startX + size * 0.6, startY);
+    ctx.lineTo(startX + size * 1.5, startY);
+    ctx.moveTo(startX, startY - size * 1.5);
+    ctx.lineTo(startX, startY - size * 0.6);
+    ctx.moveTo(startX, startY + size * 0.6);
+    ctx.lineTo(startX, startY + size * 1.5);
+    ctx.stroke();
+    
+    ctx.setLineDash([]);
+    
+    // Label
+    ctx.fillStyle = '#ff6600';
+    ctx.font = `${10 * lineScale}px monospace`;
+    ctx.fillText('START', startX + size * 1.8, startY + 3 * lineScale);
 }
 
 function updatePreview(preview) {

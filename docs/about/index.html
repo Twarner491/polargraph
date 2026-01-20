@@ -183,6 +183,17 @@
                     </button>
                 </div>
 
+                <!-- Workplane Context Menu (right-click on empty space) -->
+                <div class="context-menu" id="workplaneContextMenu" style="display:none;">
+                    <button class="context-item" data-action="toggleStartPoint">
+                        <span class="context-icon">◎</span> <span id="startPointLabel">Show Start Point</span>
+                    </button>
+                    <button class="context-item" data-action="paste">
+                        <span class="context-icon">⧉</span> Paste
+                        <span class="context-shortcut">Ctrl+V</span>
+                    </button>
+                </div>
+
                 <!-- Zoom Controls -->
                 <div class="zoom-controls">
                     <button class="zoom-btn" id="zoomOut">−</button>
