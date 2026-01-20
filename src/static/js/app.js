@@ -5703,8 +5703,8 @@ function drawStartPoint() {
     const lineScale = 1 / Math.sqrt(state.zoom);
     const size = 8 * lineScale;
     
-    // Draw target crosshair
-    ctx.strokeStyle = '#ff6600';
+    // Draw target crosshair - grey color
+    ctx.strokeStyle = '#888';
     ctx.lineWidth = 2 * lineScale;
     ctx.setLineDash([4 * lineScale, 2 * lineScale]);
     
@@ -5732,10 +5732,13 @@ function drawStartPoint() {
     
     ctx.setLineDash([]);
     
-    // Label
-    ctx.fillStyle = '#ff6600';
+    // Label - need to flip Y back for text to be right-side up
+    ctx.save();
+    ctx.scale(1, -1);  // Flip Y back to normal for text
+    ctx.fillStyle = '#888';
     ctx.font = `${10 * lineScale}px monospace`;
-    ctx.fillText('START', startX + size * 1.8, startY + 3 * lineScale);
+    ctx.fillText('START', startX + size * 1.8, -startY + 4 * lineScale);  // Negate Y coordinate
+    ctx.restore();
 }
 
 function updatePreview(preview) {
