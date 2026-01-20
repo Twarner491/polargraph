@@ -538,7 +538,14 @@ def plot_start():
         
         if is_plotting and current_line >= len(current_gcode):
             is_plotting = False
-            print(f"[PLOT] Complete!")
+            print(f"[PLOT] Complete! Retracting pen...")
+            
+            # Retract pen before any movement
+            pen_up_angle = plotter_settings.get('pen_up_angle', 90)
+            serial_handler.send_command(f'G0 Z{pen_up_angle} F1000', wait_for_ok=True, timeout=2.0)
+            time.sleep(0.5)  # Wait for servo to move
+            
+            print(f"[PLOT] Pen retracted")
             socketio.emit('plot_complete', {'message': 'Plot complete!'})
             clear_uploads_folder()
     
