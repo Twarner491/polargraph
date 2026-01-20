@@ -487,6 +487,13 @@ function initKeyboardShortcuts() {
             return;
         }
         
+        // F2 - Rename selected entity
+        if (e.key === 'F2' && state.selectedEntityIds.size === 1) {
+            e.preventDefault();
+            renameSelectedEntity();
+            return;
+        }
+        
         // Ctrl+Z - Undo
         if (cmdKey && !e.shiftKey && e.key.toLowerCase() === 'z') {
             e.preventDefault();
@@ -784,6 +791,32 @@ function handleContextAction(action) {
         case 'editPaths':
             openPathEditor(selected[0]);  // Edit first selected entity
             break;
+        case 'rename':
+            renameSelectedEntity();
+            break;
+    }
+}
+
+function renameSelectedEntity() {
+    const selected = getSelectedEntities();
+    if (selected.length !== 1) {
+        logConsole('Select a single layer to rename', 'msg-error');
+        return;
+    }
+    
+    const entity = selected[0];
+    const entityItem = document.querySelector(`.entity-item.selected .entity-name`);
+    if (entityItem) {
+        startEntityRename(entity.id, entityItem);
+    } else {
+        // Fallback: use prompt
+        const newName = prompt('Enter new name:', entity.name);
+        if (newName && newName.trim() && newName !== entity.name) {
+            saveHistoryState();
+            entity.name = newName.trim();
+            updateEntityList();
+            logConsole(`Renamed to "${entity.name}"`, 'msg-info');
+        }
     }
 }
 
@@ -1459,12 +1492,19 @@ function startEntityRename(entityId, element) {
     const entity = state.entities.find(e => e.id === entityId);
     if (!entity) return;
     
+    // Check if we're already editing
+    if (element.tagName === 'INPUT') return;
+    
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'entity-name-input';
     input.value = entity.name;
     
+    let finished = false;
     const finishRename = () => {
+        if (finished) return;  // Prevent double-firing
+        finished = true;
+        
         const newName = input.value.trim();
         if (newName && newName !== entity.name) {
             saveHistoryState();
@@ -1476,18 +1516,28 @@ function startEntityRename(entityId, element) {
     
     input.addEventListener('blur', finishRename);
     input.addEventListener('keydown', (e) => {
+        e.stopPropagation();  // Prevent keyboard shortcuts from firing
         if (e.key === 'Enter') {
             e.preventDefault();
             input.blur();
         } else if (e.key === 'Escape') {
-            input.value = entity.name;
-            input.blur();
+            e.preventDefault();
+            input.value = entity.name;  // Reset to original
+            finished = true;  // Skip saving
+            updateEntityList();  // Just refresh without saving
         }
     });
     
-    element.replaceWith(input);
-    input.focus();
-    input.select();
+    // Prevent click from bubbling to parent (which would select)
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+    
+    // Replace the span with input
+    if (element.parentNode) {
+        element.parentNode.replaceChild(input, element);
+        input.focus();
+        input.select();
+    }
 }
 
 function updateExportInfo() {
@@ -5143,7 +5193,8 @@ const pathEditor = {
     ctx: null,
     scale: 1,
     offsetX: 0,
-    offsetY: 0
+    offsetY: 0,
+    initialized: false      // Track if events are bound
 };
 
 function openPathEditor(entity) {
@@ -5163,14 +5214,22 @@ function openPathEditor(entity) {
     
     // Setup canvas
     pathEditor.canvas = document.getElementById('pathEditorCanvas');
+    if (!pathEditor.canvas) {
+        logConsole('Path editor canvas not found', 'msg-error');
+        return;
+    }
     pathEditor.ctx = pathEditor.canvas.getContext('2d');
     
-    // Resize canvas
+    // Resize canvas to fit container
     const container = pathEditor.canvas.parentElement;
-    const dpr = window.devicePixelRatio || 1;
-    pathEditor.canvas.width = container.clientWidth * dpr;
-    pathEditor.canvas.height = 300 * dpr;
-    pathEditor.canvas.style.height = '300px';
+    if (container) {
+        const dpr = window.devicePixelRatio || 1;
+        const width = container.clientWidth || 600;
+        pathEditor.canvas.width = width * dpr;
+        pathEditor.canvas.height = 300 * dpr;
+        pathEditor.canvas.style.width = '100%';
+        pathEditor.canvas.style.height = '300px';
+    }
     
     // Calculate scale to fit all paths
     fitPathEditorView();
@@ -5178,14 +5237,17 @@ function openPathEditor(entity) {
     // Show modal
     modal.style.display = 'flex';
     
+    // Setup event listeners (only once)
+    if (!pathEditor.initialized) {
+        initPathEditorEvents();
+        pathEditor.initialized = true;
+    }
+    
     // Draw initial state
     updatePathEditorList();
     drawPathEditorCanvas();
     
-    // Setup event listeners
-    initPathEditorEvents();
-    
-    logConsole(`Editing ${pathEditor.paths.length} paths`, 'msg-info');
+    logConsole(`Editing ${pathEditor.paths.length} paths in "${entity.name}"`, 'msg-info');
 }
 
 function closePathEditor() {
@@ -5197,7 +5259,7 @@ function closePathEditor() {
 }
 
 function initPathEditorEvents() {
-    // Close button
+    // Close buttons
     document.getElementById('closePathEditor')?.addEventListener('click', closePathEditor);
     document.getElementById('pathEditorCancel')?.addEventListener('click', closePathEditor);
     
@@ -5219,8 +5281,8 @@ function initPathEditorEvents() {
     
     document.getElementById('pathEditorDeleteSelected')?.addEventListener('click', deleteSelectedPaths);
     
-    // Canvas click to select paths
-    pathEditor.canvas?.addEventListener('click', onPathEditorCanvasClick);
+    // Canvas click handler
+    document.getElementById('pathEditorCanvas')?.addEventListener('click', onPathEditorCanvasClick);
     
     // Close on background click
     document.getElementById('pathEditorModal')?.addEventListener('click', (e) => {
@@ -5857,17 +5919,18 @@ function drawPolarGrid(lineScale) {
     const ringSpacing = 50;
     const numRays = 12;  // Every 30 degrees
     
-    // Draw concentric circles - match cartesian grid color
+    // Grid lines - EXACTLY same as cartesian: #e8e8e8, 0.5 lineWidth
     ctx.strokeStyle = '#e8e8e8';
     ctx.lineWidth = 0.5 * lineScale;
     
+    // Draw concentric circles (equivalent to cartesian grid lines)
     for (let r = ringSpacing; r <= maxRadius; r += ringSpacing) {
         ctx.beginPath();
         ctx.arc(0, 0, r, 0, 2 * Math.PI);
         ctx.stroke();
     }
     
-    // Draw radial lines - match cartesian grid color
+    // Draw radial lines (equivalent to cartesian grid lines)
     for (let i = 0; i < numRays; i++) {
         const angle = (i / numRays) * 2 * Math.PI;
         ctx.beginPath();
@@ -5876,22 +5939,21 @@ function drawPolarGrid(lineScale) {
         ctx.stroke();
     }
     
-    // Draw main axes (solid) - match cartesian axes color
+    // Axes - EXACTLY same as cartesian: #ccc, 1 lineWidth
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 1 * lineScale;
     
-    // Horizontal axis
+    // Horizontal axis (X)
     ctx.beginPath();
     ctx.moveTo(-maxRadius, 0);
     ctx.lineTo(maxRadius, 0);
     ctx.stroke();
     
-    // Vertical axis
+    // Vertical axis (Y)
     ctx.beginPath();
     ctx.moveTo(0, -maxRadius);
     ctx.lineTo(0, maxRadius);
     ctx.stroke();
-    
 }
 
 function drawWorkArea() {
