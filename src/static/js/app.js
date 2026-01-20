@@ -2272,16 +2272,32 @@ async function startPlot() {
     } else {
         logConsole('Start Plot', 'msg-out');
         // Calculate and store ETA for progress tracking
-        const eta = calculatePlotEta();
-        state.totalPlotTime = eta.totalTime;
+        try {
+            const eta = calculatePlotEta();
+            state.totalPlotTime = eta.totalTime;
+        } catch (e) {
+            console.warn('ETA calculation failed:', e);
+            state.totalPlotTime = 0;
+        }
         state.plotStartTime = Date.now();
         
         // Check if homing is enabled
         const homeBeforePlot = document.getElementById('homeBeforePlot')?.checked ?? true;
         
-        // In client-side mode, send the G-code with the start command
-        if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
-            await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
+        // In client-side mode, generate G-code from entities and send with start command
+        if (CLIENT_SIDE_MODE) {
+            // Generate G-code from entities
+            if (state.entities.length > 0) {
+                state.currentGcode = generateGcodeForEntities(state.entities);
+            }
+            
+            if (state.currentGcode && state.currentGcode.length > 0) {
+                logConsole(`Sending ${state.currentGcode.length} G-code lines`, 'msg-out');
+                await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
+            } else {
+                logConsole('No G-code to send', 'msg-warn');
+                return;
+            }
         } else {
             await sendCommand('/api/plot/start', 'POST', { home: homeBeforePlot });
         }
@@ -2336,13 +2352,15 @@ function calculatePlotEta() {
         const transform = getEtaTransform(entity);
         
         entity.paths.forEach(path => {
-            if (path.length < 2) return;
+            // Handle both path.points (standard) and raw array formats
+            const points = path.points || path;
+            if (!points || points.length < 2) return;
             
             // Transform first point
-            const first = transformPointForEta(path[0].x, path[0].y, transform);
+            const first = transformPointForEta(points[0].x, points[0].y, transform);
             
             // Update bounds
-            path.forEach(pt => {
+            points.forEach(pt => {
                 const tp = transformPointForEta(pt.x, pt.y, transform);
                 bounds.minX = Math.min(bounds.minX, tp.x);
                 bounds.maxX = Math.max(bounds.maxX, tp.x);
@@ -2363,9 +2381,9 @@ function calculatePlotEta() {
             penDown = true;
             
             // Draw distance along path
-            for (let i = 1; i < path.length; i++) {
-                const p1 = transformPointForEta(path[i-1].x, path[i-1].y, transform);
-                const p2 = transformPointForEta(path[i].x, path[i].y, transform);
+            for (let i = 1; i < points.length; i++) {
+                const p1 = transformPointForEta(points[i-1].x, points[i-1].y, transform);
+                const p2 = transformPointForEta(points[i].x, points[i].y, transform);
                 totalDrawDist += Math.sqrt(
                     Math.pow(p2.x - p1.x, 2) + 
                     Math.pow(p2.y - p1.y, 2)
@@ -2373,7 +2391,7 @@ function calculatePlotEta() {
             }
             
             // Update last position
-            const last = transformPointForEta(path[path.length-1].x, path[path.length-1].y, transform);
+            const last = transformPointForEta(points[points.length-1].x, points[points.length-1].y, transform);
             lastPos = { x: last.x, y: last.y };
         });
     });
@@ -5151,9 +5169,11 @@ function drawStartPoint() {
         if (!entity.visible || !entity.paths || entity.paths.length === 0) continue;
         
         for (const path of entity.paths) {
-            if (path.points && path.points.length > 0) {
+            // Handle both path.points and raw array formats
+            const points = path.points || path;
+            if (points && points.length > 0 && points[0]) {
                 // Get first point and apply entity transform
-                const pt = path.points[0];
+                const pt = points[0];
                 const centerX = entity.bounds ? (entity.bounds.minX + entity.bounds.maxX) / 2 : 0;
                 const centerY = entity.bounds ? (entity.bounds.minY + entity.bounds.maxY) / 2 : 0;
                 const transformed = transformPoint(pt.x, pt.y, entity, centerX, centerY);
