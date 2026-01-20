@@ -1240,6 +1240,15 @@ html, body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: text;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    border-radius: 3px;
+    transition: background 0.15s;
+}
+
+.entity-name:hover {
+    background: rgba(0, 0, 0, 0.05);
 }
 
 .entity-info {
