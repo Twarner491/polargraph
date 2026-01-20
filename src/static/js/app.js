@@ -3093,9 +3093,11 @@ function parseSvgToEntities(svgText) {
         [vbMinX, vbMinY, vbWidth, vbHeight] = parts;
     }
     
-    // Helper: Parse SVG path d attribute to points
+    // Helper: Parse SVG path d attribute to array of path segments
+    // Returns array of point arrays - each M command starts a new segment
     function parsePathD(d) {
-        const points = [];
+        const segments = [];  // Array of point arrays
+        let points = [];      // Current segment points
         const commands = d.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi) || [];
         let currentX = 0, currentY = 0;
         let startX = 0, startY = 0;
@@ -3105,7 +3107,14 @@ function parseSvgToEntities(svgText) {
             const args = cmd.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
             
             switch (type.toUpperCase()) {
-                case 'M': // Move to
+                case 'M': // Move to - starts a new path segment!
+                    // Save previous segment if it has points
+                    if (points.length >= 2) {
+                        segments.push(points);
+                    }
+                    // Start new segment
+                    points = [];
+                    
                     if (type === 'M') {
                         currentX = args[0];
                         currentY = args[1];
@@ -3228,7 +3237,12 @@ function parseSvgToEntities(svgText) {
             }
         }
         
-        return points;
+        // Save final segment
+        if (points.length >= 2) {
+            segments.push(points);
+        }
+        
+        return segments;
     }
     
     // Helper: Get stroke color from element (handling inheritance)
@@ -3311,42 +3325,45 @@ function parseSvgToEntities(svgText) {
             const dataColor = group.getAttribute('data-entity-color');
             
             paths.forEach(pathEl => {
-                let points = [];
+                let pathSegments = [];  // Array of point arrays
                 
                 if (pathEl.tagName === 'path') {
                     const d = pathEl.getAttribute('d');
-                    if (d) points = parsePathD(d);
+                    if (d) pathSegments = parsePathD(d);  // Returns array of segments
                 } else if (pathEl.tagName === 'line') {
-                    points = [
+                    pathSegments = [[
                         { x: parseFloat(pathEl.getAttribute('x1') || 0), y: -parseFloat(pathEl.getAttribute('y1') || 0) },
                         { x: parseFloat(pathEl.getAttribute('x2') || 0), y: -parseFloat(pathEl.getAttribute('y2') || 0) }
-                    ];
+                    ]];
                 } else if (pathEl.tagName === 'polyline' || pathEl.tagName === 'polygon') {
                     const pointsAttr = pathEl.getAttribute('points') || '';
                     const coords = pointsAttr.trim().split(/[\s,]+/).map(Number);
+                    const points = [];
                     for (let i = 0; i < coords.length; i += 2) {
                         points.push({ x: coords[i], y: -coords[i+1] });
                     }
                     if (pathEl.tagName === 'polygon' && points.length > 0) {
                         points.push({ ...points[0] }); // Close polygon
                     }
+                    if (points.length >= 2) pathSegments = [points];
                 } else if (pathEl.tagName === 'rect') {
                     const x = parseFloat(pathEl.getAttribute('x') || 0);
                     const y = parseFloat(pathEl.getAttribute('y') || 0);
                     const w = parseFloat(pathEl.getAttribute('width') || 0);
                     const h = parseFloat(pathEl.getAttribute('height') || 0);
-                    points = [
+                    pathSegments = [[
                         { x: x, y: -y },
                         { x: x + w, y: -y },
                         { x: x + w, y: -(y + h) },
                         { x: x, y: -(y + h) },
                         { x: x, y: -y }
-                    ];
+                    ]];
                 } else if (pathEl.tagName === 'circle') {
                     const cx = parseFloat(pathEl.getAttribute('cx') || 0);
                     const cy = parseFloat(pathEl.getAttribute('cy') || 0);
                     const r = parseFloat(pathEl.getAttribute('r') || 0);
                     const steps = 36;
+                    const points = [];
                     for (let i = 0; i <= steps; i++) {
                         const angle = (i / steps) * 2 * Math.PI;
                         points.push({
@@ -3354,12 +3371,14 @@ function parseSvgToEntities(svgText) {
                             y: -(cy + r * Math.sin(angle))
                         });
                     }
+                    pathSegments = [points];
                 } else if (pathEl.tagName === 'ellipse') {
                     const cx = parseFloat(pathEl.getAttribute('cx') || 0);
                     const cy = parseFloat(pathEl.getAttribute('cy') || 0);
                     const rx = parseFloat(pathEl.getAttribute('rx') || 0);
                     const ry = parseFloat(pathEl.getAttribute('ry') || 0);
                     const steps = 36;
+                    const points = [];
                     for (let i = 0; i <= steps; i++) {
                         const angle = (i / steps) * 2 * Math.PI;
                         points.push({
@@ -3367,11 +3386,15 @@ function parseSvgToEntities(svgText) {
                             y: -(cy + ry * Math.sin(angle))
                         });
                     }
+                    pathSegments = [points];
                 }
                 
-                if (points.length >= 2) {
-                    entityPaths.push({ points });
-                }
+                // Add each segment as a separate path (this ensures proper pen lifts!)
+                pathSegments.forEach(segmentPoints => {
+                    if (segmentPoints.length >= 2) {
+                        entityPaths.push({ points: segmentPoints });
+                    }
+                });
                 
                 // Get color from first path if not set
                 if (!entityColor || entityColor === 'black') {
@@ -3409,19 +3432,73 @@ function parseSvgToEntities(svgText) {
         let entityColor = 'black';
         
         topLevelPaths.forEach(pathEl => {
-            let points = [];
+            let pathSegments = [];
             
             if (pathEl.tagName === 'path') {
                 const d = pathEl.getAttribute('d');
-                if (d) points = parsePathD(d);
+                if (d) pathSegments = parsePathD(d);  // Returns array of segments
+            } else if (pathEl.tagName === 'line') {
+                pathSegments = [[
+                    { x: parseFloat(pathEl.getAttribute('x1') || 0), y: -parseFloat(pathEl.getAttribute('y1') || 0) },
+                    { x: parseFloat(pathEl.getAttribute('x2') || 0), y: -parseFloat(pathEl.getAttribute('y2') || 0) }
+                ]];
+            } else if (pathEl.tagName === 'polyline' || pathEl.tagName === 'polygon') {
+                const pointsAttr = pathEl.getAttribute('points') || '';
+                const coords = pointsAttr.trim().split(/[\s,]+/).map(Number);
+                const points = [];
+                for (let i = 0; i < coords.length; i += 2) {
+                    points.push({ x: coords[i], y: -coords[i+1] });
+                }
+                if (pathEl.tagName === 'polygon' && points.length > 0) {
+                    points.push({ ...points[0] });
+                }
+                if (points.length >= 2) pathSegments = [points];
+            } else if (pathEl.tagName === 'rect') {
+                const x = parseFloat(pathEl.getAttribute('x') || 0);
+                const y = parseFloat(pathEl.getAttribute('y') || 0);
+                const w = parseFloat(pathEl.getAttribute('width') || 0);
+                const h = parseFloat(pathEl.getAttribute('height') || 0);
+                pathSegments = [[
+                    { x: x, y: -y },
+                    { x: x + w, y: -y },
+                    { x: x + w, y: -(y + h) },
+                    { x: x, y: -(y + h) },
+                    { x: x, y: -y }
+                ]];
+            } else if (pathEl.tagName === 'circle') {
+                const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                const r = parseFloat(pathEl.getAttribute('r') || 0);
+                const steps = 36;
+                const points = [];
+                for (let i = 0; i <= steps; i++) {
+                    const angle = (i / steps) * 2 * Math.PI;
+                    points.push({ x: cx + r * Math.cos(angle), y: -(cy + r * Math.sin(angle)) });
+                }
+                pathSegments = [points];
+            } else if (pathEl.tagName === 'ellipse') {
+                const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                const rx = parseFloat(pathEl.getAttribute('rx') || 0);
+                const ry = parseFloat(pathEl.getAttribute('ry') || 0);
+                const steps = 36;
+                const points = [];
+                for (let i = 0; i <= steps; i++) {
+                    const angle = (i / steps) * 2 * Math.PI;
+                    points.push({ x: cx + rx * Math.cos(angle), y: -(cy + ry * Math.sin(angle)) });
+                }
+                pathSegments = [points];
             }
-            // ... similar handling as above (abbreviated for brevity)
             
-            if (points.length >= 2) {
-                entityPaths.push({ points });
-                const strokeColor = getStrokeColor(pathEl);
-                entityColor = mapColorToPenColor(strokeColor);
-            }
+            // Add each segment as a separate path (ensures proper pen lifts!)
+            pathSegments.forEach(segmentPoints => {
+                if (segmentPoints.length >= 2) {
+                    entityPaths.push({ points: segmentPoints });
+                }
+            });
+            
+            const strokeColor = getStrokeColor(pathEl);
+            entityColor = mapColorToPenColor(strokeColor);
         });
         
         if (entityPaths.length > 0) {
