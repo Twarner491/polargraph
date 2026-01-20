@@ -235,6 +235,7 @@ const state = {
     previewOffsetX: 0,
     previewOffsetY: 0,
     previewScale: 1,
+    gridType: 'cartesian',  // 'cartesian', 'polar', or 'off'
     isDragging: false,
     dragStartX: 0,
     dragStartY: 0,
@@ -1702,6 +1703,23 @@ function initEventListeners() {
     
     // Calibration
     initCalibrationWizard();
+    
+    // Grid type toggle
+    const gridTypeSelect = document.getElementById('gridType');
+    if (gridTypeSelect) {
+        // Load saved preference
+        const savedGridType = localStorage.getItem('polargraph_gridType');
+        if (savedGridType) {
+            state.gridType = savedGridType;
+            gridTypeSelect.value = savedGridType;
+        }
+        
+        gridTypeSelect.addEventListener('change', (e) => {
+            state.gridType = e.target.value;
+            localStorage.setItem('polargraph_gridType', state.gridType);
+            drawCanvas();
+        });
+    }
 }
 
 // ============================================================================
@@ -5372,8 +5390,18 @@ function drawTextLine(turtle, text, centerX, y, size) {
 }
 
 function drawGrid() {
+    if (state.gridType === 'off') return;
+    
     const lineScale = 1 / Math.sqrt(state.zoom);
     
+    if (state.gridType === 'polar') {
+        drawPolarGrid(lineScale);
+    } else {
+        drawCartesianGrid(lineScale);
+    }
+}
+
+function drawCartesianGrid(lineScale) {
     ctx.strokeStyle = '#e8e8e8';
     ctx.lineWidth = 0.5 * lineScale;
     
@@ -5405,6 +5433,69 @@ function drawGrid() {
     ctx.beginPath();
     ctx.moveTo(0, -700);
     ctx.lineTo(0, 700);
+    ctx.stroke();
+}
+
+function drawPolarGrid(lineScale) {
+    const maxRadius = 600;
+    const ringSpacing = 50;
+    const numRays = 12;  // Every 30 degrees
+    
+    // Draw concentric circles
+    ctx.strokeStyle = '#d0e8e8';
+    ctx.lineWidth = 0.5 * lineScale;
+    ctx.setLineDash([4 * lineScale, 4 * lineScale]);
+    
+    for (let r = ringSpacing; r <= maxRadius; r += ringSpacing) {
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, 2 * Math.PI);
+        ctx.stroke();
+    }
+    
+    // Draw radial lines
+    for (let i = 0; i < numRays; i++) {
+        const angle = (i / numRays) * 2 * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(angle) * maxRadius, Math.sin(angle) * maxRadius);
+        ctx.stroke();
+    }
+    
+    ctx.setLineDash([]);
+    
+    // Draw main axes (solid)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1.5 * lineScale;
+    
+    // Horizontal axis
+    ctx.beginPath();
+    ctx.moveTo(-maxRadius, 0);
+    ctx.lineTo(maxRadius, 0);
+    ctx.stroke();
+    
+    // Vertical axis
+    ctx.beginPath();
+    ctx.moveTo(0, -maxRadius);
+    ctx.lineTo(0, maxRadius);
+    ctx.stroke();
+    
+    // Draw axis arrows
+    const arrowSize = 10 * lineScale;
+    
+    // Right arrow
+    ctx.beginPath();
+    ctx.moveTo(maxRadius, 0);
+    ctx.lineTo(maxRadius - arrowSize, arrowSize);
+    ctx.moveTo(maxRadius, 0);
+    ctx.lineTo(maxRadius - arrowSize, -arrowSize);
+    ctx.stroke();
+    
+    // Top arrow
+    ctx.beginPath();
+    ctx.moveTo(0, maxRadius);
+    ctx.lineTo(-arrowSize, maxRadius - arrowSize);
+    ctx.moveTo(0, maxRadius);
+    ctx.lineTo(arrowSize, maxRadius - arrowSize);
     ctx.stroke();
 }
 
