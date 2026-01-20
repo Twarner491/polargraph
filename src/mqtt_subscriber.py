@@ -103,8 +103,17 @@ def handle_command(data):
                 if 'home' in data:
                     payload['home'] = data.get('home', True)
             
-            response = requests.post(f"{FLASK_URL}{endpoints[cmd]}", json=payload, timeout=10)
+            # Use longer timeout for start command (sending large gcode arrays)
+            timeout = 60 if cmd == 'start' else 10
+            response = requests.post(f"{FLASK_URL}{endpoints[cmd]}", json=payload, timeout=timeout)
             print(f"Command {cmd}: {response.status_code}")
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    if 'lines' in result:
+                        print(f"  -> Plot started with {result['lines']} G-code lines")
+                except:
+                    pass
         except Exception as e:
             print(f"Error sending command {cmd}: {e}")
 

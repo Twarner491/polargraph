@@ -6,6 +6,7 @@ Replicates Makelangelo software functionality via a web interface.
 
 import os
 import json
+import re
 import threading
 import time
 
@@ -53,14 +54,36 @@ current_line = 0
 
 def serial_callback(message):
     """Callback for serial messages from the plotter."""
-    global is_plotting, is_paused
-    
+    # Emit to websocket for UI display
     socketio.emit('serial_message', {'message': message})
+
+
+def limit_feedrate(gcode_line, max_travel=300, max_draw=150):
+    """Limit feedrates in G-code to safe values for polargraph.
     
-    # Check for 'ok' response to send next line during plotting
-    if is_plotting and not is_paused:
-        if message.lower().startswith('ok'):
-            send_next_line()
+    Args:
+        gcode_line: The G-code line to process
+        max_travel: Maximum feedrate for G0 moves (mm/min)
+        max_draw: Maximum feedrate for G1 moves (mm/min)
+    """
+    line = gcode_line.strip()
+    if not line or line.startswith(';'):
+        return gcode_line
+    
+    # Check if it's a move command with feedrate
+    match = re.match(r'^(G[01])\s*(.*?)\s*F(\d+(?:\.\d+)?)(.*?)$', line, re.IGNORECASE)
+    if match:
+        cmd = match.group(1).upper()
+        coords = match.group(2)
+        feedrate = float(match.group(3))
+        rest = match.group(4)
+        
+        # Limit based on command type
+        max_f = max_travel if cmd == 'G0' else max_draw
+        if feedrate > max_f:
+            return f"{cmd} {coords} F{max_f}{rest}"
+    
+    return gcode_line
 
 
 def send_next_line():
@@ -68,6 +91,11 @@ def send_next_line():
     global current_line, is_plotting, is_paused, gondola_position
     
     if is_paused or not is_plotting:
+        return
+    
+    if not current_gcode:
+        print("[PLOT] No G-code loaded")
+        is_plotting = False
         return
         
     if current_line < len(current_gcode):
@@ -79,6 +107,10 @@ def send_next_line():
             
             # Parse position from G0/G1 commands for gondola tracking
             update_gondola_position(line)
+            
+            # Debug: log progress every 10 lines
+            if current_line % 10 == 0:
+                print(f"[PLOT] Line {current_line}/{len(current_gcode)}: {line[:50]}...")
         
         socketio.emit('progress', {
             'current': current_line,
@@ -93,6 +125,7 @@ def send_next_line():
             send_next_line()
     else:
         is_plotting = False
+        print(f"[PLOT] Complete! Sent {len(current_gcode)} lines")
         socketio.emit('plot_complete', {'message': 'Plot complete!'})
         # Auto-clear uploads after plot finishes
         clear_uploads_folder()
@@ -442,8 +475,56 @@ def plot_start():
                 serial_handler.send_command(line.strip())
                 time.sleep(0.1)
     
-    # Send first line
-    send_next_line()
+    print(f"[PLOT] Starting plot with {len(current_gcode)} lines, home={home_before_plot}")
+    
+    # Use streaming mode - send lines with timed delays instead of waiting for ok
+    # This is more reliable for various firmware implementations
+    import threading
+    def stream_gcode():
+        global current_line, is_plotting, is_paused, gondola_position
+        
+        while current_line < len(current_gcode) and is_plotting:
+            if is_paused:
+                time.sleep(0.1)
+                continue
+                
+            line = current_gcode[current_line]
+            
+            if line.strip() and not line.strip().startswith(';'):
+                # Limit feedrates to safe values for polargraph
+                safe_line = limit_feedrate(line, max_travel=300, max_draw=150)
+                serial_handler.send_command(safe_line)
+                update_gondola_position(safe_line)
+                
+                # Calculate delay based on command type
+                # Move commands need time to execute
+                if line.strip().upper().startswith('G0') or line.strip().upper().startswith('G1'):
+                    time.sleep(0.05)  # 50ms between moves
+                else:
+                    time.sleep(0.02)  # 20ms for other commands
+            
+            socketio.emit('progress', {
+                'current': current_line,
+                'total': len(current_gcode),
+                'percent': int(100 * (current_line + 1) / max(1, len(current_gcode))),
+                'gondola': gondola_position
+            })
+            
+            if current_line % 20 == 0:
+                print(f"[PLOT] Progress: {current_line}/{len(current_gcode)}")
+            
+            current_line += 1
+        
+        if is_plotting and current_line >= len(current_gcode):
+            is_plotting = False
+            print(f"[PLOT] Complete!")
+            socketio.emit('plot_complete', {'message': 'Plot complete!'})
+            clear_uploads_folder()
+    
+    # Start streaming in background thread
+    thread = threading.Thread(target=stream_gcode, daemon=True)
+    thread.start()
+    
     return jsonify({'success': True, 'lines': len(current_gcode)})
 
 
@@ -465,7 +546,7 @@ def plot_resume():
     """Resume plotting."""
     global is_paused
     is_paused = False
-    send_next_line()
+    # Streaming mode auto-resumes via the thread checking is_paused
     return jsonify({'success': True})
 
 
