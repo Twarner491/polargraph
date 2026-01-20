@@ -96,8 +96,12 @@ def handle_command(data):
                 payload = {'x': data.get('x', 0), 'y': data.get('y', 0)}
             elif cmd == 'gcode':
                 payload = {'command': data.get('gcode', '')}
-            elif cmd == 'start' and 'gcode' in data:
-                payload = {'gcode': data.get('gcode', [])}
+            elif cmd == 'start':
+                # Include gcode if provided, and home setting
+                if 'gcode' in data:
+                    payload['gcode'] = data.get('gcode', [])
+                if 'home' in data:
+                    payload['home'] = data.get('home', True)
             
             response = requests.post(f"{FLASK_URL}{endpoints[cmd]}", json=payload, timeout=10)
             print(f"Command {cmd}: {response.status_code}")
@@ -108,7 +112,7 @@ def handle_command(data):
 def send_gcode(gcode):
     """Send a G-code command to the plotter."""
     try:
-        response = requests.post(f"{FLASK_URL}/api/gcode/send", 
+        response = requests.post(f"{FLASK_URL}/api/send_gcode", 
                                 json={'command': gcode}, timeout=10)
         print(f"G-code sent: {response.status_code}")
     except Exception as e:
