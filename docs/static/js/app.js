@@ -2123,6 +2123,15 @@ function setConnectionStatus(connected, port = null) {
     
     document.querySelectorAll('.jog-btn').forEach(btn => btn.disabled = !connected);
     updatePlotButtons();
+    
+    // On connect: ensure pen is UP and update button state
+    if (connected) {
+        state.penDown = false;
+        sendCommand('/api/pen', 'POST', { action: 'up' });
+        const btn = elements.penToggleBtn;
+        btn.classList.remove('active');
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
+    }
 }
 
 async function toggleMotors() {
@@ -2165,15 +2174,17 @@ function jog(direction) {
     const d = state.jogDistance;
     let x = 0, y = 0;
     
+    // Note: X/Y are swapped for polargraph coordinate system
+    // UI "up/down" controls X, UI "left/right" controls Y
     switch (direction) {
-        case 'up': y = d; break;
-        case 'down': y = -d; break;
-        case 'left': x = -d; break;
-        case 'right': x = d; break;
-        case 'up-left': x = -d; y = d; break;
+        case 'up': x = d; break;
+        case 'down': x = -d; break;
+        case 'left': y = -d; break;
+        case 'right': y = d; break;
+        case 'up-left': x = d; y = -d; break;
         case 'up-right': x = d; y = d; break;
         case 'down-left': x = -d; y = -d; break;
-        case 'down-right': x = d; y = -d; break;
+        case 'down-right': x = -d; y = d; break;
         case 'center': 
             logConsole('Goto center (0, 0)', 'msg-out');
             sendCommand('/api/goto', 'POST', { x: 0, y: 0 });
@@ -2199,11 +2210,14 @@ async function startPlot() {
         state.totalPlotTime = eta.totalTime;
         state.plotStartTime = Date.now();
         
+        // Check if homing is enabled
+        const homeBeforePlot = document.getElementById('homeBeforePlot')?.checked ?? true;
+        
         // In client-side mode, send the G-code with the start command
         if (CLIENT_SIDE_MODE && state.currentGcode && state.currentGcode.length > 0) {
-            await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode });
+            await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
         } else {
-            await sendCommand('/api/plot/start', 'POST');
+            await sendCommand('/api/plot/start', 'POST', { home: homeBeforePlot });
         }
     }
     state.plotting = true;

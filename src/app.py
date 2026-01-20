@@ -385,13 +385,25 @@ def send_gcode():
 @app.route('/api/plot/start', methods=['POST'])
 def plot_start():
     """Start plotting the current G-code."""
-    global is_plotting, is_paused, current_line, gondola_position
+    global is_plotting, is_paused, current_line, gondola_position, current_gcode
     
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
     
+    data = request.get_json() or {}
+    
+    # Allow gcode to be passed directly (for client-side mode)
+    if 'gcode' in data:
+        gcode_data = data['gcode']
+        if isinstance(gcode_data, list):
+            current_gcode = gcode_data
+        elif isinstance(gcode_data, str):
+            current_gcode = [line.strip() for line in gcode_data.split('\n') if line.strip()]
+    
     if not current_gcode:
         return jsonify({'success': False, 'error': 'No G-code loaded'})
+    
+    home_before_plot = data.get('home', True)  # Default to True for safety
     
     is_plotting = True
     is_paused = False
@@ -410,14 +422,17 @@ def plot_start():
     serial_handler.send_command('M205 X5 Y5')      # Jerk limits (low for smooth corners)
     time.sleep(0.1)
     
-    # Run homing sequence before plotting
-    serial_handler.send_command('G28 X')  # Home left
-    time.sleep(1.0)
-    serial_handler.send_command('G28 Y')  # Home right  
-    time.sleep(1.0)
-    serial_handler.send_command('G90')    # Absolute mode
-    serial_handler.send_command('G0 X0 Y0 F300')  # Go to center slowly
-    time.sleep(2.0)
+    # Run homing sequence before plotting (if enabled)
+    if home_before_plot:
+        serial_handler.send_command('G28 X')  # Home left
+        time.sleep(1.0)
+        serial_handler.send_command('G28 Y')  # Home right  
+        time.sleep(1.0)
+        serial_handler.send_command('G90')    # Absolute mode
+        serial_handler.send_command('G0 X0 Y0 F300')  # Go to center slowly
+        time.sleep(2.0)
+    else:
+        serial_handler.send_command('G90')    # Absolute mode
     
     # Send start G-code if any
     start_gcode = plotter_settings.get('start_gcode')
