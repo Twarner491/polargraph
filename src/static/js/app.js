@@ -4803,22 +4803,50 @@ function resetUploadUI() {
 // ============================================================================
 
 async function loadSettings() {
-    const result = await sendCommand('/api/settings');
-    if (result) {
-        document.getElementById('machineWidth').value = result.machine_width || 1219.2;
-        document.getElementById('machineHeight').value = result.machine_height || 1524;
-        document.getElementById('limitLeft').value = result.limit_left || -420.5;
-        document.getElementById('limitRight').value = result.limit_right || 420.5;
-        document.getElementById('limitTop').value = result.limit_top || 594.5;
-        document.getElementById('limitBottom').value = result.limit_bottom || -594.5;
-        state.penKerf = result.pen_kerf || 0.45;
-        document.getElementById('penKerf').value = state.penKerf;
-        document.getElementById('penUpAngle').value = result.pen_angle_up || 90;
-        document.getElementById('penDownAngle').value = result.pen_angle_down || 40;
-        document.getElementById('feedTravel').value = result.feed_rate_travel || 1000;
-        document.getElementById('feedDraw').value = result.feed_rate_draw || 500;
-        document.getElementById('penDwell').value = result.pen_dwell || 150;
+    let settings = null;
+    
+    // If connected remotely, try to load from server first
+    if (state.useRemote) {
+        settings = await sendCommand('/api/settings');
+        if (settings) {
+            console.log('[SETTINGS] Loaded from plotter');
+        }
     }
+    
+    // Fall back to localStorage if no server settings
+    if (!settings) {
+        try {
+            const saved = localStorage.getItem('polargraph_settings');
+            if (saved) {
+                settings = JSON.parse(saved);
+                console.log('[SETTINGS] Loaded from browser localStorage');
+            }
+        } catch (e) {
+            console.warn('[SETTINGS] Failed to load from localStorage:', e);
+        }
+    }
+    
+    // Apply settings (use defaults if nothing loaded)
+    applySettingsToUI(settings || {});
+}
+
+function applySettingsToUI(settings) {
+    document.getElementById('machineWidth').value = settings.machine_width || 1219.2;
+    document.getElementById('machineHeight').value = settings.machine_height || 1524;
+    document.getElementById('limitLeft').value = settings.limit_left || -420.5;
+    document.getElementById('limitRight').value = settings.limit_right || 420.5;
+    document.getElementById('limitTop').value = settings.limit_top || 594.5;
+    document.getElementById('limitBottom').value = settings.limit_bottom || -594.5;
+    state.penKerf = settings.pen_kerf || 0.45;
+    document.getElementById('penKerf').value = state.penKerf;
+    document.getElementById('penUpAngle').value = settings.pen_angle_up || 90;
+    document.getElementById('penDownAngle').value = settings.pen_angle_down || 40;
+    document.getElementById('feedTravel').value = settings.feed_rate_travel || 1000;
+    document.getElementById('feedDraw').value = settings.feed_rate_draw || 500;
+    document.getElementById('penDwell').value = settings.pen_dwell || 150;
+    
+    // Update work area display
+    drawCanvas();
 }
 
 async function saveSettings() {
@@ -4838,10 +4866,27 @@ async function saveSettings() {
     };
     
     state.penKerf = settings.pen_kerf;
-    const result = await sendCommand('/api/settings', 'POST', settings);
-    if (result.success) {
-        logConsole('Settings saved', 'msg-in');
+    
+    // If connected remotely via console access key, save to server
+    if (state.useRemote && state.connected) {
+        const result = await sendCommand('/api/settings', 'POST', settings);
+        if (result.success) {
+            logConsole('Settings saved to plotter', 'msg-in');
+        } else {
+            logConsole('Failed to save settings to plotter', 'msg-error');
+        }
+    } else {
+        // Save to browser localStorage
+        try {
+            localStorage.setItem('polargraph_settings', JSON.stringify(settings));
+            logConsole('Settings saved to browser', 'msg-in');
+        } catch (e) {
+            logConsole('Failed to save settings: ' + e.message, 'msg-error');
+        }
     }
+    
+    // Always update work area display
+    drawCanvas();
 }
 
 async function clearUploads() {
@@ -5812,10 +5857,9 @@ function drawPolarGrid(lineScale) {
     const ringSpacing = 50;
     const numRays = 12;  // Every 30 degrees
     
-    // Draw concentric circles
-    ctx.strokeStyle = '#d0e8e8';
+    // Draw concentric circles - match cartesian grid color
+    ctx.strokeStyle = '#e8e8e8';
     ctx.lineWidth = 0.5 * lineScale;
-    ctx.setLineDash([4 * lineScale, 4 * lineScale]);
     
     for (let r = ringSpacing; r <= maxRadius; r += ringSpacing) {
         ctx.beginPath();
@@ -5823,7 +5867,7 @@ function drawPolarGrid(lineScale) {
         ctx.stroke();
     }
     
-    // Draw radial lines
+    // Draw radial lines - match cartesian grid color
     for (let i = 0; i < numRays; i++) {
         const angle = (i / numRays) * 2 * Math.PI;
         ctx.beginPath();
@@ -5832,11 +5876,9 @@ function drawPolarGrid(lineScale) {
         ctx.stroke();
     }
     
-    ctx.setLineDash([]);
-    
-    // Draw main axes (solid)
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1.5 * lineScale;
+    // Draw main axes (solid) - match cartesian axes color
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1 * lineScale;
     
     // Horizontal axis
     ctx.beginPath();
@@ -5850,31 +5892,14 @@ function drawPolarGrid(lineScale) {
     ctx.lineTo(0, maxRadius);
     ctx.stroke();
     
-    // Draw axis arrows
-    const arrowSize = 10 * lineScale;
-    
-    // Right arrow
-    ctx.beginPath();
-    ctx.moveTo(maxRadius, 0);
-    ctx.lineTo(maxRadius - arrowSize, arrowSize);
-    ctx.moveTo(maxRadius, 0);
-    ctx.lineTo(maxRadius - arrowSize, -arrowSize);
-    ctx.stroke();
-    
-    // Top arrow
-    ctx.beginPath();
-    ctx.moveTo(0, maxRadius);
-    ctx.lineTo(-arrowSize, maxRadius - arrowSize);
-    ctx.moveTo(0, maxRadius);
-    ctx.lineTo(arrowSize, maxRadius - arrowSize);
-    ctx.stroke();
 }
 
 function drawWorkArea() {
-    const left = -420.5;
-    const right = 420.5;
-    const top = 594.5;
-    const bottom = -594.5;
+    // Read work area limits from settings inputs
+    const left = parseFloat(document.getElementById('limitLeft')?.value) || -420.5;
+    const right = parseFloat(document.getElementById('limitRight')?.value) || 420.5;
+    const top = parseFloat(document.getElementById('limitTop')?.value) || 594.5;
+    const bottom = parseFloat(document.getElementById('limitBottom')?.value) || -594.5;
     
     const lineScale = 1 / Math.sqrt(state.zoom);
     
