@@ -1699,6 +1699,9 @@ function initEventListeners() {
     // Settings
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
     document.getElementById('clearUploads').addEventListener('click', clearUploads);
+    
+    // Calibration
+    initCalibrationWizard();
 }
 
 // ============================================================================
@@ -2198,6 +2201,9 @@ function setConnectionStatus(connected, port = null) {
         btn.classList.remove('active');
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
     }
+    
+    // Update calibration button
+    updateCalibrationButton();
 }
 
 async function toggleMotors() {
@@ -4716,6 +4722,237 @@ async function clearUploads() {
         elements.convertSection.style.display = 'none';
         elements.uploadZone.style.display = 'block'; // Show drop zone again
         state.currentImagePath = null;
+    }
+}
+
+// ============================================================================
+// Calibration Wizard
+// ============================================================================
+
+const calibration = {
+    step: 0,
+    positions: {
+        center: { x: 0, y: 0 },
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 0, y: 0 },
+        bottom: { x: 0, y: 0 }
+    },
+    // Track cumulative movement from center
+    currentOffset: { x: 0, y: 0 }
+};
+
+function initCalibrationWizard() {
+    const startBtn = document.getElementById('startCalibration');
+    const closeBtn = document.getElementById('closeCalibration');
+    const modal = document.getElementById('calibrationModal');
+    
+    if (!startBtn || !modal) return;
+    
+    // Enable button when connected
+    startBtn.addEventListener('click', () => {
+        if (state.connected) {
+            openCalibrationWizard();
+        }
+    });
+    
+    closeBtn?.addEventListener('click', closeCalibrationWizard);
+    
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeCalibrationWizard();
+    });
+    
+    // Step buttons
+    document.getElementById('calibRecordCenter')?.addEventListener('click', () => recordCalibrationPoint('center'));
+    document.getElementById('calibRecordTopLeft')?.addEventListener('click', () => recordCalibrationPoint('topLeft'));
+    document.getElementById('calibRecordTopRight')?.addEventListener('click', () => recordCalibrationPoint('topRight'));
+    document.getElementById('calibRecordBottom')?.addEventListener('click', () => recordCalibrationPoint('bottom'));
+    document.getElementById('calibApplySettings')?.addEventListener('click', applyCalibrationSettings);
+    document.getElementById('calibClose')?.addEventListener('click', closeCalibrationWizard);
+    
+    // Jog buttons in calibration modal
+    document.querySelectorAll('#calibrationModal .jog-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const dir = btn.dataset.dir;
+            if (dir === 'disable') {
+                // Disable motors for manual movement
+                sendCommand('/api/motors', 'POST', { enable: false });
+                logConsole('Motors disabled for manual movement', 'msg-info');
+            } else {
+                calibrationJog(dir);
+            }
+        });
+    });
+}
+
+function openCalibrationWizard() {
+    const modal = document.getElementById('calibrationModal');
+    modal.style.display = 'flex';
+    
+    // Reset state
+    calibration.step = 1;
+    calibration.currentOffset = { x: 0, y: 0 };
+    calibration.positions = {
+        center: { x: 0, y: 0 },
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 0, y: 0 },
+        bottom: { x: 0, y: 0 }
+    };
+    
+    // Show first step
+    showCalibrationStep(1);
+    logConsole('Calibration wizard started', 'msg-info');
+}
+
+function closeCalibrationWizard() {
+    document.getElementById('calibrationModal').style.display = 'none';
+}
+
+function showCalibrationStep(step) {
+    // Hide all steps
+    for (let i = 1; i <= 4; i++) {
+        const stepEl = document.getElementById(`calibrationStep${i}`);
+        if (stepEl) stepEl.style.display = 'none';
+    }
+    document.getElementById('calibrationResults').style.display = 'none';
+    
+    // Show current step
+    if (step <= 4) {
+        const stepEl = document.getElementById(`calibrationStep${step}`);
+        if (stepEl) stepEl.style.display = 'block';
+    } else {
+        document.getElementById('calibrationResults').style.display = 'block';
+    }
+    
+    calibration.step = step;
+}
+
+function calibrationJog(direction) {
+    // Get step size from the current step's select
+    const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`) 
+                    || document.getElementById('calibJogStep');
+    const stepSize = parseFloat(stepSelect?.value || 10);
+    
+    let x = 0, y = 0;
+    
+    // Note: X/Y are swapped for polargraph coordinate system
+    // UI "up/down" controls X, UI "left/right" controls Y
+    switch (direction) {
+        case 'up': x = stepSize; break;
+        case 'down': x = -stepSize; break;
+        case 'left': y = -stepSize; break;
+        case 'right': y = stepSize; break;
+        case 'up-left': x = stepSize; y = -stepSize; break;
+        case 'up-right': x = stepSize; y = stepSize; break;
+        case 'down-left': x = -stepSize; y = -stepSize; break;
+        case 'down-right': x = -stepSize; y = stepSize; break;
+    }
+    
+    // Track cumulative offset from center
+    calibration.currentOffset.x += x;
+    calibration.currentOffset.y += y;
+    
+    // Update distance display
+    updateCalibrationDistance();
+    
+    // Send jog command
+    sendCommand('/api/jog', 'POST', { x, y });
+}
+
+function updateCalibrationDistance() {
+    const dist = Math.sqrt(
+        calibration.currentOffset.x ** 2 + 
+        calibration.currentOffset.y ** 2
+    ).toFixed(1);
+    
+    const distEl = document.getElementById(`calibDist${calibration.step - 1}`);
+    if (distEl) {
+        distEl.textContent = `Distance from previous: ${dist}mm (X: ${calibration.currentOffset.x.toFixed(1)}, Y: ${calibration.currentOffset.y.toFixed(1)})`;
+    }
+}
+
+function recordCalibrationPoint(point) {
+    // Store current offset
+    calibration.positions[point] = { ...calibration.currentOffset };
+    
+    const stepNames = { center: 1, topLeft: 2, topRight: 3, bottom: 4 };
+    const step = stepNames[point];
+    
+    logConsole(`Recorded ${point}: X=${calibration.currentOffset.x.toFixed(1)}, Y=${calibration.currentOffset.y.toFixed(1)}`, 'msg-info');
+    
+    // Reset offset for next measurement (relative to this point)
+    calibration.currentOffset = { x: 0, y: 0 };
+    
+    // Move to next step
+    if (step < 4) {
+        showCalibrationStep(step + 1);
+    } else {
+        calculateCalibrationResults();
+        showCalibrationStep(5); // Show results
+    }
+}
+
+function calculateCalibrationResults() {
+    const { topLeft, topRight, bottom } = calibration.positions;
+    
+    // Calculate work area dimensions
+    // Width: horizontal distance from top-left to top-right
+    // Note: This is cumulative, so topRight is relative to topLeft
+    const width = Math.abs(topRight.y) + Math.abs(topLeft.y);
+    
+    // Height: vertical distance from top corners to bottom
+    // bottom is relative to topRight
+    const height = Math.abs(bottom.x) + Math.abs(topLeft.x);
+    
+    // Store results
+    calibration.results = {
+        width: width,
+        height: height,
+        limitLeft: -width / 2,
+        limitRight: width / 2,
+        limitTop: height * 0.4,
+        limitBottom: -height * 0.6
+    };
+    
+    // Update display
+    document.getElementById('calibResultWidth').textContent = width.toFixed(1);
+    document.getElementById('calibResultHeight').textContent = height.toFixed(1);
+    document.getElementById('calibResultLeft').textContent = calibration.results.limitLeft.toFixed(1);
+    document.getElementById('calibResultRight').textContent = calibration.results.limitRight.toFixed(1);
+    document.getElementById('calibResultTop').textContent = calibration.results.limitTop.toFixed(1);
+    document.getElementById('calibResultBottom').textContent = calibration.results.limitBottom.toFixed(1);
+    
+    logConsole(`Calibration complete: ${width.toFixed(0)}mm x ${height.toFixed(0)}mm`, 'msg-info');
+}
+
+function applyCalibrationSettings() {
+    if (!calibration.results) return;
+    
+    // Update settings fields
+    document.getElementById('limitLeft').value = calibration.results.limitLeft.toFixed(1);
+    document.getElementById('limitRight').value = calibration.results.limitRight.toFixed(1);
+    document.getElementById('limitTop').value = calibration.results.limitTop.toFixed(1);
+    document.getElementById('limitBottom').value = calibration.results.limitBottom.toFixed(1);
+    
+    // Update machine dimensions too
+    const motorSpacing = calibration.results.width * 1.2;
+    document.getElementById('machineWidth').value = motorSpacing.toFixed(1);
+    document.getElementById('machineHeight').value = (calibration.results.height + 200).toFixed(1);
+    
+    logConsole('Calibration settings applied to form', 'msg-info');
+    logConsole('Click "Save Settings" to persist', 'msg-info');
+    
+    closeCalibrationWizard();
+    
+    // Switch to settings panel
+    document.querySelector('[data-panel="settings"]')?.click();
+}
+
+// Update calibration button state based on connection
+function updateCalibrationButton() {
+    const btn = document.getElementById('startCalibration');
+    if (btn) {
+        btn.disabled = !state.connected;
     }
 }
 
