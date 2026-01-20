@@ -114,6 +114,10 @@
 
                 <!-- Context Menu (right-click) -->
                 <div class="context-menu" id="contextMenu" style="display:none;">
+                    <button class="context-item" data-action="editPaths">
+                        <span class="context-icon">✎</span> Edit Paths
+                    </button>
+                    <div class="context-divider"></div>
                     <button class="context-item" data-action="duplicate">
                         <span class="context-icon">⊕</span> Duplicate
                         <span class="context-shortcut">Ctrl+D</span>
@@ -552,6 +556,36 @@
                     <button class="btn primary full" id="calibApplySettings">Apply Settings</button>
                     <button class="btn full" id="calibClose" style="margin-top:8px;">Close</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Path Editor Modal -->
+    <div id="pathEditorModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width: 700px; max-height: 90vh;">
+            <div class="modal-header">
+                <h3>Path Editor</h3>
+                <button class="modal-close" id="closePathEditor">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div class="path-editor-container">
+                    <div class="path-editor-toolbar">
+                        <button class="btn small" id="pathEditorSelectAll">Select All</button>
+                        <button class="btn small" id="pathEditorDeselectAll">Deselect All</button>
+                        <button class="btn small danger" id="pathEditorDeleteSelected">Delete Selected</button>
+                        <span class="path-editor-info" id="pathEditorInfo">0 paths, 0 selected</span>
+                    </div>
+                    <div class="path-editor-canvas-container">
+                        <canvas id="pathEditorCanvas" width="600" height="400"></canvas>
+                    </div>
+                    <div class="path-editor-list" id="pathEditorList">
+                        <!-- Path list items will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px;">
+                <button class="btn" id="pathEditorCancel">Cancel</button>
+                <button class="btn primary" id="pathEditorApply">Apply Changes</button>
             </div>
         </div>
     </div>

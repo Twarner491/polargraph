@@ -781,6 +781,9 @@ function handleContextAction(action) {
             saveHistoryState();
             deleteSelectedEntities();
             break;
+        case 'editPaths':
+            openPathEditor(selected[0]);  // Edit first selected entity
+            break;
     }
 }
 
@@ -3116,58 +3119,62 @@ function parseSvgToEntities(svgText) {
     }
     
     // Helper: Parse SVG path d attribute to array of path segments
-    // Returns array of point arrays - each M command starts a new segment
+    // Returns array of point arrays - each M command starts a new segment (pen lift point)
     function parsePathD(d) {
         const segments = [];  // Array of point arrays
         let points = [];      // Current segment points
-        const commands = d.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi) || [];
+        const commands = d.match(/[MLHVCSQTAZmlhvcsqtaz][^MLHVCSQTAZmlhvcsqtaz]*/g) || [];
         let currentX = 0, currentY = 0;
         let startX = 0, startY = 0;
         
         for (const cmd of commands) {
             const type = cmd[0];
+            const isRelative = type === type.toLowerCase();
             const args = cmd.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
             
             switch (type.toUpperCase()) {
-                case 'M': // Move to - starts a new path segment!
-                    // Save previous segment if it has points
+                case 'M': // Move to - starts a new path segment (pen lift!)
+                    // Save previous segment if it has drawable points
                     if (points.length >= 2) {
-                        segments.push(points);
+                        segments.push([...points]);  // Clone array
                     }
                     // Start new segment
                     points = [];
                     
-                    if (type === 'M') {
-                        currentX = args[0];
-                        currentY = args[1];
-                    } else {
-                        currentX += args[0];
-                        currentY += args[1];
-                    }
-                    startX = currentX;
-                    startY = currentY;
-                    points.push({ x: currentX, y: -currentY }); // Flip Y
-                    // Handle implicit lineto after moveto
-                    for (let i = 2; i < args.length; i += 2) {
-                        if (type === 'M') {
-                            currentX = args[i];
-                            currentY = args[i + 1];
+                    if (args.length >= 2) {
+                        if (isRelative) {
+                            currentX += args[0];
+                            currentY += args[1];
                         } else {
-                            currentX += args[i];
-                            currentY += args[i + 1];
+                            currentX = args[0];
+                            currentY = args[1];
                         }
-                        points.push({ x: currentX, y: -currentY });
+                        startX = currentX;
+                        startY = currentY;
+                        points.push({ x: currentX, y: -currentY }); // Flip Y
+                        
+                        // Handle implicit lineto commands after moveto
+                        for (let i = 2; i + 1 < args.length; i += 2) {
+                            if (isRelative) {
+                                currentX += args[i];
+                                currentY += args[i + 1];
+                            } else {
+                                currentX = args[i];
+                                currentY = args[i + 1];
+                            }
+                            points.push({ x: currentX, y: -currentY });
+                        }
                     }
                     break;
                     
                 case 'L': // Line to
-                    for (let i = 0; i < args.length; i += 2) {
-                        if (type === 'L') {
-                            currentX = args[i];
-                            currentY = args[i + 1];
-                        } else {
+                    for (let i = 0; i + 1 < args.length; i += 2) {
+                        if (isRelative) {
                             currentX += args[i];
                             currentY += args[i + 1];
+                        } else {
+                            currentX = args[i];
+                            currentY = args[i + 1];
                         }
                         points.push({ x: currentX, y: -currentY });
                     }
@@ -3175,34 +3182,35 @@ function parseSvgToEntities(svgText) {
                     
                 case 'H': // Horizontal line
                     for (const val of args) {
-                        currentX = type === 'H' ? val : currentX + val;
+                        currentX = isRelative ? currentX + val : val;
                         points.push({ x: currentX, y: -currentY });
                     }
                     break;
                     
                 case 'V': // Vertical line
                     for (const val of args) {
-                        currentY = type === 'V' ? val : currentY + val;
+                        currentY = isRelative ? currentY + val : val;
                         points.push({ x: currentX, y: -currentY });
                     }
                     break;
                     
-                case 'Z': // Close path
-                    if (startX !== currentX || startY !== currentY) {
+                case 'Z': // Close path - draw back to start
+                    if (Math.abs(startX - currentX) > 0.001 || Math.abs(startY - currentY) > 0.001) {
                         points.push({ x: startX, y: -startY });
                     }
                     currentX = startX;
                     currentY = startY;
+                    // Note: Z doesn't start a new segment - next M will do that
                     break;
                     
                 case 'C': // Cubic bezier - approximate with line segments
-                    for (let i = 0; i < args.length; i += 6) {
-                        const x1 = type === 'C' ? args[i] : currentX + args[i];
-                        const y1 = type === 'C' ? args[i+1] : currentY + args[i+1];
-                        const x2 = type === 'C' ? args[i+2] : currentX + args[i+2];
-                        const y2 = type === 'C' ? args[i+3] : currentY + args[i+3];
-                        const x = type === 'C' ? args[i+4] : currentX + args[i+4];
-                        const y = type === 'C' ? args[i+5] : currentY + args[i+5];
+                    for (let i = 0; i + 5 < args.length; i += 6) {
+                        const x1 = isRelative ? currentX + args[i] : args[i];
+                        const y1 = isRelative ? currentY + args[i+1] : args[i+1];
+                        const x2 = isRelative ? currentX + args[i+2] : args[i+2];
+                        const y2 = isRelative ? currentY + args[i+3] : args[i+3];
+                        const x = isRelative ? currentX + args[i+4] : args[i+4];
+                        const y = isRelative ? currentY + args[i+5] : args[i+5];
                         
                         // Approximate bezier with line segments
                         const steps = 10;
@@ -3224,11 +3232,11 @@ function parseSvgToEntities(svgText) {
                     break;
                     
                 case 'Q': // Quadratic bezier
-                    for (let i = 0; i < args.length; i += 4) {
-                        const x1 = type === 'Q' ? args[i] : currentX + args[i];
-                        const y1 = type === 'Q' ? args[i+1] : currentY + args[i+1];
-                        const x = type === 'Q' ? args[i+2] : currentX + args[i+2];
-                        const y = type === 'Q' ? args[i+3] : currentY + args[i+3];
+                    for (let i = 0; i + 3 < args.length; i += 4) {
+                        const x1 = isRelative ? currentX + args[i] : args[i];
+                        const y1 = isRelative ? currentY + args[i+1] : args[i+1];
+                        const x = isRelative ? currentX + args[i+2] : args[i+2];
+                        const y = isRelative ? currentY + args[i+3] : args[i+3];
                         
                         const steps = 10;
                         for (let t = 1; t <= steps; t++) {
@@ -3247,13 +3255,35 @@ function parseSvgToEntities(svgText) {
                     break;
                     
                 case 'A': // Arc - approximate with line segments
-                    for (let i = 0; i < args.length; i += 7) {
-                        const x = type === 'A' ? args[i+5] : currentX + args[i+5];
-                        const y = type === 'A' ? args[i+6] : currentY + args[i+6];
+                    for (let i = 0; i + 6 < args.length; i += 7) {
+                        const x = isRelative ? currentX + args[i+5] : args[i+5];
+                        const y = isRelative ? currentY + args[i+6] : args[i+6];
                         // Simple approximation: just draw a line (proper arc handling is complex)
                         points.push({ x: x, y: -y });
                         currentX = x;
                         currentY = y;
+                    }
+                    break;
+                    
+                case 'S': // Smooth cubic bezier (reflect previous control point)
+                case 'T': // Smooth quadratic bezier
+                    // For simplicity, treat as line to endpoint
+                    if (type.toUpperCase() === 'S') {
+                        for (let i = 0; i + 3 < args.length; i += 4) {
+                            const x = isRelative ? currentX + args[i+2] : args[i+2];
+                            const y = isRelative ? currentY + args[i+3] : args[i+3];
+                            points.push({ x: x, y: -y });
+                            currentX = x;
+                            currentY = y;
+                        }
+                    } else {
+                        for (let i = 0; i + 1 < args.length; i += 2) {
+                            const x = isRelative ? currentX + args[i] : args[i];
+                            const y = isRelative ? currentY + args[i+1] : args[i+1];
+                            points.push({ x: x, y: -y });
+                            currentX = x;
+                            currentY = y;
+                        }
                     }
                     break;
             }
@@ -3261,9 +3291,10 @@ function parseSvgToEntities(svgText) {
         
         // Save final segment
         if (points.length >= 2) {
-            segments.push(points);
+            segments.push([...points]);  // Clone to be safe
         }
         
+        console.log(`[SVG] Parsed path into ${segments.length} segments`);
         return segments;
     }
     
@@ -5053,6 +5084,342 @@ function updateCalibrationButton() {
     if (btn) {
         btn.disabled = !state.connected;
     }
+}
+
+// ============================================================================
+// Path Editor
+// ============================================================================
+
+const pathEditor = {
+    entity: null,           // Entity being edited
+    paths: [],              // Copy of paths for editing
+    selectedPaths: new Set(), // Selected path indices
+    canvas: null,
+    ctx: null,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0
+};
+
+function openPathEditor(entity) {
+    if (!entity) return;
+    
+    const modal = document.getElementById('pathEditorModal');
+    if (!modal) return;
+    
+    // Clone the entity's paths for editing
+    pathEditor.entity = entity;
+    pathEditor.paths = entity.paths.map(p => ({
+        points: p.points.map(pt => ({ ...pt })),
+        color: p.color,
+        diameter: p.diameter
+    }));
+    pathEditor.selectedPaths = new Set();
+    
+    // Setup canvas
+    pathEditor.canvas = document.getElementById('pathEditorCanvas');
+    pathEditor.ctx = pathEditor.canvas.getContext('2d');
+    
+    // Resize canvas
+    const container = pathEditor.canvas.parentElement;
+    const dpr = window.devicePixelRatio || 1;
+    pathEditor.canvas.width = container.clientWidth * dpr;
+    pathEditor.canvas.height = 300 * dpr;
+    pathEditor.canvas.style.height = '300px';
+    
+    // Calculate scale to fit all paths
+    fitPathEditorView();
+    
+    // Show modal
+    modal.style.display = 'flex';
+    
+    // Draw initial state
+    updatePathEditorList();
+    drawPathEditorCanvas();
+    
+    // Setup event listeners
+    initPathEditorEvents();
+    
+    logConsole(`Editing ${pathEditor.paths.length} paths`, 'msg-info');
+}
+
+function closePathEditor() {
+    const modal = document.getElementById('pathEditorModal');
+    if (modal) modal.style.display = 'none';
+    pathEditor.entity = null;
+    pathEditor.paths = [];
+    pathEditor.selectedPaths = new Set();
+}
+
+function initPathEditorEvents() {
+    // Close button
+    document.getElementById('closePathEditor')?.addEventListener('click', closePathEditor);
+    document.getElementById('pathEditorCancel')?.addEventListener('click', closePathEditor);
+    
+    // Apply changes
+    document.getElementById('pathEditorApply')?.addEventListener('click', applyPathEditorChanges);
+    
+    // Toolbar buttons
+    document.getElementById('pathEditorSelectAll')?.addEventListener('click', () => {
+        pathEditor.paths.forEach((_, i) => pathEditor.selectedPaths.add(i));
+        updatePathEditorList();
+        drawPathEditorCanvas();
+    });
+    
+    document.getElementById('pathEditorDeselectAll')?.addEventListener('click', () => {
+        pathEditor.selectedPaths.clear();
+        updatePathEditorList();
+        drawPathEditorCanvas();
+    });
+    
+    document.getElementById('pathEditorDeleteSelected')?.addEventListener('click', deleteSelectedPaths);
+    
+    // Canvas click to select paths
+    pathEditor.canvas?.addEventListener('click', onPathEditorCanvasClick);
+    
+    // Close on background click
+    document.getElementById('pathEditorModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'pathEditorModal') closePathEditor();
+    });
+}
+
+function fitPathEditorView() {
+    if (pathEditor.paths.length === 0) return;
+    
+    // Calculate bounds
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    pathEditor.paths.forEach(path => {
+        path.points.forEach(p => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+    });
+    
+    const width = maxX - minX || 100;
+    const height = maxY - minY || 100;
+    const canvasW = pathEditor.canvas.width / (window.devicePixelRatio || 1);
+    const canvasH = pathEditor.canvas.height / (window.devicePixelRatio || 1);
+    
+    const scaleX = (canvasW - 40) / width;
+    const scaleY = (canvasH - 40) / height;
+    pathEditor.scale = Math.min(scaleX, scaleY, 2);
+    
+    pathEditor.offsetX = canvasW / 2 - ((minX + maxX) / 2) * pathEditor.scale;
+    pathEditor.offsetY = canvasH / 2 + ((minY + maxY) / 2) * pathEditor.scale;  // Flip Y
+}
+
+function drawPathEditorCanvas() {
+    const ctx = pathEditor.ctx;
+    const canvas = pathEditor.canvas;
+    if (!ctx || !canvas) return;
+    
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    
+    // Background
+    ctx.fillStyle = '#fafaf8';
+    ctx.fillRect(0, 0, w, h);
+    
+    // Transform
+    ctx.translate(pathEditor.offsetX, pathEditor.offsetY);
+    ctx.scale(pathEditor.scale, -pathEditor.scale);  // Flip Y
+    
+    // Draw all paths
+    pathEditor.paths.forEach((path, idx) => {
+        if (path.points.length < 2) return;
+        
+        const isSelected = pathEditor.selectedPaths.has(idx);
+        
+        ctx.strokeStyle = isSelected ? '#e74c3c' : '#333';
+        ctx.lineWidth = isSelected ? 2 / pathEditor.scale : 1 / pathEditor.scale;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        ctx.beginPath();
+        ctx.moveTo(path.points[0].x, path.points[0].y);
+        for (let i = 1; i < path.points.length; i++) {
+            ctx.lineTo(path.points[i].x, path.points[i].y);
+        }
+        ctx.stroke();
+        
+        // Draw start point marker
+        if (isSelected) {
+            const nodeSize = 4 / pathEditor.scale;
+            ctx.fillStyle = '#3498db';
+            ctx.beginPath();
+            ctx.arc(path.points[0].x, path.points[0].y, nodeSize, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // End point
+            const lastPt = path.points[path.points.length - 1];
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(lastPt.x, lastPt.y, nodeSize, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    });
+    
+    ctx.restore();
+}
+
+function updatePathEditorList() {
+    const list = document.getElementById('pathEditorList');
+    const info = document.getElementById('pathEditorInfo');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    
+    pathEditor.paths.forEach((path, idx) => {
+        const isSelected = pathEditor.selectedPaths.has(idx);
+        const item = document.createElement('div');
+        item.className = `path-editor-item${isSelected ? ' selected' : ''}`;
+        item.innerHTML = `
+            <input type="checkbox" ${isSelected ? 'checked' : ''}>
+            <div class="path-color" style="background: #333;"></div>
+            <span class="path-info">Path ${idx + 1}</span>
+            <span class="path-points">${path.points.length} pts</span>
+        `;
+        
+        item.addEventListener('click', (e) => {
+            if (e.target.type === 'checkbox') {
+                if (e.target.checked) {
+                    pathEditor.selectedPaths.add(idx);
+                } else {
+                    pathEditor.selectedPaths.delete(idx);
+                }
+            } else {
+                if (pathEditor.selectedPaths.has(idx)) {
+                    pathEditor.selectedPaths.delete(idx);
+                } else {
+                    pathEditor.selectedPaths.add(idx);
+                }
+            }
+            updatePathEditorList();
+            drawPathEditorCanvas();
+        });
+        
+        list.appendChild(item);
+    });
+    
+    if (info) {
+        info.textContent = `${pathEditor.paths.length} paths, ${pathEditor.selectedPaths.size} selected`;
+    }
+}
+
+function onPathEditorCanvasClick(e) {
+    const rect = pathEditor.canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const clickX = (e.clientX - rect.left);
+    const clickY = (e.clientY - rect.top);
+    
+    // Transform click to path coordinates
+    const pathX = (clickX - pathEditor.offsetX) / pathEditor.scale;
+    const pathY = -(clickY - pathEditor.offsetY) / pathEditor.scale;  // Flip Y
+    
+    // Find closest path
+    let closestIdx = -1;
+    let closestDist = 20 / pathEditor.scale;  // Threshold in path units
+    
+    pathEditor.paths.forEach((path, idx) => {
+        for (let i = 0; i < path.points.length - 1; i++) {
+            const dist = pointToLineDistance(
+                pathX, pathY,
+                path.points[i].x, path.points[i].y,
+                path.points[i + 1].x, path.points[i + 1].y
+            );
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestIdx = idx;
+            }
+        }
+    });
+    
+    // Toggle selection
+    if (closestIdx >= 0) {
+        if (e.shiftKey) {
+            // Add to selection
+            if (pathEditor.selectedPaths.has(closestIdx)) {
+                pathEditor.selectedPaths.delete(closestIdx);
+            } else {
+                pathEditor.selectedPaths.add(closestIdx);
+            }
+        } else {
+            // Replace selection
+            pathEditor.selectedPaths.clear();
+            pathEditor.selectedPaths.add(closestIdx);
+        }
+        updatePathEditorList();
+        drawPathEditorCanvas();
+    }
+}
+
+function pointToLineDistance(px, py, x1, y1, x2, y2) {
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+    
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+    
+    if (lenSq !== 0) param = dot / lenSq;
+    
+    let xx, yy;
+    if (param < 0) {
+        xx = x1; yy = y1;
+    } else if (param > 1) {
+        xx = x2; yy = y2;
+    } else {
+        xx = x1 + param * C;
+        yy = y1 + param * D;
+    }
+    
+    const dx = px - xx;
+    const dy = py - yy;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function deleteSelectedPaths() {
+    if (pathEditor.selectedPaths.size === 0) return;
+    
+    // Remove selected paths (in reverse order to maintain indices)
+    const toDelete = Array.from(pathEditor.selectedPaths).sort((a, b) => b - a);
+    toDelete.forEach(idx => {
+        pathEditor.paths.splice(idx, 1);
+    });
+    
+    pathEditor.selectedPaths.clear();
+    updatePathEditorList();
+    drawPathEditorCanvas();
+    
+    logConsole(`Deleted ${toDelete.length} paths`, 'msg-info');
+}
+
+function applyPathEditorChanges() {
+    if (!pathEditor.entity) return;
+    
+    saveHistoryState();
+    
+    // Apply the edited paths back to the entity
+    pathEditor.entity.paths = pathEditor.paths.map(p => ({
+        points: p.points.map(pt => ({ ...pt })),
+        color: p.color,
+        diameter: p.diameter
+    }));
+    
+    closePathEditor();
+    updateEntityList();
+    drawCanvas();
+    
+    logConsole(`Applied path changes (${pathEditor.entity.paths.length} paths)`, 'msg-info');
 }
 
 // ============================================================================
