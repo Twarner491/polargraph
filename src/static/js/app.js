@@ -1709,7 +1709,7 @@ function initEventListeners() {
     if (gridTypeSelect) {
         // Load saved preference
         const savedGridType = localStorage.getItem('polargraph_gridType');
-        if (savedGridType) {
+        if (savedGridType && ['cartesian', 'polar', 'off'].includes(savedGridType)) {
             state.gridType = savedGridType;
             gridTypeSelect.value = savedGridType;
         }
@@ -1717,8 +1717,12 @@ function initEventListeners() {
         gridTypeSelect.addEventListener('change', (e) => {
             state.gridType = e.target.value;
             localStorage.setItem('polargraph_gridType', state.gridType);
+            console.log('Grid type changed to:', state.gridType);
             drawCanvas();
         });
+        
+        // Redraw canvas now that grid preference is loaded
+        drawCanvas();
     }
 }
 
