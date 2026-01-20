@@ -3828,15 +3828,11 @@ function parseGcodeToEntities(gcodeText) {
     if (polargraphMetadata && polargraphMetadata.length > 0) {
         // Reconstruct entities from metadata
         let pathIdx = 0;
-        console.log('[GCODE Import] Found metadata for', polargraphMetadata.length, 'entities');
         
         polargraphMetadata.forEach((meta, idx) => {
             const count = meta.pathCount || 0;
             const entityPaths = paths.slice(pathIdx, pathIdx + count);
             pathIdx += count;
-            
-            // Log the transforms being applied
-            console.log(`[GCODE Import] Entity ${idx}: "${meta.name}" - scale=${meta.scale}, rotation=${meta.rotation}, offset=(${meta.offsetX}, ${meta.offsetY}), paths=${entityPaths.length}`);
             
             if (entityPaths.length > 0) {
                 entities.push({
@@ -3844,7 +3840,7 @@ function parseGcodeToEntities(gcodeText) {
                     color: meta.color || 'black',
                     name: meta.name || `Entity ${idx + 1}`,
                     algorithm: meta.algorithm || 'imported',
-                    // These should be identity transforms for v2 exports
+                    // v2 exports store identity transforms since coords are pre-transformed
                     offsetX: meta.offsetX || 0,
                     offsetY: meta.offsetY || 0,
                     scale: meta.scale || 1,

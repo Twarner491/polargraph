@@ -114,6 +114,11 @@
 
                 <!-- Context Menu (right-click) -->
                 <div class="context-menu" id="contextMenu" style="display:none;">
+                    <button class="context-item" data-action="rename">
+                        <span class="context-icon">✏</span> Rename
+                        <span class="context-shortcut">F2</span>
+                    </button>
+                    <div class="context-divider"></div>
                     <button class="context-item" data-action="duplicate">
                         <span class="context-icon">⊕</span> Duplicate
                         <span class="context-shortcut">Ctrl+D</span>
@@ -386,9 +391,171 @@
                     </div>
 
                     <div class="panel-section">
+                        <div class="section-title">Display</div>
+                        <div class="setting-row">
+                            <label>Grid Type</label>
+                            <select id="gridType">
+                                <option value="cartesian">Cartesian</option>
+                                <option value="polar">Polar</option>
+                                <option value="off">Off</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <div class="section-title">Calibration</div>
+                        <button class="btn full" id="startCalibration" disabled>Calibrate Machine</button>
+                        <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                            Measure actual machine dimensions by moving the gondola to corners
+                        </small>
+                    </div>
+
+                    <div class="panel-section">
                         <button class="btn full" id="saveSettings">Save Settings</button>
                         <button class="btn full" id="clearUploads" style="margin-top:8px;">Clear Uploads</button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calibration Wizard Modal -->
+    <div id="calibrationModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 id="calibrationTitle">Machine Calibration</h3>
+                <button class="modal-close" id="closeCalibration">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="calibrationStep1" class="calibration-step">
+                    <p><strong>Step 1: Move to Center</strong></p>
+                    <p>Use the jog controls below to move the gondola to the <strong>center</strong> of your work area. This is your reference point.</p>
+                    <div class="calibration-jog">
+                        <div class="jog-grid mini">
+                            <button class="jog-btn" data-dir="up-left">↖</button>
+                            <button class="jog-btn" data-dir="up">↑</button>
+                            <button class="jog-btn" data-dir="up-right">↗</button>
+                            <button class="jog-btn" data-dir="left">←</button>
+                            <button class="jog-btn jog-home" data-dir="disable">M</button>
+                            <button class="jog-btn" data-dir="right">→</button>
+                            <button class="jog-btn" data-dir="down-left">↙</button>
+                            <button class="jog-btn" data-dir="down">↓</button>
+                            <button class="jog-btn" data-dir="down-right">↘</button>
+                        </div>
+                        <div class="jog-step-select">
+                            <label>Step:</label>
+                            <select id="calibJogStep">
+                                <option value="1">1mm</option>
+                                <option value="5">5mm</option>
+                                <option value="10" selected>10mm</option>
+                                <option value="50">50mm</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn primary full" id="calibRecordCenter">Record Center Position</button>
+                </div>
+                
+                <div id="calibrationStep2" class="calibration-step" style="display:none;">
+                    <p><strong>Step 2: Move to Top-Left Corner</strong></p>
+                    <p>Move the gondola to the <strong>top-left corner</strong> of your desired work area.</p>
+                    <div class="calibration-jog">
+                        <div class="jog-grid mini">
+                            <button class="jog-btn" data-dir="up-left">↖</button>
+                            <button class="jog-btn" data-dir="up">↑</button>
+                            <button class="jog-btn" data-dir="up-right">↗</button>
+                            <button class="jog-btn" data-dir="left">←</button>
+                            <button class="jog-btn jog-home" data-dir="disable">M</button>
+                            <button class="jog-btn" data-dir="right">→</button>
+                            <button class="jog-btn" data-dir="down-left">↙</button>
+                            <button class="jog-btn" data-dir="down">↓</button>
+                            <button class="jog-btn" data-dir="down-right">↘</button>
+                        </div>
+                        <div class="jog-step-select">
+                            <label>Step:</label>
+                            <select id="calibJogStep2">
+                                <option value="1">1mm</option>
+                                <option value="5">5mm</option>
+                                <option value="10" selected>10mm</option>
+                                <option value="50">50mm</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="calib-distance" id="calibDist1"></p>
+                    <button class="btn primary full" id="calibRecordTopLeft">Record Top-Left</button>
+                </div>
+                
+                <div id="calibrationStep3" class="calibration-step" style="display:none;">
+                    <p><strong>Step 3: Move to Top-Right Corner</strong></p>
+                    <p>Move the gondola to the <strong>top-right corner</strong> of your desired work area.</p>
+                    <div class="calibration-jog">
+                        <div class="jog-grid mini">
+                            <button class="jog-btn" data-dir="up-left">↖</button>
+                            <button class="jog-btn" data-dir="up">↑</button>
+                            <button class="jog-btn" data-dir="up-right">↗</button>
+                            <button class="jog-btn" data-dir="left">←</button>
+                            <button class="jog-btn jog-home" data-dir="disable">M</button>
+                            <button class="jog-btn" data-dir="right">→</button>
+                            <button class="jog-btn" data-dir="down-left">↙</button>
+                            <button class="jog-btn" data-dir="down">↓</button>
+                            <button class="jog-btn" data-dir="down-right">↘</button>
+                        </div>
+                        <div class="jog-step-select">
+                            <label>Step:</label>
+                            <select id="calibJogStep3">
+                                <option value="1">1mm</option>
+                                <option value="5">5mm</option>
+                                <option value="10" selected>10mm</option>
+                                <option value="50">50mm</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="calib-distance" id="calibDist2"></p>
+                    <button class="btn primary full" id="calibRecordTopRight">Record Top-Right</button>
+                </div>
+                
+                <div id="calibrationStep4" class="calibration-step" style="display:none;">
+                    <p><strong>Step 4: Move to Bottom-Center</strong></p>
+                    <p>Move the gondola to the <strong>bottom center</strong> of your desired work area.</p>
+                    <div class="calibration-jog">
+                        <div class="jog-grid mini">
+                            <button class="jog-btn" data-dir="up-left">↖</button>
+                            <button class="jog-btn" data-dir="up">↑</button>
+                            <button class="jog-btn" data-dir="up-right">↗</button>
+                            <button class="jog-btn" data-dir="left">←</button>
+                            <button class="jog-btn jog-home" data-dir="disable">M</button>
+                            <button class="jog-btn" data-dir="right">→</button>
+                            <button class="jog-btn" data-dir="down-left">↙</button>
+                            <button class="jog-btn" data-dir="down">↓</button>
+                            <button class="jog-btn" data-dir="down-right">↘</button>
+                        </div>
+                        <div class="jog-step-select">
+                            <label>Step:</label>
+                            <select id="calibJogStep4">
+                                <option value="1">1mm</option>
+                                <option value="5">5mm</option>
+                                <option value="10" selected>10mm</option>
+                                <option value="50">50mm</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="calib-distance" id="calibDist3"></p>
+                    <button class="btn primary full" id="calibRecordBottom">Record Bottom-Center</button>
+                </div>
+                
+                <div id="calibrationResults" class="calibration-step" style="display:none;">
+                    <p><strong>Calibration Complete!</strong></p>
+                    <div class="calib-results">
+                        <p><strong>Measured Work Area:</strong></p>
+                        <p>Width: <span id="calibResultWidth">-</span> mm</p>
+                        <p>Height: <span id="calibResultHeight">-</span> mm</p>
+                        <p style="margin-top:12px;"><strong>Recommended Settings:</strong></p>
+                        <p>Left: <span id="calibResultLeft">-</span></p>
+                        <p>Right: <span id="calibResultRight">-</span></p>
+                        <p>Top: <span id="calibResultTop">-</span></p>
+                        <p>Bottom: <span id="calibResultBottom">-</span></p>
+                    </div>
+                    <button class="btn primary full" id="calibApplySettings">Apply Settings</button>
+                    <button class="btn full" id="calibClose" style="margin-top:8px;">Close</button>
                 </div>
             </div>
         </div>

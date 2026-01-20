@@ -235,6 +235,7 @@ const state = {
     previewOffsetX: 0,
     previewOffsetY: 0,
     previewScale: 1,
+    gridType: 'cartesian',  // 'cartesian', 'polar', or 'off'
     isDragging: false,
     dragStartX: 0,
     dragStartY: 0,
@@ -483,6 +484,13 @@ function initKeyboardShortcuts() {
             e.preventDefault();
             saveHistoryState();
             deleteSelectedEntities();
+            return;
+        }
+        
+        // F2 - Rename selected entity
+        if (e.key === 'F2' && state.selectedEntityIds.size === 1) {
+            e.preventDefault();
+            renameSelectedEntity();
             return;
         }
         
@@ -780,6 +788,32 @@ function handleContextAction(action) {
             saveHistoryState();
             deleteSelectedEntities();
             break;
+        case 'rename':
+            renameSelectedEntity();
+            break;
+    }
+}
+
+function renameSelectedEntity() {
+    const selected = getSelectedEntities();
+    if (selected.length !== 1) {
+        logConsole('Select a single layer to rename', 'msg-error');
+        return;
+    }
+    
+    const entity = selected[0];
+    const entityItem = document.querySelector(`.entity-item.selected .entity-name`);
+    if (entityItem) {
+        startEntityRename(entity.id, entityItem);
+    } else {
+        // Fallback: use prompt
+        const newName = prompt('Enter new name:', entity.name);
+        if (newName && newName.trim() && newName !== entity.name) {
+            saveHistoryState();
+            entity.name = newName.trim();
+            updateEntityList();
+            logConsole(`Renamed to "${entity.name}"`, 'msg-info');
+        }
     }
 }
 
@@ -1455,12 +1489,19 @@ function startEntityRename(entityId, element) {
     const entity = state.entities.find(e => e.id === entityId);
     if (!entity) return;
     
+    // Check if we're already editing
+    if (element.tagName === 'INPUT') return;
+    
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'entity-name-input';
     input.value = entity.name;
     
+    let finished = false;
     const finishRename = () => {
+        if (finished) return;  // Prevent double-firing
+        finished = true;
+        
         const newName = input.value.trim();
         if (newName && newName !== entity.name) {
             saveHistoryState();
@@ -1472,18 +1513,28 @@ function startEntityRename(entityId, element) {
     
     input.addEventListener('blur', finishRename);
     input.addEventListener('keydown', (e) => {
+        e.stopPropagation();  // Prevent keyboard shortcuts from firing
         if (e.key === 'Enter') {
             e.preventDefault();
             input.blur();
         } else if (e.key === 'Escape') {
-            input.value = entity.name;
-            input.blur();
+            e.preventDefault();
+            input.value = entity.name;  // Reset to original
+            finished = true;  // Skip saving
+            updateEntityList();  // Just refresh without saving
         }
     });
     
-    element.replaceWith(input);
-    input.focus();
-    input.select();
+    // Prevent click from bubbling to parent (which would select)
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+    
+    // Replace the span with input
+    if (element.parentNode) {
+        element.parentNode.replaceChild(input, element);
+        input.focus();
+        input.select();
+    }
 }
 
 function updateExportInfo() {
@@ -1699,6 +1750,30 @@ function initEventListeners() {
     // Settings
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
     document.getElementById('clearUploads').addEventListener('click', clearUploads);
+    
+    // Calibration
+    initCalibrationWizard();
+    
+    // Grid type toggle
+    const gridTypeSelect = document.getElementById('gridType');
+    if (gridTypeSelect) {
+        // Load saved preference
+        const savedGridType = localStorage.getItem('polargraph_gridType');
+        if (savedGridType && ['cartesian', 'polar', 'off'].includes(savedGridType)) {
+            state.gridType = savedGridType;
+            gridTypeSelect.value = savedGridType;
+        }
+        
+        gridTypeSelect.addEventListener('change', (e) => {
+            state.gridType = e.target.value;
+            localStorage.setItem('polargraph_gridType', state.gridType);
+            console.log('Grid type changed to:', state.gridType);
+            drawCanvas();
+        });
+        
+        // Redraw canvas now that grid preference is loaded
+        drawCanvas();
+    }
 }
 
 // ============================================================================
@@ -2198,6 +2273,9 @@ function setConnectionStatus(connected, port = null) {
         btn.classList.remove('active');
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
     }
+    
+    // Update calibration button
+    updateCalibrationButton();
 }
 
 async function toggleMotors() {
@@ -2762,6 +2840,11 @@ async function exportGcode() {
         return;
     }
     
+    // Prompt for filename
+    const defaultName = state.currentFileName?.replace(/\.[^.]+$/, '') || 'drawing';
+    const filename = prompt('Enter filename for G-code export:', defaultName);
+    if (!filename) return;  // User cancelled
+    
     // Group entities by color
     const colorGroups = {};
     visibleEntities.forEach(entity => {
@@ -2775,26 +2858,23 @@ async function exportGcode() {
     
     if (colors.length === 1) {
         // Single color - export as single file
-        const gcode = generateGcodeForEntities(state.entities, colors[0]);
-        const colorName = PEN_COLORS[colors[0]]?.name || colors[0];
-        downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
-        logConsole(`Exported G-code (${colorName}) with metadata`, 'msg-info');
+        const gcode = generateGcodeForEntities(visibleEntities, colors[0]);
+        downloadFile(`${filename}.gcode`, gcode.join('\n'), 'text/plain');
+        logConsole(`Exported G-code: ${filename}.gcode`, 'msg-info');
     } else {
-        // Multiple colors - export as ZIP or separate files
+        // Multiple colors - export separate files per color
         logConsole(`Exporting ${colors.length} G-code files (one per color)...`, 'msg-info');
         
-        // Export each color as separate file
         for (const colorId of colors) {
             const entities = colorGroups[colorId];
             const gcode = generateGcodeForEntities(entities, colorId);
             const colorName = PEN_COLORS[colorId]?.name || colorId;
             
-            // Small delay between downloads for browser compatibility
             await new Promise(resolve => setTimeout(resolve, 100));
-            downloadFile(`drawing_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
+            downloadFile(`${filename}_${colorName.toLowerCase()}.gcode`, gcode.join('\n'), 'text/plain');
         }
         
-        logConsole(`Exported ${colors.length} G-code files with metadata`, 'msg-info');
+        logConsole(`Exported ${colors.length} G-code files`, 'msg-info');
     }
 }
 
@@ -2831,8 +2911,20 @@ function generateGcodeForEntities(entities, colorId = null) {
     const turtle = new Turtle();
     const lines = [];
     
+    // Get current settings for metadata
+    const settings = {
+        pen_angle_up: parseFloat(document.getElementById('penUpAngle')?.value) || 90,
+        pen_angle_down: parseFloat(document.getElementById('penDownAngle')?.value) || 40,
+        feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 1000,
+        feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 500,
+        limit_left: parseFloat(document.getElementById('limitLeft')?.value) || -420.5,
+        limit_right: parseFloat(document.getElementById('limitRight')?.value) || 420.5,
+        limit_top: parseFloat(document.getElementById('limitTop')?.value) || 594.5,
+        limit_bottom: parseFloat(document.getElementById('limitBottom')?.value) || -594.5
+    };
+    
     // Add header with metadata
-    lines.push('; Generated by Polargraph');
+    lines.push('; Generated by Polargraph v2');
     lines.push(`; Date: ${new Date().toISOString()}`);
     lines.push(`; Entities: ${entities.length}`);
     if (colorId) {
@@ -2841,12 +2933,27 @@ function generateGcodeForEntities(entities, colorId = null) {
     }
     lines.push(';');
     
+    // Add settings metadata for reimport
+    lines.push(`; polargraph-settings: ${JSON.stringify(settings)}`);
+    
     // Add entity metadata as JSON comment for reimport
+    // NOTE: Transforms are APPLIED during export, so coordinates are final
+    // Store identity transforms so reimport doesn't double-apply them
     const metadata = entities.map(e => ({
         name: e.name,
         color: e.color,
         algorithm: e.algorithm,
-        pathCount: e.paths.length
+        pathCount: e.paths.length,
+        // Coordinates are already transformed, so store identity transforms
+        scale: 1,
+        rotation: 0,
+        offsetX: 0,
+        offsetY: 0,
+        // Store original transforms for reference only (prefixed with orig_)
+        orig_scale: e.scale || 1,
+        orig_rotation: e.rotation || 0,
+        orig_offsetX: e.offsetX || 0,
+        orig_offsetY: e.offsetY || 0
     }));
     lines.push(`; polargraph-metadata: ${JSON.stringify(metadata)}`);
     lines.push(';');
@@ -3087,50 +3194,63 @@ function parseSvgToEntities(svgText) {
         [vbMinX, vbMinY, vbWidth, vbHeight] = parts;
     }
     
-    // Helper: Parse SVG path d attribute to points
+    // Helper: Parse SVG path d attribute to array of path segments
+    // Returns array of point arrays - each M command starts a new segment (pen lift point)
     function parsePathD(d) {
-        const points = [];
-        const commands = d.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi) || [];
+        const segments = [];  // Array of point arrays
+        let points = [];      // Current segment points
+        const commands = d.match(/[MLHVCSQTAZmlhvcsqtaz][^MLHVCSQTAZmlhvcsqtaz]*/g) || [];
         let currentX = 0, currentY = 0;
         let startX = 0, startY = 0;
         
         for (const cmd of commands) {
             const type = cmd[0];
+            const isRelative = type === type.toLowerCase();
             const args = cmd.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
             
             switch (type.toUpperCase()) {
-                case 'M': // Move to
-                    if (type === 'M') {
-                        currentX = args[0];
-                        currentY = args[1];
-                    } else {
-                        currentX += args[0];
-                        currentY += args[1];
+                case 'M': // Move to - starts a new path segment (pen lift!)
+                    // Save previous segment if it has drawable points
+                    if (points.length >= 2) {
+                        segments.push([...points]);  // Clone array
                     }
-                    startX = currentX;
-                    startY = currentY;
-                    points.push({ x: currentX, y: -currentY }); // Flip Y
-                    // Handle implicit lineto after moveto
-                    for (let i = 2; i < args.length; i += 2) {
-                        if (type === 'M') {
-                            currentX = args[i];
-                            currentY = args[i + 1];
+                    // Start new segment
+                    points = [];
+                    
+                    if (args.length >= 2) {
+                        if (isRelative) {
+                            currentX += args[0];
+                            currentY += args[1];
                         } else {
-                            currentX += args[i];
-                            currentY += args[i + 1];
+                            currentX = args[0];
+                            currentY = args[1];
                         }
-                        points.push({ x: currentX, y: -currentY });
+                        startX = currentX;
+                        startY = currentY;
+                        points.push({ x: currentX, y: -currentY }); // Flip Y
+                        
+                        // Handle implicit lineto commands after moveto
+                        for (let i = 2; i + 1 < args.length; i += 2) {
+                            if (isRelative) {
+                                currentX += args[i];
+                                currentY += args[i + 1];
+                            } else {
+                                currentX = args[i];
+                                currentY = args[i + 1];
+                            }
+                            points.push({ x: currentX, y: -currentY });
+                        }
                     }
                     break;
                     
                 case 'L': // Line to
-                    for (let i = 0; i < args.length; i += 2) {
-                        if (type === 'L') {
-                            currentX = args[i];
-                            currentY = args[i + 1];
-                        } else {
+                    for (let i = 0; i + 1 < args.length; i += 2) {
+                        if (isRelative) {
                             currentX += args[i];
                             currentY += args[i + 1];
+                        } else {
+                            currentX = args[i];
+                            currentY = args[i + 1];
                         }
                         points.push({ x: currentX, y: -currentY });
                     }
@@ -3138,34 +3258,35 @@ function parseSvgToEntities(svgText) {
                     
                 case 'H': // Horizontal line
                     for (const val of args) {
-                        currentX = type === 'H' ? val : currentX + val;
+                        currentX = isRelative ? currentX + val : val;
                         points.push({ x: currentX, y: -currentY });
                     }
                     break;
                     
                 case 'V': // Vertical line
                     for (const val of args) {
-                        currentY = type === 'V' ? val : currentY + val;
+                        currentY = isRelative ? currentY + val : val;
                         points.push({ x: currentX, y: -currentY });
                     }
                     break;
                     
-                case 'Z': // Close path
-                    if (startX !== currentX || startY !== currentY) {
+                case 'Z': // Close path - draw back to start
+                    if (Math.abs(startX - currentX) > 0.001 || Math.abs(startY - currentY) > 0.001) {
                         points.push({ x: startX, y: -startY });
                     }
                     currentX = startX;
                     currentY = startY;
+                    // Note: Z doesn't start a new segment - next M will do that
                     break;
                     
                 case 'C': // Cubic bezier - approximate with line segments
-                    for (let i = 0; i < args.length; i += 6) {
-                        const x1 = type === 'C' ? args[i] : currentX + args[i];
-                        const y1 = type === 'C' ? args[i+1] : currentY + args[i+1];
-                        const x2 = type === 'C' ? args[i+2] : currentX + args[i+2];
-                        const y2 = type === 'C' ? args[i+3] : currentY + args[i+3];
-                        const x = type === 'C' ? args[i+4] : currentX + args[i+4];
-                        const y = type === 'C' ? args[i+5] : currentY + args[i+5];
+                    for (let i = 0; i + 5 < args.length; i += 6) {
+                        const x1 = isRelative ? currentX + args[i] : args[i];
+                        const y1 = isRelative ? currentY + args[i+1] : args[i+1];
+                        const x2 = isRelative ? currentX + args[i+2] : args[i+2];
+                        const y2 = isRelative ? currentY + args[i+3] : args[i+3];
+                        const x = isRelative ? currentX + args[i+4] : args[i+4];
+                        const y = isRelative ? currentY + args[i+5] : args[i+5];
                         
                         // Approximate bezier with line segments
                         const steps = 10;
@@ -3187,11 +3308,11 @@ function parseSvgToEntities(svgText) {
                     break;
                     
                 case 'Q': // Quadratic bezier
-                    for (let i = 0; i < args.length; i += 4) {
-                        const x1 = type === 'Q' ? args[i] : currentX + args[i];
-                        const y1 = type === 'Q' ? args[i+1] : currentY + args[i+1];
-                        const x = type === 'Q' ? args[i+2] : currentX + args[i+2];
-                        const y = type === 'Q' ? args[i+3] : currentY + args[i+3];
+                    for (let i = 0; i + 3 < args.length; i += 4) {
+                        const x1 = isRelative ? currentX + args[i] : args[i];
+                        const y1 = isRelative ? currentY + args[i+1] : args[i+1];
+                        const x = isRelative ? currentX + args[i+2] : args[i+2];
+                        const y = isRelative ? currentY + args[i+3] : args[i+3];
                         
                         const steps = 10;
                         for (let t = 1; t <= steps; t++) {
@@ -3210,19 +3331,47 @@ function parseSvgToEntities(svgText) {
                     break;
                     
                 case 'A': // Arc - approximate with line segments
-                    for (let i = 0; i < args.length; i += 7) {
-                        const x = type === 'A' ? args[i+5] : currentX + args[i+5];
-                        const y = type === 'A' ? args[i+6] : currentY + args[i+6];
+                    for (let i = 0; i + 6 < args.length; i += 7) {
+                        const x = isRelative ? currentX + args[i+5] : args[i+5];
+                        const y = isRelative ? currentY + args[i+6] : args[i+6];
                         // Simple approximation: just draw a line (proper arc handling is complex)
                         points.push({ x: x, y: -y });
                         currentX = x;
                         currentY = y;
                     }
                     break;
+                    
+                case 'S': // Smooth cubic bezier (reflect previous control point)
+                case 'T': // Smooth quadratic bezier
+                    // For simplicity, treat as line to endpoint
+                    if (type.toUpperCase() === 'S') {
+                        for (let i = 0; i + 3 < args.length; i += 4) {
+                            const x = isRelative ? currentX + args[i+2] : args[i+2];
+                            const y = isRelative ? currentY + args[i+3] : args[i+3];
+                            points.push({ x: x, y: -y });
+                            currentX = x;
+                            currentY = y;
+                        }
+                    } else {
+                        for (let i = 0; i + 1 < args.length; i += 2) {
+                            const x = isRelative ? currentX + args[i] : args[i];
+                            const y = isRelative ? currentY + args[i+1] : args[i+1];
+                            points.push({ x: x, y: -y });
+                            currentX = x;
+                            currentY = y;
+                        }
+                    }
+                    break;
             }
         }
         
-        return points;
+        // Save final segment
+        if (points.length >= 2) {
+            segments.push([...points]);  // Clone to be safe
+        }
+        
+        console.log(`[SVG] Parsed path into ${segments.length} segments`);
+        return segments;
     }
     
     // Helper: Get stroke color from element (handling inheritance)
@@ -3305,42 +3454,45 @@ function parseSvgToEntities(svgText) {
             const dataColor = group.getAttribute('data-entity-color');
             
             paths.forEach(pathEl => {
-                let points = [];
+                let pathSegments = [];  // Array of point arrays
                 
                 if (pathEl.tagName === 'path') {
                     const d = pathEl.getAttribute('d');
-                    if (d) points = parsePathD(d);
+                    if (d) pathSegments = parsePathD(d);  // Returns array of segments
                 } else if (pathEl.tagName === 'line') {
-                    points = [
+                    pathSegments = [[
                         { x: parseFloat(pathEl.getAttribute('x1') || 0), y: -parseFloat(pathEl.getAttribute('y1') || 0) },
                         { x: parseFloat(pathEl.getAttribute('x2') || 0), y: -parseFloat(pathEl.getAttribute('y2') || 0) }
-                    ];
+                    ]];
                 } else if (pathEl.tagName === 'polyline' || pathEl.tagName === 'polygon') {
                     const pointsAttr = pathEl.getAttribute('points') || '';
                     const coords = pointsAttr.trim().split(/[\s,]+/).map(Number);
+                    const points = [];
                     for (let i = 0; i < coords.length; i += 2) {
                         points.push({ x: coords[i], y: -coords[i+1] });
                     }
                     if (pathEl.tagName === 'polygon' && points.length > 0) {
                         points.push({ ...points[0] }); // Close polygon
                     }
+                    if (points.length >= 2) pathSegments = [points];
                 } else if (pathEl.tagName === 'rect') {
                     const x = parseFloat(pathEl.getAttribute('x') || 0);
                     const y = parseFloat(pathEl.getAttribute('y') || 0);
                     const w = parseFloat(pathEl.getAttribute('width') || 0);
                     const h = parseFloat(pathEl.getAttribute('height') || 0);
-                    points = [
+                    pathSegments = [[
                         { x: x, y: -y },
                         { x: x + w, y: -y },
                         { x: x + w, y: -(y + h) },
                         { x: x, y: -(y + h) },
                         { x: x, y: -y }
-                    ];
+                    ]];
                 } else if (pathEl.tagName === 'circle') {
                     const cx = parseFloat(pathEl.getAttribute('cx') || 0);
                     const cy = parseFloat(pathEl.getAttribute('cy') || 0);
                     const r = parseFloat(pathEl.getAttribute('r') || 0);
                     const steps = 36;
+                    const points = [];
                     for (let i = 0; i <= steps; i++) {
                         const angle = (i / steps) * 2 * Math.PI;
                         points.push({
@@ -3348,12 +3500,14 @@ function parseSvgToEntities(svgText) {
                             y: -(cy + r * Math.sin(angle))
                         });
                     }
+                    pathSegments = [points];
                 } else if (pathEl.tagName === 'ellipse') {
                     const cx = parseFloat(pathEl.getAttribute('cx') || 0);
                     const cy = parseFloat(pathEl.getAttribute('cy') || 0);
                     const rx = parseFloat(pathEl.getAttribute('rx') || 0);
                     const ry = parseFloat(pathEl.getAttribute('ry') || 0);
                     const steps = 36;
+                    const points = [];
                     for (let i = 0; i <= steps; i++) {
                         const angle = (i / steps) * 2 * Math.PI;
                         points.push({
@@ -3361,11 +3515,15 @@ function parseSvgToEntities(svgText) {
                             y: -(cy + ry * Math.sin(angle))
                         });
                     }
+                    pathSegments = [points];
                 }
                 
-                if (points.length >= 2) {
-                    entityPaths.push({ points });
-                }
+                // Add each segment as a separate path (this ensures proper pen lifts!)
+                pathSegments.forEach(segmentPoints => {
+                    if (segmentPoints.length >= 2) {
+                        entityPaths.push({ points: segmentPoints });
+                    }
+                });
                 
                 // Get color from first path if not set
                 if (!entityColor || entityColor === 'black') {
@@ -3403,19 +3561,73 @@ function parseSvgToEntities(svgText) {
         let entityColor = 'black';
         
         topLevelPaths.forEach(pathEl => {
-            let points = [];
+            let pathSegments = [];
             
             if (pathEl.tagName === 'path') {
                 const d = pathEl.getAttribute('d');
-                if (d) points = parsePathD(d);
+                if (d) pathSegments = parsePathD(d);  // Returns array of segments
+            } else if (pathEl.tagName === 'line') {
+                pathSegments = [[
+                    { x: parseFloat(pathEl.getAttribute('x1') || 0), y: -parseFloat(pathEl.getAttribute('y1') || 0) },
+                    { x: parseFloat(pathEl.getAttribute('x2') || 0), y: -parseFloat(pathEl.getAttribute('y2') || 0) }
+                ]];
+            } else if (pathEl.tagName === 'polyline' || pathEl.tagName === 'polygon') {
+                const pointsAttr = pathEl.getAttribute('points') || '';
+                const coords = pointsAttr.trim().split(/[\s,]+/).map(Number);
+                const points = [];
+                for (let i = 0; i < coords.length; i += 2) {
+                    points.push({ x: coords[i], y: -coords[i+1] });
+                }
+                if (pathEl.tagName === 'polygon' && points.length > 0) {
+                    points.push({ ...points[0] });
+                }
+                if (points.length >= 2) pathSegments = [points];
+            } else if (pathEl.tagName === 'rect') {
+                const x = parseFloat(pathEl.getAttribute('x') || 0);
+                const y = parseFloat(pathEl.getAttribute('y') || 0);
+                const w = parseFloat(pathEl.getAttribute('width') || 0);
+                const h = parseFloat(pathEl.getAttribute('height') || 0);
+                pathSegments = [[
+                    { x: x, y: -y },
+                    { x: x + w, y: -y },
+                    { x: x + w, y: -(y + h) },
+                    { x: x, y: -(y + h) },
+                    { x: x, y: -y }
+                ]];
+            } else if (pathEl.tagName === 'circle') {
+                const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                const r = parseFloat(pathEl.getAttribute('r') || 0);
+                const steps = 36;
+                const points = [];
+                for (let i = 0; i <= steps; i++) {
+                    const angle = (i / steps) * 2 * Math.PI;
+                    points.push({ x: cx + r * Math.cos(angle), y: -(cy + r * Math.sin(angle)) });
+                }
+                pathSegments = [points];
+            } else if (pathEl.tagName === 'ellipse') {
+                const cx = parseFloat(pathEl.getAttribute('cx') || 0);
+                const cy = parseFloat(pathEl.getAttribute('cy') || 0);
+                const rx = parseFloat(pathEl.getAttribute('rx') || 0);
+                const ry = parseFloat(pathEl.getAttribute('ry') || 0);
+                const steps = 36;
+                const points = [];
+                for (let i = 0; i <= steps; i++) {
+                    const angle = (i / steps) * 2 * Math.PI;
+                    points.push({ x: cx + rx * Math.cos(angle), y: -(cy + ry * Math.sin(angle)) });
+                }
+                pathSegments = [points];
             }
-            // ... similar handling as above (abbreviated for brevity)
             
-            if (points.length >= 2) {
-                entityPaths.push({ points });
-                const strokeColor = getStrokeColor(pathEl);
-                entityColor = mapColorToPenColor(strokeColor);
-            }
+            // Add each segment as a separate path (ensures proper pen lifts!)
+            pathSegments.forEach(segmentPoints => {
+                if (segmentPoints.length >= 2) {
+                    entityPaths.push({ points: segmentPoints });
+                }
+            });
+            
+            const strokeColor = getStrokeColor(pathEl);
+            entityColor = mapColorToPenColor(strokeColor);
         });
         
         if (entityPaths.length > 0) {
@@ -3504,6 +3716,7 @@ function parseGcodeToEntities(gcodeText) {
     const lines = gcodeText.split('\n');
     const entities = [];
     let polargraphMetadata = null;
+    let settingsMetadata = null;
     
     // Check for our custom metadata
     const metadataLine = lines.find(l => l.includes('polargraph-metadata:'));
@@ -3519,47 +3732,86 @@ function parseGcodeToEntities(gcodeText) {
         }
     }
     
-    // Parse G-code movements
+    // Check for settings metadata
+    const settingsLine = lines.find(l => l.includes('polargraph-settings:'));
+    if (settingsLine) {
+        const match = settingsLine.match(/polargraph-settings:\s*(\{.*\})/);
+        if (match) {
+            try {
+                settingsMetadata = JSON.parse(match[1]);
+            } catch (e) {
+                console.warn('Could not parse settings metadata:', e);
+            }
+        }
+    }
+    
+    // Parse G-code movements with robust pen detection
     const paths = [];
     let currentPath = null;
     let penDown = false;
     let currentX = 0, currentY = 0;
-    let currentEntityIdx = 0;
-    let entityMarkers = [];
+    let lastZ = 90;  // Assume pen up initially
     
-    // Find entity markers for grouping
-    lines.forEach((line, idx) => {
-        const entityMatch = line.match(/;\s*Entity\s+(\d+):\s*(.*)/);
-        if (entityMatch) {
-            entityMarkers.push({ index: idx, name: entityMatch[2] });
-        }
-    });
+    // Detect pen threshold - if we have settings, use them
+    const penUpAngle = settingsMetadata?.pen_angle_up || 90;
+    const penDownAngle = settingsMetadata?.pen_angle_down || 40;
+    const penThreshold = (penUpAngle + penDownAngle) / 2;
     
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line || line.startsWith(';')) continue;
         
-        // Check for pen up/down (servo commands or M commands)
-        if (line.match(/M3|M03|S\d+\s*;\s*pen\s*down/i) || 
-            line.match(/G0?1.*Z-?\d/i)) {
-            penDown = true;
-            currentPath = { points: [{ x: currentX, y: currentY }] };
-        } else if (line.match(/M5|M05|S\d+\s*;\s*pen\s*up/i) || 
-                   line.match(/G0.*Z\d/i)) {
-            if (currentPath && currentPath.points.length >= 2) {
+        // Parse Z value for pen control (servo angle)
+        const zMatch = line.match(/Z(-?\d+\.?\d*)/i);
+        if (zMatch) {
+            const zValue = parseFloat(zMatch[1]);
+            const newPenDown = zValue < penThreshold;
+            
+            if (!penDown && newPenDown) {
+                // Pen going down - start new path
+                penDown = true;
+                currentPath = { points: [{ x: currentX, y: currentY }] };
+            } else if (penDown && !newPenDown) {
+                // Pen going up - finish path
+                if (currentPath && currentPath.points.length >= 2) {
+                    paths.push(currentPath);
+                }
+                currentPath = null;
+                penDown = false;
+            }
+            lastZ = zValue;
+        }
+        
+        // Also check for M3/M5 spindle commands (some G-code generators use these)
+        if (line.match(/\bM0?3\b/i) || line.toLowerCase().includes('pen down')) {
+            if (!penDown) {
+                penDown = true;
+                currentPath = { points: [{ x: currentX, y: currentY }] };
+            }
+        } else if (line.match(/\bM0?5\b/i) || line.toLowerCase().includes('pen up')) {
+            if (penDown && currentPath && currentPath.points.length >= 2) {
                 paths.push(currentPath);
             }
             currentPath = null;
             penDown = false;
         }
         
-        // Parse movement commands
-        const moveMatch = line.match(/G[01]\s*(X(-?\d+\.?\d*))?\s*(Y(-?\d+\.?\d*))?/i);
+        // Parse movement commands (G0, G1, G00, G01)
+        const moveMatch = line.match(/G0*[01]\s+/i);
         if (moveMatch) {
-            if (moveMatch[2]) currentX = parseFloat(moveMatch[2]);
-            if (moveMatch[4]) currentY = parseFloat(moveMatch[4]);
+            const xMatch = line.match(/X(-?\d+\.?\d*)/i);
+            const yMatch = line.match(/Y(-?\d+\.?\d*)/i);
             
-            if (penDown && currentPath) {
+            if (xMatch) currentX = parseFloat(xMatch[1]);
+            if (yMatch) currentY = parseFloat(yMatch[1]);
+            
+            // If this is a G1 move (draw) without explicit pen state, assume pen is down
+            if (line.match(/G0*1\b/i) && !penDown && (xMatch || yMatch)) {
+                penDown = true;
+                currentPath = { points: [{ x: currentX, y: currentY }] };
+            }
+            
+            if (penDown && currentPath && (xMatch || yMatch)) {
                 currentPath.points.push({ x: currentX, y: currentY });
             }
         }
@@ -3570,36 +3822,48 @@ function parseGcodeToEntities(gcodeText) {
         paths.push(currentPath);
     }
     
+    console.log(`[GCODE] Parsed ${paths.length} paths from G-code`);
+    
     // Create entities from paths
     if (polargraphMetadata && polargraphMetadata.length > 0) {
-        // Try to reconstruct entities from metadata
+        // Reconstruct entities from metadata
+        let pathIdx = 0;
+        
         polargraphMetadata.forEach((meta, idx) => {
-            const entityPaths = paths.slice(0, meta.pathCount || paths.length);
-            paths.splice(0, meta.pathCount || paths.length);
+            const count = meta.pathCount || 0;
+            const entityPaths = paths.slice(pathIdx, pathIdx + count);
+            pathIdx += count;
             
+            if (entityPaths.length > 0) {
+                entities.push({
+                    paths: entityPaths,
+                    color: meta.color || 'black',
+                    name: meta.name || `Entity ${idx + 1}`,
+                    algorithm: meta.algorithm || 'imported',
+                    // v2 exports store identity transforms since coords are pre-transformed
+                    offsetX: meta.offsetX || 0,
+                    offsetY: meta.offsetY || 0,
+                    scale: meta.scale || 1,
+                    rotation: meta.rotation || 0
+                });
+            }
+        });
+        
+        // Any remaining paths
+        if (pathIdx < paths.length) {
             entities.push({
-                paths: entityPaths,
-                color: meta.color || 'black',
-                name: meta.name || `Entity ${idx + 1}`,
-                algorithm: meta.algorithm || 'imported',
+                paths: paths.slice(pathIdx),
+                color: 'black',
+                name: 'Additional Paths',
+                algorithm: 'imported',
                 offsetX: 0,
                 offsetY: 0,
                 scale: 1,
                 rotation: 0
             });
-        });
-        
-        // Any remaining paths
-        if (paths.length > 0) {
-            entities.push({
-                paths: paths,
-                color: 'black',
-                name: 'Additional Paths',
-                algorithm: 'imported'
-            });
         }
-    } else {
-        // No metadata - create single entity
+    } else if (paths.length > 0) {
+        // No metadata - create single entity from all paths
         entities.push({
             paths: paths,
             color: 'black',
@@ -4667,22 +4931,50 @@ function resetUploadUI() {
 // ============================================================================
 
 async function loadSettings() {
-    const result = await sendCommand('/api/settings');
-    if (result) {
-        document.getElementById('machineWidth').value = result.machine_width || 1219.2;
-        document.getElementById('machineHeight').value = result.machine_height || 1524;
-        document.getElementById('limitLeft').value = result.limit_left || -420.5;
-        document.getElementById('limitRight').value = result.limit_right || 420.5;
-        document.getElementById('limitTop').value = result.limit_top || 594.5;
-        document.getElementById('limitBottom').value = result.limit_bottom || -594.5;
-        state.penKerf = result.pen_kerf || 0.45;
-        document.getElementById('penKerf').value = state.penKerf;
-        document.getElementById('penUpAngle').value = result.pen_angle_up || 90;
-        document.getElementById('penDownAngle').value = result.pen_angle_down || 40;
-        document.getElementById('feedTravel').value = result.feed_rate_travel || 1000;
-        document.getElementById('feedDraw').value = result.feed_rate_draw || 500;
-        document.getElementById('penDwell').value = result.pen_dwell || 150;
+    let settings = null;
+    
+    // If connected remotely, try to load from server first
+    if (state.useRemote) {
+        settings = await sendCommand('/api/settings');
+        if (settings) {
+            console.log('[SETTINGS] Loaded from plotter');
+        }
     }
+    
+    // Fall back to localStorage if no server settings
+    if (!settings) {
+        try {
+            const saved = localStorage.getItem('polargraph_settings');
+            if (saved) {
+                settings = JSON.parse(saved);
+                console.log('[SETTINGS] Loaded from browser localStorage');
+            }
+        } catch (e) {
+            console.warn('[SETTINGS] Failed to load from localStorage:', e);
+        }
+    }
+    
+    // Apply settings (use defaults if nothing loaded)
+    applySettingsToUI(settings || {});
+}
+
+function applySettingsToUI(settings) {
+    document.getElementById('machineWidth').value = settings.machine_width || 1219.2;
+    document.getElementById('machineHeight').value = settings.machine_height || 1524;
+    document.getElementById('limitLeft').value = settings.limit_left || -420.5;
+    document.getElementById('limitRight').value = settings.limit_right || 420.5;
+    document.getElementById('limitTop').value = settings.limit_top || 594.5;
+    document.getElementById('limitBottom').value = settings.limit_bottom || -594.5;
+    state.penKerf = settings.pen_kerf || 0.45;
+    document.getElementById('penKerf').value = state.penKerf;
+    document.getElementById('penUpAngle').value = settings.pen_angle_up || 90;
+    document.getElementById('penDownAngle').value = settings.pen_angle_down || 40;
+    document.getElementById('feedTravel').value = settings.feed_rate_travel || 1000;
+    document.getElementById('feedDraw').value = settings.feed_rate_draw || 500;
+    document.getElementById('penDwell').value = settings.pen_dwell || 150;
+    
+    // Update work area display
+    drawCanvas();
 }
 
 async function saveSettings() {
@@ -4702,10 +4994,27 @@ async function saveSettings() {
     };
     
     state.penKerf = settings.pen_kerf;
-    const result = await sendCommand('/api/settings', 'POST', settings);
-    if (result.success) {
-        logConsole('Settings saved', 'msg-in');
+    
+    // If connected remotely via console access key, save to server
+    if (state.useRemote && state.connected) {
+        const result = await sendCommand('/api/settings', 'POST', settings);
+        if (result.success) {
+            logConsole('Settings saved to plotter', 'msg-in');
+        } else {
+            logConsole('Failed to save settings to plotter', 'msg-error');
+        }
+    } else {
+        // Save to browser localStorage
+        try {
+            localStorage.setItem('polargraph_settings', JSON.stringify(settings));
+            logConsole('Settings saved to browser', 'msg-in');
+        } catch (e) {
+            logConsole('Failed to save settings: ' + e.message, 'msg-error');
+        }
     }
+    
+    // Always update work area display
+    drawCanvas();
 }
 
 async function clearUploads() {
@@ -4716,6 +5025,237 @@ async function clearUploads() {
         elements.convertSection.style.display = 'none';
         elements.uploadZone.style.display = 'block'; // Show drop zone again
         state.currentImagePath = null;
+    }
+}
+
+// ============================================================================
+// Calibration Wizard
+// ============================================================================
+
+const calibration = {
+    step: 0,
+    positions: {
+        center: { x: 0, y: 0 },
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 0, y: 0 },
+        bottom: { x: 0, y: 0 }
+    },
+    // Track cumulative movement from center
+    currentOffset: { x: 0, y: 0 }
+};
+
+function initCalibrationWizard() {
+    const startBtn = document.getElementById('startCalibration');
+    const closeBtn = document.getElementById('closeCalibration');
+    const modal = document.getElementById('calibrationModal');
+    
+    if (!startBtn || !modal) return;
+    
+    // Enable button when connected
+    startBtn.addEventListener('click', () => {
+        if (state.connected) {
+            openCalibrationWizard();
+        }
+    });
+    
+    closeBtn?.addEventListener('click', closeCalibrationWizard);
+    
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeCalibrationWizard();
+    });
+    
+    // Step buttons
+    document.getElementById('calibRecordCenter')?.addEventListener('click', () => recordCalibrationPoint('center'));
+    document.getElementById('calibRecordTopLeft')?.addEventListener('click', () => recordCalibrationPoint('topLeft'));
+    document.getElementById('calibRecordTopRight')?.addEventListener('click', () => recordCalibrationPoint('topRight'));
+    document.getElementById('calibRecordBottom')?.addEventListener('click', () => recordCalibrationPoint('bottom'));
+    document.getElementById('calibApplySettings')?.addEventListener('click', applyCalibrationSettings);
+    document.getElementById('calibClose')?.addEventListener('click', closeCalibrationWizard);
+    
+    // Jog buttons in calibration modal
+    document.querySelectorAll('#calibrationModal .jog-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const dir = btn.dataset.dir;
+            if (dir === 'disable') {
+                // Disable motors for manual movement
+                sendCommand('/api/motors', 'POST', { enable: false });
+                logConsole('Motors disabled for manual movement', 'msg-info');
+            } else {
+                calibrationJog(dir);
+            }
+        });
+    });
+}
+
+function openCalibrationWizard() {
+    const modal = document.getElementById('calibrationModal');
+    modal.style.display = 'flex';
+    
+    // Reset state
+    calibration.step = 1;
+    calibration.currentOffset = { x: 0, y: 0 };
+    calibration.positions = {
+        center: { x: 0, y: 0 },
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 0, y: 0 },
+        bottom: { x: 0, y: 0 }
+    };
+    
+    // Show first step
+    showCalibrationStep(1);
+    logConsole('Calibration wizard started', 'msg-info');
+}
+
+function closeCalibrationWizard() {
+    document.getElementById('calibrationModal').style.display = 'none';
+}
+
+function showCalibrationStep(step) {
+    // Hide all steps
+    for (let i = 1; i <= 4; i++) {
+        const stepEl = document.getElementById(`calibrationStep${i}`);
+        if (stepEl) stepEl.style.display = 'none';
+    }
+    document.getElementById('calibrationResults').style.display = 'none';
+    
+    // Show current step
+    if (step <= 4) {
+        const stepEl = document.getElementById(`calibrationStep${step}`);
+        if (stepEl) stepEl.style.display = 'block';
+    } else {
+        document.getElementById('calibrationResults').style.display = 'block';
+    }
+    
+    calibration.step = step;
+}
+
+function calibrationJog(direction) {
+    // Get step size from the current step's select
+    const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`) 
+                    || document.getElementById('calibJogStep');
+    const stepSize = parseFloat(stepSelect?.value || 10);
+    
+    let x = 0, y = 0;
+    
+    // Note: X/Y are swapped for polargraph coordinate system
+    // UI "up/down" controls X, UI "left/right" controls Y
+    switch (direction) {
+        case 'up': x = stepSize; break;
+        case 'down': x = -stepSize; break;
+        case 'left': y = -stepSize; break;
+        case 'right': y = stepSize; break;
+        case 'up-left': x = stepSize; y = -stepSize; break;
+        case 'up-right': x = stepSize; y = stepSize; break;
+        case 'down-left': x = -stepSize; y = -stepSize; break;
+        case 'down-right': x = -stepSize; y = stepSize; break;
+    }
+    
+    // Track cumulative offset from center
+    calibration.currentOffset.x += x;
+    calibration.currentOffset.y += y;
+    
+    // Update distance display
+    updateCalibrationDistance();
+    
+    // Send jog command
+    sendCommand('/api/jog', 'POST', { x, y });
+}
+
+function updateCalibrationDistance() {
+    const dist = Math.sqrt(
+        calibration.currentOffset.x ** 2 + 
+        calibration.currentOffset.y ** 2
+    ).toFixed(1);
+    
+    const distEl = document.getElementById(`calibDist${calibration.step - 1}`);
+    if (distEl) {
+        distEl.textContent = `Distance from previous: ${dist}mm (X: ${calibration.currentOffset.x.toFixed(1)}, Y: ${calibration.currentOffset.y.toFixed(1)})`;
+    }
+}
+
+function recordCalibrationPoint(point) {
+    // Store current offset
+    calibration.positions[point] = { ...calibration.currentOffset };
+    
+    const stepNames = { center: 1, topLeft: 2, topRight: 3, bottom: 4 };
+    const step = stepNames[point];
+    
+    logConsole(`Recorded ${point}: X=${calibration.currentOffset.x.toFixed(1)}, Y=${calibration.currentOffset.y.toFixed(1)}`, 'msg-info');
+    
+    // Reset offset for next measurement (relative to this point)
+    calibration.currentOffset = { x: 0, y: 0 };
+    
+    // Move to next step
+    if (step < 4) {
+        showCalibrationStep(step + 1);
+    } else {
+        calculateCalibrationResults();
+        showCalibrationStep(5); // Show results
+    }
+}
+
+function calculateCalibrationResults() {
+    const { topLeft, topRight, bottom } = calibration.positions;
+    
+    // Calculate work area dimensions
+    // Width: horizontal distance from top-left to top-right
+    // Note: This is cumulative, so topRight is relative to topLeft
+    const width = Math.abs(topRight.y) + Math.abs(topLeft.y);
+    
+    // Height: vertical distance from top corners to bottom
+    // bottom is relative to topRight
+    const height = Math.abs(bottom.x) + Math.abs(topLeft.x);
+    
+    // Store results
+    calibration.results = {
+        width: width,
+        height: height,
+        limitLeft: -width / 2,
+        limitRight: width / 2,
+        limitTop: height * 0.4,
+        limitBottom: -height * 0.6
+    };
+    
+    // Update display
+    document.getElementById('calibResultWidth').textContent = width.toFixed(1);
+    document.getElementById('calibResultHeight').textContent = height.toFixed(1);
+    document.getElementById('calibResultLeft').textContent = calibration.results.limitLeft.toFixed(1);
+    document.getElementById('calibResultRight').textContent = calibration.results.limitRight.toFixed(1);
+    document.getElementById('calibResultTop').textContent = calibration.results.limitTop.toFixed(1);
+    document.getElementById('calibResultBottom').textContent = calibration.results.limitBottom.toFixed(1);
+    
+    logConsole(`Calibration complete: ${width.toFixed(0)}mm x ${height.toFixed(0)}mm`, 'msg-info');
+}
+
+function applyCalibrationSettings() {
+    if (!calibration.results) return;
+    
+    // Update settings fields
+    document.getElementById('limitLeft').value = calibration.results.limitLeft.toFixed(1);
+    document.getElementById('limitRight').value = calibration.results.limitRight.toFixed(1);
+    document.getElementById('limitTop').value = calibration.results.limitTop.toFixed(1);
+    document.getElementById('limitBottom').value = calibration.results.limitBottom.toFixed(1);
+    
+    // Update machine dimensions too
+    const motorSpacing = calibration.results.width * 1.2;
+    document.getElementById('machineWidth').value = motorSpacing.toFixed(1);
+    document.getElementById('machineHeight').value = (calibration.results.height + 200).toFixed(1);
+    
+    logConsole('Calibration settings applied to form', 'msg-info');
+    logConsole('Click "Save Settings" to persist', 'msg-info');
+    
+    closeCalibrationWizard();
+    
+    // Switch to settings panel
+    document.querySelector('[data-panel="settings"]')?.click();
+}
+
+// Update calibration button state based on connection
+function updateCalibrationButton() {
+    const btn = document.getElementById('startCalibration');
+    if (btn) {
+        btn.disabled = !state.connected;
     }
 }
 
@@ -5058,8 +5598,18 @@ function drawTextLine(turtle, text, centerX, y, size) {
 }
 
 function drawGrid() {
+    if (state.gridType === 'off') return;
+    
     const lineScale = 1 / Math.sqrt(state.zoom);
     
+    if (state.gridType === 'polar') {
+        drawPolarGrid(lineScale);
+    } else {
+        drawCartesianGrid(lineScale);
+    }
+}
+
+function drawCartesianGrid(lineScale) {
     ctx.strokeStyle = '#e8e8e8';
     ctx.lineWidth = 0.5 * lineScale;
     
@@ -5094,11 +5644,54 @@ function drawGrid() {
     ctx.stroke();
 }
 
+function drawPolarGrid(lineScale) {
+    const maxRadius = 600;
+    const ringSpacing = 50;
+    const numRays = 12;  // Every 30 degrees
+    
+    // Grid lines - EXACTLY same as cartesian: #e8e8e8, 0.5 lineWidth
+    ctx.strokeStyle = '#e8e8e8';
+    ctx.lineWidth = 0.5 * lineScale;
+    
+    // Draw concentric circles (equivalent to cartesian grid lines)
+    for (let r = ringSpacing; r <= maxRadius; r += ringSpacing) {
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, 2 * Math.PI);
+        ctx.stroke();
+    }
+    
+    // Draw radial lines (equivalent to cartesian grid lines)
+    for (let i = 0; i < numRays; i++) {
+        const angle = (i / numRays) * 2 * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(angle) * maxRadius, Math.sin(angle) * maxRadius);
+        ctx.stroke();
+    }
+    
+    // Axes - EXACTLY same as cartesian: #ccc, 1 lineWidth
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1 * lineScale;
+    
+    // Horizontal axis (X)
+    ctx.beginPath();
+    ctx.moveTo(-maxRadius, 0);
+    ctx.lineTo(maxRadius, 0);
+    ctx.stroke();
+    
+    // Vertical axis (Y)
+    ctx.beginPath();
+    ctx.moveTo(0, -maxRadius);
+    ctx.lineTo(0, maxRadius);
+    ctx.stroke();
+}
+
 function drawWorkArea() {
-    const left = -420.5;
-    const right = 420.5;
-    const top = 594.5;
-    const bottom = -594.5;
+    // Read work area limits from settings inputs
+    const left = parseFloat(document.getElementById('limitLeft')?.value) || -420.5;
+    const right = parseFloat(document.getElementById('limitRight')?.value) || 420.5;
+    const top = parseFloat(document.getElementById('limitTop')?.value) || 594.5;
+    const bottom = parseFloat(document.getElementById('limitBottom')?.value) || -594.5;
     
     const lineScale = 1 / Math.sqrt(state.zoom);
     
@@ -5191,8 +5784,8 @@ function drawStartPoint() {
     const lineScale = 1 / Math.sqrt(state.zoom);
     const size = 8 * lineScale;
     
-    // Draw target crosshair
-    ctx.strokeStyle = '#ff6600';
+    // Draw target crosshair - grey color
+    ctx.strokeStyle = '#888';
     ctx.lineWidth = 2 * lineScale;
     ctx.setLineDash([4 * lineScale, 2 * lineScale]);
     
@@ -5220,10 +5813,13 @@ function drawStartPoint() {
     
     ctx.setLineDash([]);
     
-    // Label
-    ctx.fillStyle = '#ff6600';
+    // Label - need to flip Y back for text to be right-side up
+    ctx.save();
+    ctx.scale(1, -1);  // Flip Y back to normal for text
+    ctx.fillStyle = '#888';
     ctx.font = `${10 * lineScale}px monospace`;
-    ctx.fillText('START', startX + size * 1.8, startY + 3 * lineScale);
+    ctx.fillText('START', startX + size * 1.8, -startY + 4 * lineScale);  // Negate Y coordinate
+    ctx.restore();
 }
 
 function updatePreview(preview) {
