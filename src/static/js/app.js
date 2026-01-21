@@ -2407,12 +2407,12 @@ async function startPlot() {
                 logConsole(`Generated ${totalLines} G-code lines`, 'msg-out');
                 
                 // For large plots, send in chunks to avoid message size limits
-                const CHUNK_SIZE = 2000;  // Lines per chunk
+                const CHUNK_SIZE = 500;  // Smaller chunks for reliability
                 
                 if (totalLines > CHUNK_SIZE && POLARGRAPH_WEBHOOK_URL) {
                     // Send chunks via MQTT
                     const totalChunks = Math.ceil(totalLines / CHUNK_SIZE);
-                    logConsole(`Sending in ${totalChunks} chunks...`, 'msg-out');
+                    logConsole(`Sending in ${totalChunks} chunks (${CHUNK_SIZE} lines each)...`, 'msg-out');
                     
                     for (let i = 0; i < totalChunks; i++) {
                         const start = i * CHUNK_SIZE;
@@ -2420,18 +2420,30 @@ async function startPlot() {
                         const chunk = state.currentGcode.slice(start, end);
                         
                         const isLast = (i === totalChunks - 1);
-                        await sendCommand('/api/plot/chunk', 'POST', {
-                            chunk: chunk,
-                            chunkIndex: i,
-                            totalChunks: totalChunks,
-                            isLast: isLast,
-                            home: homeBeforePlot
-                        });
                         
-                        logConsole(`Sent chunk ${i + 1}/${totalChunks} (${chunk.length} lines)`, 'msg-out');
+                        // Retry logic for reliability
+                        let success = false;
+                        for (let retry = 0; retry < 3 && !success; retry++) {
+                            const result = await sendCommand('/api/plot/chunk', 'POST', {
+                                chunk: chunk,
+                                chunkIndex: i,
+                                totalChunks: totalChunks,
+                                isLast: isLast,
+                                home: homeBeforePlot
+                            });
+                            success = result.success !== false;
+                            if (!success) {
+                                logConsole(`Chunk ${i + 1} failed, retrying...`, 'msg-warn');
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                        }
                         
-                        // Small delay between chunks
-                        await new Promise(r => setTimeout(r, 100));
+                        if ((i + 1) % 10 === 0 || isLast) {
+                            logConsole(`Sent ${i + 1}/${totalChunks} chunks`, 'msg-out');
+                        }
+                        
+                        // Delay between chunks for MQTT to process
+                        await new Promise(r => setTimeout(r, 200));
                     }
                 } else {
                     // Small plot or direct connection - send all at once

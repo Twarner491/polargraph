@@ -75,19 +75,34 @@ def handle_command(data):
         chunk_metadata['totalChunks'] = total_chunks
         chunk_metadata['home'] = home
         
-        print(f"Received chunk {chunk_index + 1}/{total_chunks} ({len(chunk)} lines)")
+        # Count received chunks
+        received = len(gcode_chunks)
+        total_lines = sum(len(c) for c in gcode_chunks.values())
+        print(f"Chunk {chunk_index + 1}/{total_chunks}: {len(chunk)} lines (total received: {received} chunks, {total_lines} lines)")
         
         if is_last:
-            # All chunks received - reassemble and start plot
+            # Wait a moment for any in-flight chunks
+            import time
+            time.sleep(0.5)
+            
+            # Check if we have all chunks
+            missing = [i for i in range(total_chunks) if i not in gcode_chunks]
+            if missing:
+                print(f"WARNING: Missing chunks: {missing}")
+            
+            # Reassemble all chunks we have
             all_gcode = []
             for i in range(total_chunks):
                 if i in gcode_chunks:
                     all_gcode.extend(gcode_chunks[i])
+                else:
+                    print(f"  Chunk {i} missing!")
             
-            print(f"All chunks received. Total: {len(all_gcode)} G-code lines. Starting plot...")
+            print(f"Reassembled {len(all_gcode)} G-code lines from {received}/{total_chunks} chunks. Starting plot...")
             
             # Clear chunks
             gcode_chunks = {}
+            chunk_metadata = {}
             
             # Start the plot
             try:
