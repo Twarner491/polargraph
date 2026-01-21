@@ -51,6 +51,53 @@ is_plotting = False
 is_paused = False
 current_line = 0
 
+# Progress file for resume capability
+PROGRESS_FILE = '/tmp/polargraph_progress.json'
+GCODE_BACKUP_FILE = '/tmp/polargraph_gcode_backup.json'
+
+def save_progress():
+    """Save current progress to file for resume capability."""
+    try:
+        with open(PROGRESS_FILE, 'w') as f:
+            json.dump({
+                'current_line': current_line,
+                'total_lines': len(current_gcode),
+                'is_plotting': is_plotting,
+                'timestamp': time.time()
+            }, f)
+    except Exception as e:
+        print(f"[PROGRESS] Error saving progress: {e}")
+
+def save_gcode_backup(gcode_lines):
+    """Save G-code to backup file for resume capability."""
+    try:
+        with open(GCODE_BACKUP_FILE, 'w') as f:
+            json.dump({'gcode': gcode_lines}, f)
+        print(f"[BACKUP] Saved {len(gcode_lines)} G-code lines to backup")
+    except Exception as e:
+        print(f"[BACKUP] Error saving G-code: {e}")
+
+def load_progress():
+    """Load progress from file."""
+    try:
+        if os.path.exists(PROGRESS_FILE):
+            with open(PROGRESS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[PROGRESS] Error loading progress: {e}")
+    return None
+
+def load_gcode_backup():
+    """Load G-code from backup file."""
+    try:
+        if os.path.exists(GCODE_BACKUP_FILE):
+            with open(GCODE_BACKUP_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('gcode', [])
+    except Exception as e:
+        print(f"[BACKUP] Error loading G-code: {e}")
+    return []
+
 
 def serial_callback(message):
     """Callback for serial messages from the plotter."""
@@ -474,7 +521,10 @@ def plot_start():
     
     print(f"[PLOT] Starting plot with {len(current_gcode)} lines, home={home_before_plot}")
     
-    # Use flow-controlled streaming - wait for each command to complete
+    # Save G-code backup for resume capability
+    save_gcode_backup(current_gcode)
+    
+    # Use flow-controlled streaming
     import threading
     def stream_gcode():
         global current_line, is_plotting, is_paused, gondola_position
@@ -484,6 +534,7 @@ def plot_start():
         
         while current_line < len(current_gcode) and is_plotting:
             if is_paused:
+                save_progress()  # Save progress when paused
                 time.sleep(0.1)
                 continue
                 
@@ -491,7 +542,6 @@ def plot_start():
             
             if line.strip() and not line.strip().startswith(';'):
                 # Limit feedrates - ultra conservative for polargraph reliability
-                # 100mm/min travel (~1.5mm/s), 80mm/min draw (~1.3mm/s)
                 safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
                 
                 # Send the command
@@ -501,29 +551,26 @@ def plot_start():
                 upper_line = safe_line.upper().strip()
                 if upper_line.startswith('G4'):
                     # Parse dwell time and wait for it
-                    import re
                     p_match = re.search(r'P([\d.]+)', upper_line)
                     dwell_secs = float(p_match.group(1)) if p_match else 0
-                    # Wait for the dwell plus small buffer
                     time.sleep(dwell_secs + 0.15)
                 elif upper_line.startswith('M280'):
-                    time.sleep(0.1)  # Servo command - quick
+                    time.sleep(0.1)
                 else:
-                    time.sleep(0.05)  # Move commands
+                    time.sleep(0.05)
                 
                 update_gondola_position(safe_line)
             
-            # Emit progress less frequently for performance
-            if current_line % 5 == 0:
+            # Save progress and emit updates every 100 lines
+            if current_line % 100 == 0:
+                save_progress()
                 socketio.emit('progress', {
                     'current': current_line,
                     'total': len(current_gcode),
                     'percent': int(100 * (current_line + 1) / max(1, len(current_gcode))),
                     'gondola': gondola_position
                 })
-            
-            if current_line % 50 == 0:
-                print(f"[PLOT] Progress: {current_line}/{len(current_gcode)}")
+                print(f"[PLOT] Progress: {current_line}/{len(current_gcode)} ({int(100*current_line/len(current_gcode))}%)")
             
             current_line += 1
         
@@ -600,6 +647,118 @@ def plot_rewind():
     global current_line
     current_line = 0
     return jsonify({'success': True})
+
+
+@app.route('/api/plot/progress', methods=['GET'])
+def plot_progress():
+    """Get current plot progress and resume info."""
+    progress = load_progress()
+    has_backup = os.path.exists(GCODE_BACKUP_FILE)
+    
+    return jsonify({
+        'success': True,
+        'is_plotting': is_plotting,
+        'is_paused': is_paused,
+        'current_line': current_line,
+        'total_lines': len(current_gcode),
+        'percent': int(100 * current_line / max(1, len(current_gcode))) if current_gcode else 0,
+        'saved_progress': progress,
+        'has_backup': has_backup
+    })
+
+
+@app.route('/api/plot/resume_from', methods=['POST'])
+def plot_resume_from():
+    """Resume plotting from a specific line using backed up G-code."""
+    global current_gcode, current_line, is_plotting, is_paused, gondola_position
+    
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    
+    data = request.get_json() or {}
+    start_line = data.get('line', 0)
+    
+    # Load G-code from backup
+    backup_gcode = load_gcode_backup()
+    if not backup_gcode:
+        return jsonify({'success': False, 'error': 'No G-code backup found'})
+    
+    current_gcode = backup_gcode
+    current_line = start_line
+    is_plotting = True
+    is_paused = False
+    gondola_position = {'x': 0, 'y': 0, 'z': 90}
+    
+    print(f"[PLOT] Resuming from line {start_line}/{len(current_gcode)}")
+    
+    # Set up machine (pen up, absolute mode)
+    serial_handler.send_command('M17')
+    serial_handler.send_command('G90')
+    pen_up_angle = plotter_settings.get('pen_up_angle', 120)
+    serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
+    time.sleep(0.5)
+    
+    # Start streaming from the specified line
+    import threading
+    def stream_gcode():
+        global current_line, is_plotting, is_paused, gondola_position
+        
+        print(f"[PLOT] Resuming stream from line {current_line}/{len(current_gcode)}")
+        socketio.emit('plot_status', {'status': 'resuming', 'from_line': current_line, 'total': len(current_gcode)})
+        
+        while current_line < len(current_gcode) and is_plotting:
+            if is_paused:
+                save_progress()
+                time.sleep(0.1)
+                continue
+                
+            line = current_gcode[current_line]
+            
+            if line.strip() and not line.strip().startswith(';'):
+                safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
+                serial_handler.send_command(safe_line)
+                
+                upper_line = safe_line.upper().strip()
+                if upper_line.startswith('G4'):
+                    p_match = re.search(r'P([\d.]+)', upper_line)
+                    dwell_secs = float(p_match.group(1)) if p_match else 0
+                    time.sleep(dwell_secs + 0.15)
+                elif upper_line.startswith('M280'):
+                    time.sleep(0.1)
+                else:
+                    time.sleep(0.05)
+                
+                update_gondola_position(safe_line)
+            
+            if current_line % 100 == 0:
+                save_progress()
+                socketio.emit('progress', {
+                    'current': current_line,
+                    'total': len(current_gcode),
+                    'percent': int(100 * (current_line + 1) / max(1, len(current_gcode))),
+                    'gondola': gondola_position
+                })
+                print(f"[PLOT] Progress: {current_line}/{len(current_gcode)} ({int(100*current_line/len(current_gcode))}%)")
+            
+            current_line += 1
+        
+        if is_plotting and current_line >= len(current_gcode):
+            is_plotting = False
+            print(f"[PLOT] Resume complete!")
+            serial_handler.send_command('G4 P0')
+            time.sleep(3.0)
+            serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
+            time.sleep(0.5)
+            socketio.emit('plot_complete', {'message': 'Plot complete!'})
+    
+    thread = threading.Thread(target=stream_gcode, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        'success': True,
+        'resuming_from': start_line,
+        'total_lines': len(current_gcode)
+    })
 
 
 @app.route('/api/plot/goto_line', methods=['POST'])

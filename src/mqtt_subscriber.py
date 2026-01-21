@@ -78,29 +78,35 @@ def handle_command(data):
         # Count received chunks
         received = len(gcode_chunks)
         total_lines = sum(len(c) for c in gcode_chunks.values())
-        print(f"Chunk {chunk_index + 1}/{total_chunks}: {len(chunk)} lines (total received: {received} chunks, {total_lines} lines)")
+        print(f"Chunk {chunk_index + 1}/{total_chunks}: {len(chunk)} lines (received: {received}/{total_chunks} chunks, {total_lines} lines)")
         
         if is_last:
-            # Wait a moment for any in-flight chunks
+            # Wait for any in-flight chunks
             import time
-            time.sleep(0.5)
+            time.sleep(1.0)
             
-            # Check if we have all chunks
+            # STRICT VERIFICATION: Check if we have ALL chunks
             missing = [i for i in range(total_chunks) if i not in gcode_chunks]
-            if missing:
-                print(f"WARNING: Missing chunks: {missing}")
             
-            # Reassemble all chunks we have
+            if missing:
+                print(f"ERROR: Missing {len(missing)} chunks: {missing[:10]}{'...' if len(missing) > 10 else ''}")
+                print(f"ABORTING PLOT - not all chunks received ({received}/{total_chunks})")
+                # Clear and abort
+                gcode_chunks = {}
+                chunk_metadata = {}
+                return
+            
+            # All chunks received - reassemble
             all_gcode = []
             for i in range(total_chunks):
-                if i in gcode_chunks:
-                    all_gcode.extend(gcode_chunks[i])
-                else:
-                    print(f"  Chunk {i} missing!")
+                all_gcode.extend(gcode_chunks[i])
             
-            print(f"Reassembled {len(all_gcode)} G-code lines from {received}/{total_chunks} chunks. Starting plot...")
+            expected_lines = total_lines
+            actual_lines = len(all_gcode)
             
-            # Clear chunks
+            print(f"SUCCESS: All {total_chunks} chunks received. Total: {actual_lines} G-code lines.")
+            
+            # Clear chunks before starting
             gcode_chunks = {}
             chunk_metadata = {}
             
