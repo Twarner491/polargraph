@@ -13,8 +13,8 @@ const DEFAULT_SETTINGS = {
     limit_bottom: -381,
     pen_angle_up: 120,
     pen_angle_down: 40,
-    feed_rate_travel: 1000,
-    feed_rate_draw: 500,
+    feed_rate_travel: 600,
+    feed_rate_draw: 300,
     pen_diameter: 0.8
 };
 
@@ -334,7 +334,8 @@ class GCodeGenerator {
                         gcode.push(this.getPenUpCommand());
                         penIsUp = true;
                     }
-                    gcode.push(`G0 X${start.x.toFixed(3)} Y${start.y.toFixed(3)} F${this.settings.feed_rate_travel}`);
+                    // Swap X/Y for polargraph coordinate system (firmware is rotated 90° from UI)
+                    gcode.push(`G0 X${start.y.toFixed(3)} Y${start.x.toFixed(3)} F${this.settings.feed_rate_travel}`);
                 }
                 
                 if (penIsUp) {
@@ -344,7 +345,8 @@ class GCodeGenerator {
                 
                 for (let i = 1; i < line.points.length; i++) {
                     const point = line.points[i];
-                    gcode.push(`G1 X${point.x.toFixed(3)} Y${point.y.toFixed(3)} F${this.settings.feed_rate_draw}`);
+                    // Swap X/Y for polargraph coordinate system
+                    gcode.push(`G1 X${point.y.toFixed(3)} Y${point.x.toFixed(3)} F${this.settings.feed_rate_draw}`);
                 }
                 
                 lastPoint = line.points[line.points.length - 1];
