@@ -497,9 +497,12 @@ def plot_start():
                 # Send the command
                 serial_handler.send_command(safe_line)
                 
-                # Simple fixed delay between all commands
-                # The firmware handles timing internally via G4 dwells
-                time.sleep(0.05)
+                # Delay between commands - longer for dwell/servo to prevent buffer overflow
+                upper_line = safe_line.upper().strip()
+                if upper_line.startswith('G4') or upper_line.startswith('M280'):
+                    time.sleep(0.1)  # 100ms for timing-sensitive commands
+                else:
+                    time.sleep(0.05)  # 50ms for move commands
                 
                 update_gondola_position(safe_line)
             
