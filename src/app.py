@@ -497,28 +497,9 @@ def plot_start():
                 # Send the command
                 serial_handler.send_command(safe_line)
                 
-                # Check for timing-sensitive commands and add appropriate delays
-                upper_line = safe_line.upper().strip()
-                
-                if upper_line.startswith('G4'):
-                    # G4 dwell - parse the time and wait for it
-                    # G4 P0.8 means 0.8 seconds, G4 S1 means 1 second
-                    import re
-                    p_match = re.search(r'P([\d.]+)', upper_line, re.IGNORECASE)
-                    s_match = re.search(r'S([\d.]+)', upper_line, re.IGNORECASE)
-                    dwell_time = 0
-                    if p_match:
-                        dwell_time = float(p_match.group(1))
-                    if s_match:
-                        dwell_time += float(s_match.group(1))
-                    # Wait for dwell plus a small buffer
-                    time.sleep(dwell_time + 0.1)
-                elif upper_line.startswith('M280'):
-                    # Servo command - instant but give it a moment
-                    time.sleep(0.05)
-                else:
-                    # Regular move commands - small delay for buffer management
-                    time.sleep(0.03)
+                # Simple fixed delay between all commands
+                # The firmware handles timing internally via G4 dwells
+                time.sleep(0.05)
                 
                 update_gondola_position(safe_line)
             

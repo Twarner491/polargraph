@@ -334,11 +334,9 @@ class GCodeGenerator {
                         this._pushPenUp(gcode);
                         penIsUp = true;
                     }
-                    // Coordinate transform for polargraph:
-                    // UI up (+Y) → Firmware +X (vertical on machine)
-                    // UI right (+X) → Firmware +Y (horizontal on machine)
-                    // Simple swap, no negation
-                    gcode.push(`G0 X${start.y.toFixed(3)} Y${start.x.toFixed(3)} F${this.settings.feed_rate_travel}`);
+                    // No coordinate transform - send coordinates as-is
+                    // The jog controls handle any axis mapping
+                    gcode.push(`G0 X${start.x.toFixed(3)} Y${start.y.toFixed(3)} F${this.settings.feed_rate_travel}`);
                 }
                 
                 if (penIsUp) {
@@ -348,8 +346,8 @@ class GCodeGenerator {
                 
                 for (let i = 1; i < line.points.length; i++) {
                     const point = line.points[i];
-                    // Same transform: swap X↔Y
-                    gcode.push(`G1 X${point.y.toFixed(3)} Y${point.x.toFixed(3)} F${this.settings.feed_rate_draw}`);
+                    // No coordinate transform
+                    gcode.push(`G1 X${point.x.toFixed(3)} Y${point.y.toFixed(3)} F${this.settings.feed_rate_draw}`);
                 }
                 
                 lastPoint = line.points[line.points.length - 1];
