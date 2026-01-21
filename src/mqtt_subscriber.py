@@ -119,7 +119,9 @@ def handle_command(data):
                 return
             
             # Use longer timeout for start command (sending large gcode arrays)
-            timeout = 60 if cmd == 'start' else 10
+            timeout = 300 if cmd == 'start' else 30  # 5 min for start, 30s for others
+            if cmd == 'start' and 'gcode' in payload:
+                print(f"Starting plot with {len(payload.get('gcode', []))} G-code lines...")
             response = requests.post(f"{FLASK_URL}{endpoints[cmd]}", json=payload, timeout=timeout)
             print(f"Command {cmd}: {response.status_code}")
             if response.status_code == 200:

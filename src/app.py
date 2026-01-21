@@ -440,15 +440,14 @@ def plot_start():
     current_line = 0  # Reset to beginning
     gondola_position = {'x': 0, 'y': 0, 'z': 90}  # Reset gondola
     
+    # Immediately notify that plot is starting
+    print(f"[PLOT] Received {len(current_gcode)} G-code lines, initializing...")
+    socketio.emit('plot_status', {'status': 'initializing', 'lines': len(current_gcode)})
+    
     # Enable motors and set up machine parameters
-    # Send all setup commands quickly - firmware buffers them
     serial_handler.send_command('M17')  # Enable motors
-    serial_handler.send_command('M201 X30 Y30')    # Max acceleration
-    serial_handler.send_command('M204 P30 T50')    # Print/travel acceleration
-    serial_handler.send_command('M205 X2 Y2')      # Jerk limits
-    serial_handler.send_command('G90')             # Absolute positioning
-    serial_handler.send_command('G0 F100')         # Default feedrate
-    time.sleep(0.2)  # Brief pause for commands to process
+    serial_handler.send_command('G90')  # Absolute positioning
+    time.sleep(0.1)
     
     # Run homing sequence before plotting (if enabled)
     if home_before_plot:
@@ -481,6 +480,7 @@ def plot_start():
         global current_line, is_plotting, is_paused, gondola_position
         
         print(f"[PLOT] Starting stream of {len(current_gcode)} lines")
+        socketio.emit('plot_status', {'status': 'streaming', 'lines': len(current_gcode)})
         
         while current_line < len(current_gcode) and is_plotting:
             if is_paused:
