@@ -490,9 +490,9 @@ def plot_start():
             line = current_gcode[current_line]
             
             if line.strip() and not line.strip().startswith(';'):
-                # Limit feedrates - very conservative for polargraph reliability
-                # 600mm/min travel (~10mm/s), 300mm/min draw (~5mm/s)
-                safe_line = limit_feedrate(line, max_travel=600, max_draw=300)
+                # Limit feedrates - ultra conservative for polargraph reliability
+                # 200mm/min travel (~3mm/s), 100mm/min draw (~1.5mm/s)
+                safe_line = limit_feedrate(line, max_travel=200, max_draw=100)
                 
                 # Stream commands - firmware has its own buffer
                 # Small delay to prevent buffer overflow, no blocking wait
