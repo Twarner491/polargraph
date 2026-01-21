@@ -494,12 +494,19 @@ def plot_start():
                 # 100mm/min travel (~1.5mm/s), 80mm/min draw (~1.3mm/s)
                 safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
                 
-                # Stream commands - firmware has its own buffer
-                # Small delay to prevent buffer overflow, no blocking wait
-                serial_handler.send_command(safe_line)
+                # Check if this is a blocking command (dwell or servo)
+                upper_line = safe_line.upper().strip()
+                is_dwell = upper_line.startswith('G4')
+                is_servo = upper_line.startswith('M280')
                 
-                # Small delay between commands for buffer management
-                time.sleep(0.05)  # 50ms = 20 commands/second
+                if is_dwell or is_servo:
+                    # Wait for these commands to complete before continuing
+                    # G4 dwells can take 800ms+, M280 is instant but we want sync
+                    serial_handler.send_command(safe_line, wait_for_ok=True, timeout=5.0)
+                else:
+                    # Regular move commands - stream with small delay
+                    serial_handler.send_command(safe_line)
+                    time.sleep(0.05)  # 50ms between move commands
                 
                 update_gondola_position(safe_line)
             
