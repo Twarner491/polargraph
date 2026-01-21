@@ -318,7 +318,7 @@ class GCodeGenerator {
         gcode.push(`G0 F${this.settings.feed_rate_travel} ; Set travel speed`);
         
         // Pen up to start
-        gcode.push(this.getPenUpCommand());
+        this._pushPenUp(gcode);
         
         let lastPoint = null;
         let penIsUp = true;
@@ -331,7 +331,7 @@ class GCodeGenerator {
                 
                 if (lastPoint === null || this._distance(lastPoint, start) > 0.1) {
                     if (!penIsUp) {
-                        gcode.push(this.getPenUpCommand());
+                        this._pushPenUp(gcode);
                         penIsUp = true;
                     }
                     // Coordinate transform for polargraph: swap X/Y, negate new X
@@ -341,7 +341,7 @@ class GCodeGenerator {
                 }
                 
                 if (penIsUp) {
-                    gcode.push(this.getPenDownCommand());
+                    this._pushPenDown(gcode);
                     penIsUp = false;
                 }
                 
@@ -358,20 +358,31 @@ class GCodeGenerator {
         // Footer - lift pen, wait, then return home
         gcode.push('');
         gcode.push('; End of drawing');
-        gcode.push(this.getPenUpCommand());
-        gcode.push('G4 P0.5 ; Wait 500ms for pen to lift');
+        this._pushPenUp(gcode);
         gcode.push(`G0 X0 Y0 F${this.settings.feed_rate_travel} ; Return home`);
         
         return gcode;
     }
     
+    // Push pen up command with dwell
+    _pushPenUp(gcode) {
+        gcode.push(`M280 P0 S${this.settings.pen_angle_up} ; Pen up`);
+        gcode.push('G4 P0.3 ; Wait for servo');
+    }
+    
+    // Push pen down command with dwell
+    _pushPenDown(gcode) {
+        gcode.push(`M280 P0 S${this.settings.pen_angle_down} ; Pen down`);
+        gcode.push('G4 P0.3 ; Wait for servo');
+    }
+    
     getPenUpCommand() {
-        // Use M280 for direct servo control (bypasses motion planner)
+        // For backwards compatibility - returns just the M280 command
         return `M280 P0 S${this.settings.pen_angle_up}`;
     }
     
     getPenDownCommand() {
-        // Use M280 for direct servo control (bypasses motion planner)
+        // For backwards compatibility - returns just the M280 command
         return `M280 P0 S${this.settings.pen_angle_down}`;
     }
     
