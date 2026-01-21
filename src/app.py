@@ -494,19 +494,31 @@ def plot_start():
                 # 100mm/min travel (~1.5mm/s), 80mm/min draw (~1.3mm/s)
                 safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
                 
-                # Check if this is a blocking command (dwell or servo)
-                upper_line = safe_line.upper().strip()
-                is_dwell = upper_line.startswith('G4')
-                is_servo = upper_line.startswith('M280')
+                # Send the command
+                serial_handler.send_command(safe_line)
                 
-                if is_dwell or is_servo:
-                    # Wait for these commands to complete before continuing
-                    # G4 dwells can take 800ms+, M280 is instant but we want sync
-                    serial_handler.send_command(safe_line, wait_for_ok=True, timeout=5.0)
+                # Check for timing-sensitive commands and add appropriate delays
+                upper_line = safe_line.upper().strip()
+                
+                if upper_line.startswith('G4'):
+                    # G4 dwell - parse the time and wait for it
+                    # G4 P0.8 means 0.8 seconds, G4 S1 means 1 second
+                    import re
+                    p_match = re.search(r'P([\d.]+)', upper_line, re.IGNORECASE)
+                    s_match = re.search(r'S([\d.]+)', upper_line, re.IGNORECASE)
+                    dwell_time = 0
+                    if p_match:
+                        dwell_time = float(p_match.group(1))
+                    if s_match:
+                        dwell_time += float(s_match.group(1))
+                    # Wait for dwell plus a small buffer
+                    time.sleep(dwell_time + 0.1)
+                elif upper_line.startswith('M280'):
+                    # Servo command - instant but give it a moment
+                    time.sleep(0.05)
                 else:
-                    # Regular move commands - stream with small delay
-                    serial_handler.send_command(safe_line)
-                    time.sleep(0.05)  # 50ms between move commands
+                    # Regular move commands - small delay for buffer management
+                    time.sleep(0.03)
                 
                 update_gondola_position(safe_line)
             
