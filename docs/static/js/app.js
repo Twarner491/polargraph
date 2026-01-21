@@ -2947,8 +2947,8 @@ function generateGcodeForEntities(entities, colorId = null) {
     const settings = {
         pen_angle_up: parseFloat(document.getElementById('penUpAngle')?.value) || 120,
         pen_angle_down: parseFloat(document.getElementById('penDownAngle')?.value) || 40,
-        feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 200,
-        feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 100,
+        feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 100,
+        feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 80,
         limit_left: parseFloat(document.getElementById('limitLeft')?.value) || -457.2,
         limit_right: parseFloat(document.getElementById('limitRight')?.value) || 457.2,
         limit_top: parseFloat(document.getElementById('limitTop')?.value) || 381,
@@ -4995,8 +4995,8 @@ function applySettingsToUI(settings) {
     document.getElementById('penKerf').value = state.penKerf;
     document.getElementById('penUpAngle').value = settings.pen_angle_up || 120;
     document.getElementById('penDownAngle').value = settings.pen_angle_down || 40;
-    document.getElementById('feedTravel').value = settings.feed_rate_travel || 200;
-    document.getElementById('feedDraw').value = settings.feed_rate_draw || 100;
+    document.getElementById('feedTravel').value = settings.feed_rate_travel || 100;
+    document.getElementById('feedDraw').value = settings.feed_rate_draw || 80;
     document.getElementById('penDwell').value = settings.pen_dwell || 150;
     
     // Update work area display

@@ -491,8 +491,8 @@ def plot_start():
             
             if line.strip() and not line.strip().startswith(';'):
                 # Limit feedrates - ultra conservative for polargraph reliability
-                # 200mm/min travel (~3mm/s), 100mm/min draw (~1.5mm/s)
-                safe_line = limit_feedrate(line, max_travel=200, max_draw=100)
+                # 100mm/min travel (~1.5mm/s), 80mm/min draw (~1.3mm/s)
+                safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
                 
                 # Stream commands - firmware has its own buffer
                 # Small delay to prevent buffer overflow, no blocking wait
@@ -521,9 +521,9 @@ def plot_start():
             is_plotting = False
             print(f"[PLOT] Complete! Retracting pen...")
             
-            # Retract pen before any movement
+            # Retract pen using M280 (direct servo control, bypasses planner)
             pen_up_angle = plotter_settings.get('pen_up_angle', 120)
-            serial_handler.send_command(f'G0 Z{pen_up_angle} F1000', wait_for_ok=True, timeout=2.0)
+            serial_handler.send_command(f'M280 P0 S{pen_up_angle}', wait_for_ok=True, timeout=2.0)
             time.sleep(0.5)  # Wait for servo to move
             
             print(f"[PLOT] Pen retracted")

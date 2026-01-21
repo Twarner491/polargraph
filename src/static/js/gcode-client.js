@@ -13,8 +13,8 @@ const DEFAULT_SETTINGS = {
     limit_bottom: -381,
     pen_angle_up: 120,
     pen_angle_down: 40,
-    feed_rate_travel: 200,
-    feed_rate_draw: 100,
+    feed_rate_travel: 100,
+    feed_rate_draw: 80,
     pen_diameter: 0.8
 };
 
@@ -366,11 +366,13 @@ class GCodeGenerator {
     }
     
     getPenUpCommand() {
-        return `G0 Z${this.settings.pen_angle_up} F1000`;
+        // Use M280 for direct servo control (bypasses motion planner)
+        return `M280 P0 S${this.settings.pen_angle_up}`;
     }
     
     getPenDownCommand() {
-        return `G0 Z${this.settings.pen_angle_down} F1000`;
+        // Use M280 for direct servo control (bypasses motion planner)
+        return `M280 P0 S${this.settings.pen_angle_down}`;
     }
     
     getWorkArea() {
