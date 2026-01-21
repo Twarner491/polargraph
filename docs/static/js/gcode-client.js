@@ -334,10 +334,11 @@ class GCodeGenerator {
                         this._pushPenUp(gcode);
                         penIsUp = true;
                     }
-                    // Coordinate transform for polargraph: swap X/Y, negate Y (was X) for correct orientation
-                    // UI vertical (Y) → Firmware X
-                    // UI horizontal (X) → Firmware Y (negated)
-                    gcode.push(`G0 X${start.y.toFixed(3)} Y${(-start.x).toFixed(3)} F${this.settings.feed_rate_travel}`);
+                    // Coordinate transform for polargraph:
+                    // UI up (+Y) → Firmware +X (vertical on machine)
+                    // UI right (+X) → Firmware +Y (horizontal on machine)
+                    // Simple swap, no negation
+                    gcode.push(`G0 X${start.y.toFixed(3)} Y${start.x.toFixed(3)} F${this.settings.feed_rate_travel}`);
                 }
                 
                 if (penIsUp) {
@@ -347,8 +348,8 @@ class GCodeGenerator {
                 
                 for (let i = 1; i < line.points.length; i++) {
                     const point = line.points[i];
-                    // Same transform: swap, negate Y
-                    gcode.push(`G1 X${point.y.toFixed(3)} Y${(-point.x).toFixed(3)} F${this.settings.feed_rate_draw}`);
+                    // Same transform: swap X↔Y
+                    gcode.push(`G1 X${point.y.toFixed(3)} Y${point.x.toFixed(3)} F${this.settings.feed_rate_draw}`);
                 }
                 
                 lastPoint = line.points[line.points.length - 1];
@@ -364,14 +365,18 @@ class GCodeGenerator {
         return gcode;
     }
     
-    // Push pen up command with dwell - must complete before travel
+    // Push pen up command with proper synchronization
     _pushPenUp(gcode) {
+        // G4 P0 waits for move buffer to empty (ensures previous moves complete)
+        gcode.push('G4 P0 ; Wait for moves to complete');
         gcode.push(`M280 P0 S${this.settings.pen_angle_up} ; Pen up`);
         gcode.push('G4 P0.8 ; Wait 800ms for servo to fully lift');
     }
     
-    // Push pen down command with dwell - must complete before drawing
+    // Push pen down command with proper synchronization
     _pushPenDown(gcode) {
+        // G4 P0 waits for move buffer to empty (ensures previous moves complete)
+        gcode.push('G4 P0 ; Wait for moves to complete');
         gcode.push(`M280 P0 S${this.settings.pen_angle_down} ; Pen down`);
         gcode.push('G4 P0.8 ; Wait 800ms for servo to fully lower');
     }
