@@ -75,6 +75,8 @@ def handle_command(data):
         'goto': '/api/goto',
         'gcode': '/api/send_gcode',
         'pen_change': '/api/pen_change',
+        'save_settings': '/api/settings',
+        'get_settings': '/api/settings',
     }
     
     if cmd in endpoints:
@@ -102,6 +104,19 @@ def handle_command(data):
                     payload['gcode'] = data.get('gcode', [])
                 if 'home' in data:
                     payload['home'] = data.get('home', True)
+            elif cmd == 'save_settings':
+                # Pass through all settings data
+                payload = {k: v for k, v in data.items() if k != 'command'}
+            elif cmd == 'get_settings':
+                # GET request for settings
+                response = requests.get(f"{FLASK_URL}{endpoints[cmd]}", timeout=10)
+                print(f"Get settings: {response.status_code}")
+                if response.status_code == 200:
+                    # Publish settings back to MQTT for client to receive
+                    result = response.json()
+                    client.publish("home/polargraph/settings_response", json.dumps(result))
+                    print(f"  -> Published settings response")
+                return
             
             # Use longer timeout for start command (sending large gcode arrays)
             timeout = 60 if cmd == 'start' else 10

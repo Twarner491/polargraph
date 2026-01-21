@@ -2168,6 +2168,7 @@ async function sendViaWebhook(endpoint, data = null) {
         '/api/goto': 'goto',
         '/api/send_gcode': 'gcode',
         '/api/pen_change': 'pen_change',
+        '/api/settings': 'save_settings',
     };
     
     const command = commandMap[endpoint] || endpoint.replace('/api/', '');
@@ -2175,6 +2176,9 @@ async function sendViaWebhook(endpoint, data = null) {
     let payload = { command: command };
     if (endpoint === '/api/send_gcode' && data?.command) {
         payload.gcode = data.command;
+    } else if (endpoint === '/api/settings' && data) {
+        // For settings, include all settings data in payload
+        payload = { command: 'save_settings', ...data };
     } else if (data) {
         payload = { ...payload, ...data };
     }
@@ -4933,29 +4937,23 @@ function resetUploadUI() {
 async function loadSettings() {
     let settings = null;
     
-    // If connected remotely, try to load from server first
-    if (state.useRemote) {
-        settings = await sendCommand('/api/settings');
-        if (settings) {
-            console.log('[SETTINGS] Loaded from plotter');
+    // Always load from localStorage first (quick load)
+    try {
+        const saved = localStorage.getItem('polargraph_settings');
+        if (saved) {
+            settings = JSON.parse(saved);
+            console.log('[SETTINGS] Loaded from browser localStorage');
         }
+    } catch (e) {
+        console.warn('[SETTINGS] Failed to load from localStorage:', e);
     }
     
-    // Fall back to localStorage if no server settings
-    if (!settings) {
-        try {
-            const saved = localStorage.getItem('polargraph_settings');
-            if (saved) {
-                settings = JSON.parse(saved);
-                console.log('[SETTINGS] Loaded from browser localStorage');
-            }
-        } catch (e) {
-            console.warn('[SETTINGS] Failed to load from localStorage:', e);
-        }
-    }
-    
-    // Apply settings (use defaults if nothing loaded)
+    // Apply settings immediately (use defaults if nothing loaded)
     applySettingsToUI(settings || {});
+    
+    // Note: Remote settings sync happens when connection is established
+    // The webhook system doesn't support GET requests, so we save to 
+    // localStorage on every save and that becomes the source of truth
 }
 
 function applySettingsToUI(settings) {
@@ -4995,22 +4993,23 @@ async function saveSettings() {
     
     state.penKerf = settings.pen_kerf;
     
-    // If connected remotely via console access key, save to server
+    // Always save to localStorage as backup
+    try {
+        localStorage.setItem('polargraph_settings', JSON.stringify(settings));
+    } catch (e) {
+        console.warn('Failed to save to localStorage:', e);
+    }
+    
+    // If connected remotely via console access key, also save to server
     if (state.useRemote && state.connected) {
         const result = await sendCommand('/api/settings', 'POST', settings);
         if (result.success) {
             logConsole('Settings saved to plotter', 'msg-in');
         } else {
-            logConsole('Failed to save settings to plotter', 'msg-error');
+            logConsole('Settings saved locally (plotter save failed)', 'msg-warn');
         }
     } else {
-        // Save to browser localStorage
-        try {
-            localStorage.setItem('polargraph_settings', JSON.stringify(settings));
-            logConsole('Settings saved to browser', 'msg-in');
-        } catch (e) {
-            logConsole('Failed to save settings: ' + e.message, 'msg-error');
-        }
+        logConsole('Settings saved', 'msg-in');
     }
     
     // Always update work area display
@@ -5139,7 +5138,7 @@ function openCalibrationWizard() {
     logConsole('Calibration wizard started', 'msg-info');
 }
 
-function applyManualCalibration() {
+async function applyManualCalibration() {
     const width = parseFloat(document.getElementById('calibManualWidth').value) || 840;
     const height = parseFloat(document.getElementById('calibManualHeight').value) || 1200;
     const motorSpacing = parseFloat(document.getElementById('calibManualMotorSpacing').value) || 1220;
@@ -5159,12 +5158,11 @@ function applyManualCalibration() {
     document.getElementById('limitBottom').value = limitBottom.toFixed(1);
     
     logConsole(`Applied calibration: ${width}mm x ${height}mm work area`, 'msg-info');
-    logConsole('Click "Save Settings" to persist', 'msg-info');
     
     closeCalibrationWizard();
     
-    // Switch to settings panel
-    document.querySelector('[data-panel="settings"]')?.click();
+    // Automatically save settings
+    await saveSettings();
     
     // Redraw canvas with new work area
     drawCanvas();

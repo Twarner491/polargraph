@@ -440,26 +440,15 @@ def plot_start():
     current_line = 0  # Reset to beginning
     gondola_position = {'x': 0, 'y': 0, 'z': 90}  # Reset gondola
     
-    # Enable motors first
-    serial_handler.send_command('M17')
-    time.sleep(0.5)
-    
-    # Set very conservative acceleration settings for polargraph
-    # Lower values = smoother motion but slower
-    serial_handler.send_command('M201 X30 Y30')    # Max acceleration (very low for smooth motion)
-    time.sleep(0.1)
+    # Enable motors and set up machine parameters
+    # Send all setup commands quickly - firmware buffers them
+    serial_handler.send_command('M17')  # Enable motors
+    serial_handler.send_command('M201 X30 Y30')    # Max acceleration
     serial_handler.send_command('M204 P30 T50')    # Print/travel acceleration
-    time.sleep(0.1)
-    serial_handler.send_command('M205 X2 Y2')      # Jerk limits (very low for smooth corners)
-    time.sleep(0.1)
-    
-    # Set absolute positioning mode
-    serial_handler.send_command('G90')
-    time.sleep(0.1)
-    
-    # Set default feedrate (will be overridden by G-code but ensures a safe default)
-    serial_handler.send_command('G0 F100')
-    time.sleep(0.1)
+    serial_handler.send_command('M205 X2 Y2')      # Jerk limits
+    serial_handler.send_command('G90')             # Absolute positioning
+    serial_handler.send_command('G0 F100')         # Default feedrate
+    time.sleep(0.2)  # Brief pause for commands to process
     
     # Run homing sequence before plotting (if enabled)
     if home_before_plot:
