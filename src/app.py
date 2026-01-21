@@ -309,7 +309,7 @@ def pen_control():
     action = data.get('action', 'up')
     
     # Get angles from settings or use defaults
-    up_angle = plotter_settings.get('pen_up_angle', 90)
+    up_angle = plotter_settings.get('pen_up_angle', 120)
     down_angle = plotter_settings.get('pen_down_angle', 40)
     
     target_angle = up_angle if action == 'up' else down_angle
@@ -471,6 +471,9 @@ def plot_start():
         serial_handler.send_command('G0 X0 Y0 F300')  # Go to center slowly
         time.sleep(2.0)
     else:
+        # No homing - set current position as origin
+        # This means "wherever the gondola is now = 0,0"
+        serial_handler.send_command('G92 X0 Y0')  # Set current position as origin
         serial_handler.send_command('G90')    # Absolute mode
     
     # Send start G-code if any
@@ -538,7 +541,7 @@ def plot_start():
             print(f"[PLOT] Complete! Retracting pen...")
             
             # Retract pen before any movement
-            pen_up_angle = plotter_settings.get('pen_up_angle', 90)
+            pen_up_angle = plotter_settings.get('pen_up_angle', 120)
             serial_handler.send_command(f'G0 Z{pen_up_angle} F1000', wait_for_ok=True, timeout=2.0)
             time.sleep(0.5)  # Wait for servo to move
             

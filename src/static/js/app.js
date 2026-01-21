@@ -2913,7 +2913,7 @@ function generateGcodeForEntities(entities, colorId = null) {
     
     // Get current settings for metadata
     const settings = {
-        pen_angle_up: parseFloat(document.getElementById('penUpAngle')?.value) || 90,
+        pen_angle_up: parseFloat(document.getElementById('penUpAngle')?.value) || 120,
         pen_angle_down: parseFloat(document.getElementById('penDownAngle')?.value) || 40,
         feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 1000,
         feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 500,
@@ -3753,7 +3753,7 @@ function parseGcodeToEntities(gcodeText) {
     let lastZ = 90;  // Assume pen up initially
     
     // Detect pen threshold - if we have settings, use them
-    const penUpAngle = settingsMetadata?.pen_angle_up || 90;
+    const penUpAngle = settingsMetadata?.pen_angle_up || 120;
     const penDownAngle = settingsMetadata?.pen_angle_down || 40;
     const penThreshold = (penUpAngle + penDownAngle) / 2;
     
@@ -4967,7 +4967,7 @@ function applySettingsToUI(settings) {
     document.getElementById('limitBottom').value = settings.limit_bottom || -594.5;
     state.penKerf = settings.pen_kerf || 0.45;
     document.getElementById('penKerf').value = state.penKerf;
-    document.getElementById('penUpAngle').value = settings.pen_angle_up || 90;
+    document.getElementById('penUpAngle').value = settings.pen_angle_up || 120;
     document.getElementById('penDownAngle').value = settings.pen_angle_down || 40;
     document.getElementById('feedTravel').value = settings.feed_rate_travel || 1000;
     document.getElementById('feedDraw').value = settings.feed_rate_draw || 500;
