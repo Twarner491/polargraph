@@ -490,17 +490,16 @@ def plot_start():
             line = current_gcode[current_line]
             
             if line.strip() and not line.strip().startswith(';'):
-                # Limit feedrates - use reasonable speeds for polargraph
-                # 3000mm/min travel (~50mm/s), 1500mm/min draw (~25mm/s)
-                safe_line = limit_feedrate(line, max_travel=3000, max_draw=1500)
+                # Limit feedrates - conservative speeds for polargraph reliability
+                # 1000mm/min travel, 500mm/min draw
+                safe_line = limit_feedrate(line, max_travel=1000, max_draw=500)
                 
                 # Stream commands - firmware has its own buffer
-                # Use small delay to prevent buffer overflow, no blocking wait
+                # Small delay to prevent buffer overflow, no blocking wait
                 serial_handler.send_command(safe_line)
                 
-                # Minimal delay - just enough for serial buffer management
-                # The firmware's motion planner handles the actual timing
-                time.sleep(0.02)  # 20ms = 50 commands/second max
+                # Small delay between commands for buffer management
+                time.sleep(0.05)  # 50ms = 20 commands/second
                 
                 update_gondola_position(safe_line)
             
