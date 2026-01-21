@@ -355,7 +355,7 @@ class GCodeGenerator {
         gcode.push('');
         gcode.push('; End of drawing');
         gcode.push(this.getPenUpCommand());
-        gcode.push('G4 P500 ; Wait for pen to lift');
+        gcode.push('G4 P0.5 ; Wait 500ms for pen to lift');
         gcode.push(`G0 X0 Y0 F${this.settings.feed_rate_travel} ; Return home`);
         
         return gcode;

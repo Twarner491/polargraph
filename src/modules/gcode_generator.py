@@ -63,7 +63,7 @@ class GCodeGenerator:
         gcode.append('')
         gcode.append('; End of drawing')
         gcode.append(self.settings.get_pen_up_command())
-        gcode.append('G4 P500 ; Wait for pen to lift')
+        gcode.append('G4 P0.5 ; Wait 500ms for pen to lift')
         gcode.append(f'G0 X0 Y0 F{self.settings.get("feed_rate_travel")} ; Return home')
         
         return gcode
