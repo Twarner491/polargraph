@@ -2160,6 +2160,7 @@ async function sendViaWebhook(endpoint, data = null) {
         '/api/pen': data?.action === 'up' ? 'pen_up' : 'pen_down',
         '/api/motors': data?.enable ? 'motors_on' : 'motors_off',
         '/api/plot/start': 'start',
+        '/api/plot/chunk': 'chunk',
         '/api/plot/pause': 'pause',
         '/api/plot/resume': 'resume',
         '/api/plot/rewind': 'rewind',
@@ -2402,8 +2403,41 @@ async function startPlot() {
             }
             
             if (state.currentGcode && state.currentGcode.length > 0) {
-                logConsole(`Sending ${state.currentGcode.length} G-code lines`, 'msg-out');
-                await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
+                const totalLines = state.currentGcode.length;
+                logConsole(`Generated ${totalLines} G-code lines`, 'msg-out');
+                
+                // For large plots, send in chunks to avoid message size limits
+                const CHUNK_SIZE = 2000;  // Lines per chunk
+                
+                if (totalLines > CHUNK_SIZE && POLARGRAPH_WEBHOOK_URL) {
+                    // Send chunks via MQTT
+                    const totalChunks = Math.ceil(totalLines / CHUNK_SIZE);
+                    logConsole(`Sending in ${totalChunks} chunks...`, 'msg-out');
+                    
+                    for (let i = 0; i < totalChunks; i++) {
+                        const start = i * CHUNK_SIZE;
+                        const end = Math.min(start + CHUNK_SIZE, totalLines);
+                        const chunk = state.currentGcode.slice(start, end);
+                        
+                        const isLast = (i === totalChunks - 1);
+                        await sendCommand('/api/plot/chunk', 'POST', {
+                            chunk: chunk,
+                            chunkIndex: i,
+                            totalChunks: totalChunks,
+                            isLast: isLast,
+                            home: homeBeforePlot
+                        });
+                        
+                        logConsole(`Sent chunk ${i + 1}/${totalChunks} (${chunk.length} lines)`, 'msg-out');
+                        
+                        // Small delay between chunks
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                } else {
+                    // Small plot or direct connection - send all at once
+                    logConsole(`Sending ${totalLines} G-code lines`, 'msg-out');
+                    await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
+                }
             } else {
                 logConsole('No G-code to send', 'msg-warn');
                 return;

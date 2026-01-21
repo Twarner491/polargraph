@@ -53,9 +53,53 @@ def on_message(client, userdata, msg):
         print(f"Error processing message: {e}")
 
 
+# Global storage for chunked G-code uploads
+gcode_chunks = {}
+chunk_metadata = {}
+
 def handle_command(data):
     """Handle a command from MQTT."""
+    global gcode_chunks, chunk_metadata
+    
     cmd = data.get('command', '')
+    
+    # Handle chunked G-code upload
+    if cmd == 'chunk':
+        chunk = data.get('chunk', [])
+        chunk_index = data.get('chunkIndex', 0)
+        total_chunks = data.get('totalChunks', 1)
+        is_last = data.get('isLast', False)
+        home = data.get('home', True)
+        
+        gcode_chunks[chunk_index] = chunk
+        chunk_metadata['totalChunks'] = total_chunks
+        chunk_metadata['home'] = home
+        
+        print(f"Received chunk {chunk_index + 1}/{total_chunks} ({len(chunk)} lines)")
+        
+        if is_last:
+            # All chunks received - reassemble and start plot
+            all_gcode = []
+            for i in range(total_chunks):
+                if i in gcode_chunks:
+                    all_gcode.extend(gcode_chunks[i])
+            
+            print(f"All chunks received. Total: {len(all_gcode)} G-code lines. Starting plot...")
+            
+            # Clear chunks
+            gcode_chunks = {}
+            
+            # Start the plot
+            try:
+                response = requests.post(
+                    f"{FLASK_URL}/api/plot/start",
+                    json={'gcode': all_gcode, 'home': home},
+                    timeout=300
+                )
+                print(f"Plot started: {response.status_code}")
+            except Exception as e:
+                print(f"Error starting plot: {e}")
+        return
     
     endpoints = {
         'connect': '/api/connect',
