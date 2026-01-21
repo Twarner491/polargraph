@@ -522,14 +522,21 @@ def plot_start():
         
         if is_plotting and current_line >= len(current_gcode):
             is_plotting = False
-            print(f"[PLOT] Complete! Retracting pen...")
+            print(f"[PLOT] All commands sent. Waiting for firmware to finish...")
+            
+            # Wait for firmware to finish executing buffered moves
+            # G4 P0 forces buffer flush in Makelangelo firmware
+            serial_handler.send_command('G4 P0')
+            time.sleep(3.0)  # Give firmware time to complete all moves
+            
+            print(f"[PLOT] Retracting pen...")
             
             # Retract pen using M280 (direct servo control, bypasses planner)
             pen_up_angle = plotter_settings.get('pen_up_angle', 120)
-            serial_handler.send_command(f'M280 P0 S{pen_up_angle}', wait_for_ok=True, timeout=2.0)
+            serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
             time.sleep(0.5)  # Wait for servo to move
             
-            print(f"[PLOT] Pen retracted")
+            print(f"[PLOT] Pen retracted. Plot complete!")
             socketio.emit('plot_complete', {'message': 'Plot complete!'})
             clear_uploads_folder()
     
