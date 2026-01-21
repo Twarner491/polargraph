@@ -5,13 +5,13 @@
 
 // Default plotter settings (matches plotter_settings.py)
 const DEFAULT_SETTINGS = {
-    machine_width: 1219.2,
-    machine_height: 1524.0,
-    limit_left: -420.5,
-    limit_right: 420.5,
-    limit_top: 594.5,
-    limit_bottom: -594.5,
-    pen_angle_up: 90,
+    machine_width: 1057.1,
+    machine_height: 962,
+    limit_left: -457.2,
+    limit_right: 457.2,
+    limit_top: 381,
+    limit_bottom: -381,
+    pen_angle_up: 120,
     pen_angle_down: 40,
     feed_rate_travel: 1000,
     feed_rate_draw: 500,

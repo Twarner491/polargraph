@@ -2255,7 +2255,7 @@ async function toggleConnection() {
     }
 }
 
-function setConnectionStatus(connected, port = null) {
+async function setConnectionStatus(connected, port = null) {
     state.connected = connected;
     elements.statusDot.classList.toggle('connected', connected);
     elements.statusLabel.textContent = connected ? `Connected` : 'Disconnected';
@@ -2277,8 +2277,9 @@ function setConnectionStatus(connected, port = null) {
         btn.classList.remove('active');
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
         
-        // Sync motor spacing to firmware from saved settings
-        syncMotorSpacingToFirmware();
+        // Load settings from localStorage first, then sync to firmware
+        await loadSettings();
+        await syncMotorSpacingToFirmware();
     }
     
     // Update calibration button
@@ -2948,10 +2949,10 @@ function generateGcodeForEntities(entities, colorId = null) {
         pen_angle_down: parseFloat(document.getElementById('penDownAngle')?.value) || 40,
         feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 1000,
         feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 500,
-        limit_left: parseFloat(document.getElementById('limitLeft')?.value) || -420.5,
-        limit_right: parseFloat(document.getElementById('limitRight')?.value) || 420.5,
-        limit_top: parseFloat(document.getElementById('limitTop')?.value) || 594.5,
-        limit_bottom: parseFloat(document.getElementById('limitBottom')?.value) || -594.5
+        limit_left: parseFloat(document.getElementById('limitLeft')?.value) || -457.2,
+        limit_right: parseFloat(document.getElementById('limitRight')?.value) || 457.2,
+        limit_top: parseFloat(document.getElementById('limitTop')?.value) || 381,
+        limit_bottom: parseFloat(document.getElementById('limitBottom')?.value) || -381
     };
     
     // Add header with metadata
@@ -4984,12 +4985,12 @@ async function loadSettings() {
 }
 
 function applySettingsToUI(settings) {
-    document.getElementById('machineWidth').value = settings.machine_width || 1219.2;
-    document.getElementById('machineHeight').value = settings.machine_height || 1524;
-    document.getElementById('limitLeft').value = settings.limit_left || -420.5;
-    document.getElementById('limitRight').value = settings.limit_right || 420.5;
-    document.getElementById('limitTop').value = settings.limit_top || 594.5;
-    document.getElementById('limitBottom').value = settings.limit_bottom || -594.5;
+    document.getElementById('machineWidth').value = settings.machine_width || 1057.1;
+    document.getElementById('machineHeight').value = settings.machine_height || 962;
+    document.getElementById('limitLeft').value = settings.limit_left || -457.2;
+    document.getElementById('limitRight').value = settings.limit_right || 457.2;
+    document.getElementById('limitTop').value = settings.limit_top || 381;
+    document.getElementById('limitBottom').value = settings.limit_bottom || -381;
     state.penKerf = settings.pen_kerf || 0.45;
     document.getElementById('penKerf').value = state.penKerf;
     document.getElementById('penUpAngle').value = settings.pen_angle_up || 120;
