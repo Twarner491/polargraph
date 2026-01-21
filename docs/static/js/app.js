@@ -2312,13 +2312,8 @@ async function emergencyStop() {
     drawCanvas();
 }
 
-let jogging = false;
-
-async function jog(direction) {
+function jog(direction) {
     if (!state.connected) return;
-    
-    // Prevent rapid clicking
-    if (jogging) return;
     
     const d = state.jogDistance;
     let x = 0, y = 0;
@@ -2340,21 +2335,8 @@ async function jog(direction) {
             return;
     }
     
-    jogging = true;
-    const jogBtns = document.querySelectorAll('.jog-grid .jog-btn');
-    jogBtns.forEach(btn => btn.classList.add('jogging'));
-    
-    try {
-        logConsole(`Jog X:${x} Y:${y}`, 'msg-out');
-        await sendCommand('/api/jog', 'POST', { x, y });
-        
-        // Wait for movement to complete
-        const moveTime = Math.sqrt(x*x + y*y) / 60 * 60 * 1000;
-        await new Promise(resolve => setTimeout(resolve, Math.min(moveTime + 200, 2000)));
-    } finally {
-        jogging = false;
-        jogBtns.forEach(btn => btn.classList.remove('jogging'));
-    }
+    logConsole(`Jog X:${x} Y:${y}`, 'msg-out');
+    sendCommand('/api/jog', 'POST', { x, y });
 }
 
 // ============================================================================
@@ -5148,15 +5130,7 @@ function showCalibrationStep(step) {
     calibration.step = step;
 }
 
-let calibrationJogging = false;
-
-async function calibrationJog(direction) {
-    // Prevent rapid clicking - wait for previous jog to complete
-    if (calibrationJogging) {
-        logConsole('Wait for previous move to complete', 'msg-warn');
-        return;
-    }
-    
+function calibrationJog(direction) {
     // Get step size from the current step's select
     const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`) 
                     || document.getElementById('calibJogStep');
@@ -5184,23 +5158,8 @@ async function calibrationJog(direction) {
     // Update distance display
     updateCalibrationDistance();
     
-    // Disable jog buttons during movement
-    calibrationJogging = true;
-    const jogBtns = document.querySelectorAll('#calibrationModal .jog-btn');
-    jogBtns.forEach(btn => btn.disabled = true);
-    
-    try {
-        // Send jog command and wait for it to complete
-        await sendCommand('/api/jog', 'POST', { x, y });
-        
-        // Small additional delay to ensure movement completes
-        const moveTime = Math.sqrt(x*x + y*y) / 60 * 60 * 1000;  // ms
-        await new Promise(resolve => setTimeout(resolve, Math.min(moveTime + 200, 2000)));
-    } finally {
-        // Re-enable buttons
-        calibrationJogging = false;
-        jogBtns.forEach(btn => btn.disabled = false);
-    }
+    // Send jog command (fire and forget for responsiveness)
+    sendCommand('/api/jog', 'POST', { x, y });
 }
 
 function updateCalibrationDistance() {

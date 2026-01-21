@@ -266,7 +266,6 @@ def home():
 def jog():
     """Jog the plotter by a relative amount in Cartesian coordinates.
     The firmware handles polargraph IK internally.
-    Uses conservative speeds for reliability.
     """
     if not serial_handler.is_connected():
         return jsonify({'success': False, 'error': 'Not connected'})
@@ -274,27 +273,13 @@ def jog():
     data = request.json
     x = data.get('x', 0)
     y = data.get('y', 0)
-    feedrate = data.get('feedrate', 60)  # Slower default for reliability
+    feedrate = data.get('feedrate', 80)
     
-    # Calculate distance to determine appropriate wait time
-    distance = (x**2 + y**2) ** 0.5
-    # Time = distance / speed (mm/min converted to seconds) + buffer
-    move_time = (distance / feedrate * 60) + 0.5 if feedrate > 0 else 1.0
-    
-    # Enable motors
-    serial_handler.send_command('M17', wait_for_ok=True, timeout=1.0)
-    
-    # Set conservative acceleration for jogging
-    serial_handler.send_command('M201 X50 Y50', wait_for_ok=True, timeout=1.0)
-    serial_handler.send_command('M204 P50 T50', wait_for_ok=True, timeout=1.0)
-    
-    # Relative move - firmware IK converts to belt lengths
-    serial_handler.send_command('G91', wait_for_ok=True, timeout=1.0)
-    serial_handler.send_command(f'G0 X{x} Y{y} F{feedrate}', wait_for_ok=True, timeout=max(5.0, move_time * 2))
-    serial_handler.send_command('G90', wait_for_ok=True, timeout=1.0)
-    
-    # Wait for movement to actually complete
-    time.sleep(min(move_time, 3.0))
+    # Enable motors and do relative move
+    serial_handler.send_command('M17')
+    serial_handler.send_command('G91')
+    serial_handler.send_command(f'G0 X{x} Y{y} F{feedrate}')
+    serial_handler.send_command('G90')
     
     return jsonify({'success': True})
 
