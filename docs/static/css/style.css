@@ -1706,3 +1706,23 @@ html, body {
     font-family: var(--font-mono);
     color: var(--text-dark);
 }
+
+.calib-input-group {
+    margin-bottom: 12px;
+}
+
+.calib-input-group label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-mid);
+    margin-bottom: 4px;
+}
+
+.calib-input-group input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: var(--font-mono);
+}

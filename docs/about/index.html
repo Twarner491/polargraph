@@ -427,7 +427,47 @@
                 <button class="modal-close" id="closeCalibration">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="calibrationStep1" class="calibration-step">
+                <!-- Mode Selection -->
+                <div id="calibrationModeSelect" class="calibration-step">
+                    <p><strong>Choose Calibration Method:</strong></p>
+                    <button class="btn full" id="calibModeManual" style="margin-bottom: 8px;">
+                        📏 Manual Measurement (Recommended)
+                    </button>
+                    <p style="font-size: 11px; color: var(--text-light); margin-bottom: 12px;">
+                        Measure your work area with a tape measure and enter dimensions directly.
+                    </p>
+                    <button class="btn full" id="calibModeJog">
+                        🕹️ Jog Calibration
+                    </button>
+                    <p style="font-size: 11px; color: var(--text-light);">
+                        Use jog controls to move gondola to corners. Can be unreliable over network.
+                    </p>
+                </div>
+                
+                <!-- Manual Measurement Mode -->
+                <div id="calibrationManual" class="calibration-step" style="display:none;">
+                    <p><strong>Enter Work Area Dimensions</strong></p>
+                    <p style="font-size: 12px; color: var(--text-light); margin-bottom: 12px;">
+                        Measure the drawable area on your surface. The coordinate system has (0,0) at the center.
+                    </p>
+                    <div class="calib-input-group">
+                        <label>Width (left to right, mm):</label>
+                        <input type="number" id="calibManualWidth" value="840" step="1">
+                    </div>
+                    <div class="calib-input-group">
+                        <label>Height (top to bottom, mm):</label>
+                        <input type="number" id="calibManualHeight" value="1200" step="1">
+                    </div>
+                    <div class="calib-input-group">
+                        <label>Motor spacing (mm):</label>
+                        <input type="number" id="calibManualMotorSpacing" value="1220" step="1">
+                        <p style="font-size: 10px; color: var(--text-light);">Distance between the two motor shafts</p>
+                    </div>
+                    <button class="btn primary full" id="calibManualApply" style="margin-top: 12px;">Apply Settings</button>
+                    <button class="btn full" id="calibManualBack" style="margin-top: 8px;">Back</button>
+                </div>
+                
+                <div id="calibrationStep1" class="calibration-step" style="display:none;">
                     <p><strong>Step 1: Move to Center</strong></p>
                     <p>Use the jog controls below to move the gondola to the <strong>center</strong> of your work area. This is your reference point.</p>
                     <div class="calibration-jog">
@@ -454,6 +494,7 @@
                         </div>
                     </div>
                     <button class="btn primary full" id="calibRecordCenter">Record Center Position</button>
+                    <button class="btn full" id="calibJogBack" style="margin-top: 8px;">Back</button>
                 </div>
                 
                 <div id="calibrationStep2" class="calibration-step" style="display:none;">

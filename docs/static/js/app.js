@@ -5065,6 +5065,31 @@ function initCalibrationWizard() {
         if (e.target === modal) closeCalibrationWizard();
     });
     
+    // Mode selection buttons
+    document.getElementById('calibModeManual')?.addEventListener('click', () => {
+        document.getElementById('calibrationModeSelect').style.display = 'none';
+        document.getElementById('calibrationManual').style.display = 'block';
+    });
+    
+    document.getElementById('calibModeJog')?.addEventListener('click', () => {
+        document.getElementById('calibrationModeSelect').style.display = 'none';
+        document.getElementById('calibrationStep1').style.display = 'block';
+        calibration.step = 1;
+    });
+    
+    document.getElementById('calibManualBack')?.addEventListener('click', () => {
+        document.getElementById('calibrationManual').style.display = 'none';
+        document.getElementById('calibrationModeSelect').style.display = 'block';
+    });
+    
+    document.getElementById('calibJogBack')?.addEventListener('click', () => {
+        document.getElementById('calibrationStep1').style.display = 'none';
+        document.getElementById('calibrationModeSelect').style.display = 'block';
+    });
+    
+    // Manual calibration apply
+    document.getElementById('calibManualApply')?.addEventListener('click', applyManualCalibration);
+    
     // Step buttons
     document.getElementById('calibRecordCenter')?.addEventListener('click', () => recordCalibrationPoint('center'));
     document.getElementById('calibRecordTopLeft')?.addEventListener('click', () => recordCalibrationPoint('topLeft'));
@@ -5102,9 +5127,47 @@ function openCalibrationWizard() {
         bottom: { x: 0, y: 0 }
     };
     
-    // Show first step
-    showCalibrationStep(1);
+    // Hide all steps, show mode selection
+    document.getElementById('calibrationModeSelect').style.display = 'block';
+    document.getElementById('calibrationManual').style.display = 'none';
+    document.getElementById('calibrationStep1').style.display = 'none';
+    document.getElementById('calibrationStep2')?.style && (document.getElementById('calibrationStep2').style.display = 'none');
+    document.getElementById('calibrationStep3')?.style && (document.getElementById('calibrationStep3').style.display = 'none');
+    document.getElementById('calibrationStep4')?.style && (document.getElementById('calibrationStep4').style.display = 'none');
+    document.getElementById('calibrationResults')?.style && (document.getElementById('calibrationResults').style.display = 'none');
+    
     logConsole('Calibration wizard started', 'msg-info');
+}
+
+function applyManualCalibration() {
+    const width = parseFloat(document.getElementById('calibManualWidth').value) || 840;
+    const height = parseFloat(document.getElementById('calibManualHeight').value) || 1200;
+    const motorSpacing = parseFloat(document.getElementById('calibManualMotorSpacing').value) || 1220;
+    
+    // Calculate limits (centered at 0,0)
+    const limitLeft = -width / 2;
+    const limitRight = width / 2;
+    const limitTop = height / 2;
+    const limitBottom = -height / 2;
+    
+    // Apply to settings form
+    document.getElementById('machineWidth').value = motorSpacing.toFixed(1);
+    document.getElementById('machineHeight').value = (height + 200).toFixed(1);
+    document.getElementById('limitLeft').value = limitLeft.toFixed(1);
+    document.getElementById('limitRight').value = limitRight.toFixed(1);
+    document.getElementById('limitTop').value = limitTop.toFixed(1);
+    document.getElementById('limitBottom').value = limitBottom.toFixed(1);
+    
+    logConsole(`Applied calibration: ${width}mm x ${height}mm work area`, 'msg-info');
+    logConsole('Click "Save Settings" to persist', 'msg-info');
+    
+    closeCalibrationWizard();
+    
+    // Switch to settings panel
+    document.querySelector('[data-panel="settings"]')?.click();
+    
+    // Redraw canvas with new work area
+    drawCanvas();
 }
 
 function closeCalibrationWizard() {
