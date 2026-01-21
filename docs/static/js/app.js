@@ -2269,17 +2269,29 @@ function setConnectionStatus(connected, port = null) {
     document.querySelectorAll('.jog-btn').forEach(btn => btn.disabled = !connected);
     updatePlotButtons();
     
-    // On connect: ensure pen is UP and update button state
+    // On connect: ensure pen is UP, sync settings, and update button state
     if (connected) {
         state.penDown = false;
         sendCommand('/api/pen', 'POST', { action: 'up' });
         const btn = elements.penToggleBtn;
         btn.classList.remove('active');
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
+        
+        // Sync motor spacing to firmware from saved settings
+        syncMotorSpacingToFirmware();
     }
     
     // Update calibration button
     updateCalibrationButton();
+}
+
+async function syncMotorSpacingToFirmware() {
+    // Get motor spacing from settings
+    const motorSpacing = parseFloat(document.getElementById('machineWidth')?.value) || 1220;
+    
+    // Send to firmware (M665 S<spacing> for Marlin polargraph)
+    await sendCommand('/api/send_gcode', 'POST', { command: `M665 S${motorSpacing.toFixed(2)}` });
+    logConsole(`Synced motor spacing to firmware: ${motorSpacing.toFixed(1)}mm`, 'msg-info');
 }
 
 async function toggleMotors() {
@@ -5149,15 +5161,33 @@ async function applyManualCalibration() {
     const limitTop = height / 2;
     const limitBottom = -height / 2;
     
-    // Apply to settings form
-    document.getElementById('machineWidth').value = motorSpacing.toFixed(1);
-    document.getElementById('machineHeight').value = (height + 200).toFixed(1);
-    document.getElementById('limitLeft').value = limitLeft.toFixed(1);
-    document.getElementById('limitRight').value = limitRight.toFixed(1);
-    document.getElementById('limitTop').value = limitTop.toFixed(1);
-    document.getElementById('limitBottom').value = limitBottom.toFixed(1);
+    // Apply to settings form - update all fields
+    const machineWidthEl = document.getElementById('machineWidth');
+    const machineHeightEl = document.getElementById('machineHeight');
+    const limitLeftEl = document.getElementById('limitLeft');
+    const limitRightEl = document.getElementById('limitRight');
+    const limitTopEl = document.getElementById('limitTop');
+    const limitBottomEl = document.getElementById('limitBottom');
     
-    logConsole(`Applied calibration: ${width}mm x ${height}mm work area`, 'msg-info');
+    if (machineWidthEl) machineWidthEl.value = motorSpacing.toFixed(1);
+    if (machineHeightEl) machineHeightEl.value = (height + 200).toFixed(1);
+    if (limitLeftEl) limitLeftEl.value = limitLeft.toFixed(1);
+    if (limitRightEl) limitRightEl.value = limitRight.toFixed(1);
+    if (limitTopEl) limitTopEl.value = limitTop.toFixed(1);
+    if (limitBottomEl) limitBottomEl.value = limitBottom.toFixed(1);
+    
+    logConsole(`Applied calibration: ${width}mm x ${height}mm work area, motor spacing: ${motorSpacing}mm`, 'msg-info');
+    
+    // Send motor spacing to firmware (M665 S<spacing> for Marlin polargraph)
+    // This updates the firmware's inverse kinematics without needing to reflash
+    if (state.connected) {
+        await sendCommand('/api/send_gcode', 'POST', { command: `M665 S${motorSpacing.toFixed(2)}` });
+        logConsole(`Sent motor spacing to firmware: M665 S${motorSpacing.toFixed(2)}`, 'msg-out');
+        
+        // Save to EEPROM so it persists across reboots
+        await sendCommand('/api/send_gcode', 'POST', { command: 'M500' });
+        logConsole('Saved settings to firmware EEPROM (M500)', 'msg-out');
+    }
     
     closeCalibrationWizard();
     
