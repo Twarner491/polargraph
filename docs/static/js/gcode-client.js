@@ -13,8 +13,8 @@ const DEFAULT_SETTINGS = {
     limit_bottom: -381,
     pen_angle_up: 120,
     pen_angle_down: 40,
-    feed_rate_travel: 1000,
-    feed_rate_draw: 500,
+    feed_rate_travel: 3000,
+    feed_rate_draw: 1500,
     pen_diameter: 0.8
 };
 

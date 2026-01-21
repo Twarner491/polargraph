@@ -490,37 +490,30 @@ def plot_start():
             line = current_gcode[current_line]
             
             if line.strip() and not line.strip().startswith(';'):
-                # Limit feedrates to safe values for polargraph
-                # Using very conservative speeds for reliability
-                # These are in mm/min: 100 = ~1.7mm/s, 60 = ~1mm/s
-                safe_line = limit_feedrate(line, max_travel=100, max_draw=60)
+                # Limit feedrates - use reasonable speeds for polargraph
+                # 3000mm/min travel (~50mm/s), 1500mm/min draw (~25mm/s)
+                safe_line = limit_feedrate(line, max_travel=3000, max_draw=1500)
                 
-                # For move commands, wait for ok to ensure proper sequencing
-                is_move = safe_line.strip().upper().startswith(('G0', 'G1'))
+                # Stream commands - firmware has its own buffer
+                # Use small delay to prevent buffer overflow, no blocking wait
+                serial_handler.send_command(safe_line)
                 
-                if is_move:
-                    # Send and wait for acknowledgment (blocking)
-                    success = serial_handler.send_command(safe_line, wait_for_ok=True, timeout=10.0)
-                    if not success:
-                        print(f"[PLOT] Warning: No ack for line {current_line}, continuing...")
-                        # Add extra delay if no ack received
-                        time.sleep(0.2)
-                else:
-                    # Non-move commands (settings, etc) - just send with small delay
-                    serial_handler.send_command(safe_line)
-                    time.sleep(0.1)
+                # Minimal delay - just enough for serial buffer management
+                # The firmware's motion planner handles the actual timing
+                time.sleep(0.02)  # 20ms = 50 commands/second max
                 
                 update_gondola_position(safe_line)
             
-            # Emit progress every line
-            socketio.emit('progress', {
-                'current': current_line,
-                'total': len(current_gcode),
-                'percent': int(100 * (current_line + 1) / max(1, len(current_gcode))),
-                'gondola': gondola_position
-            })
+            # Emit progress less frequently for performance
+            if current_line % 5 == 0:
+                socketio.emit('progress', {
+                    'current': current_line,
+                    'total': len(current_gcode),
+                    'percent': int(100 * (current_line + 1) / max(1, len(current_gcode))),
+                    'gondola': gondola_position
+                })
             
-            if current_line % 10 == 0:
+            if current_line % 50 == 0:
                 print(f"[PLOT] Progress: {current_line}/{len(current_gcode)}")
             
             current_line += 1
