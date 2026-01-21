@@ -223,7 +223,11 @@ class ImageConverter {
         canvas.width = newWidth;
         canvas.height = newHeight;
         
-        // Draw and get image data
+        // Fill with white background first (for transparent images)
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, newWidth, newHeight);
+        
+        // Draw image on top
         ctx.drawImage(image, 0, 0, newWidth, newHeight);
         const imageData = ctx.getImageData(0, 0, newWidth, newHeight);
         const grayData = this._toGrayscale(imageData);
@@ -256,7 +260,14 @@ class ImageConverter {
             const r = data[i * 4];
             const g = data[i * 4 + 1];
             const b = data[i * 4 + 2];
-            gray[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+            const a = data[i * 4 + 3];  // Alpha channel
+            
+            // Treat transparent pixels as white (255 = no ink)
+            if (a < 128) {
+                gray[i] = 255;
+            } else {
+                gray[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+            }
         }
         
         return gray;
