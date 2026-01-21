@@ -905,6 +905,12 @@ html, body {
     cursor: not-allowed;
 }
 
+.jog-btn.jogging {
+    opacity: 0.5;
+    pointer-events: none;
+    background: rgba(0, 120, 200, 0.1);
+}
+
 .jog-center {
     background: rgba(0, 0, 0, 0.02);
 }
