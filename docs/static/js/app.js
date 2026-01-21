@@ -2286,12 +2286,27 @@ function setConnectionStatus(connected, port = null) {
 }
 
 async function syncMotorSpacingToFirmware() {
-    // Get motor spacing from settings
+    // Get motor spacing and work area limits from settings
     const motorSpacing = parseFloat(document.getElementById('machineWidth')?.value) || 1220;
+    const limitTop = parseFloat(document.getElementById('limitTop')?.value) || 500;
+    const limitBottom = parseFloat(document.getElementById('limitBottom')?.value) || -500;
     
-    // Send to firmware (M665 S<spacing> for Marlin polargraph)
-    await sendCommand('/api/send_gcode', 'POST', { command: `M665 S${motorSpacing.toFixed(2)}` });
-    logConsole(`Synced motor spacing to firmware: ${motorSpacing.toFixed(1)}mm`, 'msg-info');
+    // For Makelangelo firmware, motor spacing is set via X axis limits (M101 A0)
+    // axies[0].limitMin = left motor X position (negative)
+    // axies[0].limitMax = right motor X position (positive)
+    // The IK uses: left = axies[0].limitMin, right = axies[0].limitMax
+    const halfSpacing = motorSpacing / 2;
+    
+    // M101 A0 T<max> B<min> - Set X axis (motor positions)
+    await sendCommand('/api/send_gcode', 'POST', { command: `M101 A0 T${halfSpacing.toFixed(2)} B${(-halfSpacing).toFixed(2)}` });
+    
+    // M101 A1 T<max> B<min> - Set Y axis (vertical limits)  
+    await sendCommand('/api/send_gcode', 'POST', { command: `M101 A1 T${limitTop.toFixed(2)} B${limitBottom.toFixed(2)}` });
+    
+    // Save to EEPROM
+    await sendCommand('/api/send_gcode', 'POST', { command: 'M500' });
+    
+    logConsole(`Synced to firmware: motor spacing ${motorSpacing.toFixed(1)}mm, Y limits [${limitBottom}, ${limitTop}]`, 'msg-info');
 }
 
 async function toggleMotors() {
@@ -5178,15 +5193,9 @@ async function applyManualCalibration() {
     
     logConsole(`Applied calibration: ${width}mm x ${height}mm work area, motor spacing: ${motorSpacing}mm`, 'msg-info');
     
-    // Send motor spacing to firmware (M665 S<spacing> for Marlin polargraph)
-    // This updates the firmware's inverse kinematics without needing to reflash
+    // Sync motor spacing and limits to firmware via M101 commands
     if (state.connected) {
-        await sendCommand('/api/send_gcode', 'POST', { command: `M665 S${motorSpacing.toFixed(2)}` });
-        logConsole(`Sent motor spacing to firmware: M665 S${motorSpacing.toFixed(2)}`, 'msg-out');
-        
-        // Save to EEPROM so it persists across reboots
-        await sendCommand('/api/send_gcode', 'POST', { command: 'M500' });
-        logConsole('Saved settings to firmware EEPROM (M500)', 'msg-out');
+        await syncMotorSpacingToFirmware();
     }
     
     closeCalibrationWizard();

@@ -59,10 +59,11 @@ class GCodeGenerator:
                 
                 last_point = line.points[-1]
         
-        # Footer - pen up and return home
+        # Footer - pen up, wait, then return home
         gcode.append('')
         gcode.append('; End of drawing')
         gcode.append(self.settings.get_pen_up_command())
+        gcode.append('G4 P500 ; Wait for pen to lift')
         gcode.append(f'G0 X0 Y0 F{self.settings.get("feed_rate_travel")} ; Return home')
         
         return gcode
