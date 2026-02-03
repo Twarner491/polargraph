@@ -4283,8 +4283,15 @@ async function generatePattern() {
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
 
-    // Special handling for Sheet Music - MIDI search/upload
+    // Special handling for Sheet Music - MIDI search/upload (requires server)
     if (generator === 'sheetmusic') {
+        if (CLIENT_SIDE_MODE) {
+            logConsole('Sheet Music requires connection to plotter.local', 'msg-error');
+            logConsole('This generator needs the server to parse MIDI files', 'msg-info');
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
         try {
             const midiSource = options.midi_source || 'search';
             const songName = options.song_name || '';
@@ -4362,6 +4369,18 @@ async function generatePattern() {
             btn.textContent = originalText;
         }
         return;
+    }
+
+    // Special handling for Fish Draw - requires server-side Python generation
+    if (generator === 'fishdraw') {
+        if (CLIENT_SIDE_MODE) {
+            logConsole('Fish Draw requires connection to plotter.local', 'msg-error');
+            logConsole('This generator uses complex algorithms only available server-side', 'msg-info');
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+        // Fall through to standard server-side generation
     }
 
     // Special handling for GPenT - uses Cloudflare Worker in client mode, server API locally
