@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Callable
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # Available generators and their options (numbered for easy reference)
-# Only generators available on BOTH server and client side
+# GPenT runs server-side, so server-only generators like fishdraw are available
 GENERATORS = {
     1: {'id': 'spiral', 'name': 'Spiral', 'options': ['turns (1-50)', 'spacing (1-20)']},
     2: {'id': 'spirograph', 'name': 'Spirograph', 'options': ['R (10-300)', 'r (5-150)', 'd (5-200)', 'revolutions (1-100)']},
@@ -40,6 +40,7 @@ GENERATORS = {
     23: {'id': 'colorfuldots', 'name': 'Colorful Dots (CMYK)', 'options': ['color_mode (cmyk/rgb/primary/warm/cool)', 'grid_spacing (10-30mm)', 'max_dot_size (8-20mm)']},
     24: {'id': 'interlockings', 'name': 'Interlockings (Multi-Color)', 'options': ['num_layers (4-12)', 'lines_per_layer (20-60)', 'line_spacing (3-10mm)']},
     25: {'id': 'sudokucartography', 'name': 'Sudoku Cartography', 'options': ['initial_clues (15-25)', 'curve_tension (30-100)', 'draw_grid (true/false)']},
+    26: {'id': 'fishdraw', 'name': 'Fish Draw', 'options': ['fish_name (string, leave empty for random Latin name)', 'seed (-1 for random, or any number for reproducible fish)']},
 }
 
 # Available pen colors (numbered)
