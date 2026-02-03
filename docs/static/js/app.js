@@ -3,8 +3,9 @@
  */
 
 var POLARGRAPH_WEBHOOK_URL = "";
-var GPENT_WORKER_URL = "";
+var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev";
 var DCODE_WORKER_URL = "";
+var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
@@ -4371,16 +4372,84 @@ async function generatePattern() {
         return;
     }
 
-    // Special handling for Fish Draw - requires server-side Python generation
+    // Special handling for Fish Draw - uses Cloudflare Worker in client mode, server API locally
     if (generator === 'fishdraw') {
-        if (CLIENT_SIDE_MODE) {
-            logConsole('Fish Draw requires connection to plotter.local', 'msg-error');
-            logConsole('This generator uses complex algorithms only available server-side', 'msg-info');
+        try {
+            const fishName = options.fish_name || '';
+            const seed = options.seed !== undefined ? options.seed : -1;
+
+            logConsole('Fish Draw starting...', 'msg-info');
+            if (fishName) {
+                logConsole(`Fish name: "${fishName}"`, 'msg-info');
+            }
+
+            // Determine which endpoint to use
+            let fishdrawUrl;
+            if (CLIENT_SIDE_MODE) {
+                if (!FISHDRAW_WORKER_URL) {
+                    logConsole('Fish Draw requires worker URL to be configured', 'msg-error');
+                    logConsole('Connect to plotter.local for local Fish Draw', 'msg-info');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+                fishdrawUrl = FISHDRAW_WORKER_URL;
+            } else {
+                // Use server-side generation
+                const result = await sendCommand('/api/generate', 'POST', { generator: 'fishdraw', options });
+                if (result.success) {
+                    const paths = Array.isArray(result.preview) ? result.preview : (result.preview?.paths || []);
+                    addEntity(paths, {
+                        algorithm: 'fishdraw',
+                        algorithmOptions: options,
+                        name: result.name || 'Fish Draw'
+                    });
+                    logConsole(`Generated: ${result.name || 'Fish'}`, 'msg-info');
+                    elements.plotStatus.textContent = `${paths.length} lines generated`;
+                } else {
+                    logConsole(`Fish Draw Error: ${result.error}`, 'msg-error');
+                }
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            // Call Fish Draw worker
+            const response = await fetch(fishdrawUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fish_name: fishName, seed: seed })
+            });
+
+            const result = await response.json();
+
+            if (!result.success) {
+                logConsole(`Fish Draw Error: ${result.error}`, 'msg-error');
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            // Convert worker paths format to our format
+            const paths = result.paths.map(line => line.map(p => [p.x, p.y]));
+
+            addEntity(paths, {
+                algorithm: 'fishdraw',
+                algorithmOptions: options,
+                name: result.name || 'Fish Draw'
+            });
+
+            logConsole(`Generated: ${result.name}`, 'msg-info');
+            elements.plotStatus.textContent = `${paths.length} lines generated`;
+
+        } catch (error) {
+            logConsole(`Fish Draw Error: ${error.message}`, 'msg-error');
+            console.error('Fish Draw error:', error);
+        } finally {
             btn.disabled = false;
             btn.textContent = originalText;
-            return;
         }
-        // Fall through to standard server-side generation
+        return;
     }
 
     // Special handling for GPenT - uses Cloudflare Worker in client mode, server API locally
