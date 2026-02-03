@@ -9,6 +9,27 @@ class ImageConverter {
     }
     
     static CONVERTERS = {
+        linedraw: {
+            name: 'Line Draw',
+            description: 'Converts image to line drawing with contours and hatching (recommended)',
+            options: {
+                draw_contours: { type: 'bool', default: true, label: 'Draw Edge Contours' },
+                draw_hatch: { type: 'bool', default: true, label: 'Draw Hatching' },
+                contour_simplify: { type: 'float', default: 2.0, min: 0.5, max: 10, label: 'Contour Simplification' },
+                hatch_size: { type: 'int', default: 16, min: 4, max: 64, label: 'Hatch Grid Size' },
+                hatch_angle: { type: 'float', default: 45, min: 0, max: 180, label: 'Hatch Angle' },
+                cross_hatch: { type: 'bool', default: true, label: 'Cross-Hatch Darker Areas' }
+            }
+        },
+        skeleton: {
+            name: 'Skeleton Trace',
+            description: 'Extracts centerline skeleton from shapes (good for text/logos)',
+            options: {
+                threshold: { type: 'int', default: 128, min: 0, max: 255, label: 'Threshold' },
+                invert: { type: 'bool', default: false, label: 'Invert (trace white on black)' },
+                chunk_size: { type: 'int', default: 10, min: 5, max: 50, label: 'Chunk Size' }
+            }
+        },
         spiral: {
             name: 'Spiral',
             description: 'Converts image to a continuous spiral pattern',
@@ -541,10 +562,496 @@ class ImageConverter {
                 turtle.position.y = y;
             }
         }
-        
+
         return turtle;
     }
-    
+
+    _convert_linedraw(gray, w, h, offsetX, offsetY, options) {
+        const turtle = new Turtle();
+
+        const drawContours = options.draw_contours !== false;
+        const drawHatch = options.draw_hatch !== false;
+        const contourSimplify = options.contour_simplify || 2.0;
+        const hatchSize = options.hatch_size || 16;
+        const hatchAngle = options.hatch_angle || 45;
+        const crossHatch = options.cross_hatch !== false;
+
+        const lines = [];
+
+        // Extract contours using edge detection
+        if (drawContours) {
+            const contours = this._findContours(gray, w, h, contourSimplify);
+            lines.push(...contours);
+        }
+
+        // Generate hatching based on brightness
+        if (drawHatch) {
+            const hatchLines = this._generateHatching(gray, w, h, hatchSize, hatchAngle, crossHatch);
+            lines.push(...hatchLines);
+        }
+
+        // Sort lines for efficient plotting (nearest neighbor)
+        const sortedLines = this._sortLines(lines);
+
+        // Convert to turtle with Y-flip for correct orientation
+        for (const line of sortedLines) {
+            if (line.length >= 2) {
+                turtle.jumpTo(line[0][0] + offsetX, (h - line[0][1]) + offsetY);
+                for (let i = 1; i < line.length; i++) {
+                    turtle.moveTo(line[i][0] + offsetX, (h - line[i][1]) + offsetY);
+                }
+            }
+        }
+
+        return turtle;
+    }
+
+    _findContours(gray, w, h, simplify) {
+        // Simple edge detection using Sobel-like operators
+        const edges = new Uint8Array(w * h);
+
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                const gx = -gray[(y - 1) * w + (x - 1)] + gray[(y - 1) * w + (x + 1)]
+                    - 2 * gray[y * w + (x - 1)] + 2 * gray[y * w + (x + 1)]
+                    - gray[(y + 1) * w + (x - 1)] + gray[(y + 1) * w + (x + 1)];
+
+                const gy = -gray[(y - 1) * w + (x - 1)] - 2 * gray[(y - 1) * w + x] - gray[(y - 1) * w + (x + 1)]
+                    + gray[(y + 1) * w + (x - 1)] + 2 * gray[(y + 1) * w + x] + gray[(y + 1) * w + (x + 1)];
+
+                const mag = Math.sqrt(gx * gx + gy * gy);
+                edges[y * w + x] = mag > 50 ? 255 : 0;
+            }
+        }
+
+        // Trace edge pixels into connected contours
+        const contours = [];
+        const visited = new Set();
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const idx = y * w + x;
+                if (edges[idx] > 128 && !visited.has(idx)) {
+                    const contour = [[x, y]];
+                    visited.add(idx);
+
+                    // Trace the contour
+                    let cx = x, cy = y;
+                    while (true) {
+                        let found = false;
+                        for (let dy = -1; dy <= 1 && !found; dy++) {
+                            for (let dx = -1; dx <= 1 && !found; dx++) {
+                                if (dx === 0 && dy === 0) continue;
+                                const nx = cx + dx, ny = cy + dy;
+                                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                    const nidx = ny * w + nx;
+                                    if (edges[nidx] > 128 && !visited.has(nidx)) {
+                                        contour.push([nx, ny]);
+                                        visited.add(nidx);
+                                        cx = nx;
+                                        cy = ny;
+                                        found = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (!found) break;
+                    }
+
+                    // Only keep contours with enough points
+                    if (contour.length >= 3) {
+                        const simplified = this._simplifyPolyline(contour, simplify);
+                        if (simplified.length >= 2) {
+                            contours.push(simplified);
+                        }
+                    }
+                }
+            }
+        }
+
+        return contours;
+    }
+
+    _simplifyPolyline(points, epsilon) {
+        if (points.length <= 2) return points;
+
+        // Ramer-Douglas-Peucker simplification
+        let dmax = 0;
+        let index = 0;
+        const end = points.length - 1;
+
+        for (let i = 1; i < end; i++) {
+            const d = this._pointLineDistance(points[i], points[0], points[end]);
+            if (d > dmax) {
+                index = i;
+                dmax = d;
+            }
+        }
+
+        if (dmax > epsilon) {
+            const rec1 = this._simplifyPolyline(points.slice(0, index + 1), epsilon);
+            const rec2 = this._simplifyPolyline(points.slice(index), epsilon);
+            return rec1.slice(0, -1).concat(rec2);
+        } else {
+            return [points[0], points[end]];
+        }
+    }
+
+    _pointLineDistance(point, lineStart, lineEnd) {
+        const [x, y] = point;
+        const [x1, y1] = lineStart;
+        const [x2, y2] = lineEnd;
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+
+        if (dx === 0 && dy === 0) {
+            return Math.sqrt((x - x1) ** 2 + (y - y1) ** 2);
+        }
+
+        const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
+        const projX = x1 + t * dx;
+        const projY = y1 + t * dy;
+
+        return Math.sqrt((x - projX) ** 2 + (y - projY) ** 2);
+    }
+
+    _generateHatching(gray, w, h, hatchSize, angle, crossHatch) {
+        const lines = [];
+        const angleRad = angle * Math.PI / 180;
+        const cosA = Math.cos(angleRad);
+        const sinA = Math.sin(angleRad);
+
+        // Process grid cells
+        for (let cellY = 0; cellY < h; cellY += hatchSize) {
+            for (let cellX = 0; cellX < w; cellX += hatchSize) {
+                // Get average brightness in cell
+                let sum = 0, count = 0;
+                for (let y = cellY; y < Math.min(cellY + hatchSize, h); y++) {
+                    for (let x = cellX; x < Math.min(cellX + hatchSize, w); x++) {
+                        sum += gray[y * w + x];
+                        count++;
+                    }
+                }
+                const brightness = count > 0 ? sum / count : 255;
+
+                // Skip very bright areas
+                if (brightness > 240) continue;
+
+                // Determine hatching density based on darkness
+                let density;
+                if (brightness < 64) density = 4;
+                else if (brightness < 128) density = 3;
+                else if (brightness < 192) density = 2;
+                else density = 1;
+
+                const cx = cellX + hatchSize / 2;
+                const cy = cellY + hatchSize / 2;
+                const halfSize = hatchSize / 2;
+                const step = hatchSize / density;
+
+                // Primary hatching lines
+                for (let i = 0; i < density; i++) {
+                    const offset = -halfSize + step / 2 + i * step;
+                    const px1 = cx + offset * sinA - halfSize * cosA;
+                    const py1 = cy - offset * cosA - halfSize * sinA;
+                    const px2 = cx + offset * sinA + halfSize * cosA;
+                    const py2 = cy - offset * cosA + halfSize * sinA;
+
+                    // Clip to cell bounds
+                    const clipped = this._clipLineToBounds(px1, py1, px2, py2, cellX, cellY, cellX + hatchSize, cellY + hatchSize);
+                    if (clipped) {
+                        lines.push([[clipped[0], clipped[1]], [clipped[2], clipped[3]]]);
+                    }
+                }
+
+                // Cross-hatching for darker areas
+                if (crossHatch && density >= 2) {
+                    const perpAngle = angleRad + Math.PI / 2;
+                    const cosP = Math.cos(perpAngle);
+                    const sinP = Math.sin(perpAngle);
+                    const crossDensity = density - 1;
+                    const crossStep = hatchSize / crossDensity;
+
+                    for (let i = 0; i < crossDensity; i++) {
+                        const offset = -halfSize + crossStep / 2 + i * crossStep;
+                        const px1 = cx + offset * sinP - halfSize * cosP;
+                        const py1 = cy - offset * cosP - halfSize * sinP;
+                        const px2 = cx + offset * sinP + halfSize * cosP;
+                        const py2 = cy - offset * cosP + halfSize * sinP;
+
+                        const clipped = this._clipLineToBounds(px1, py1, px2, py2, cellX, cellY, cellX + hatchSize, cellY + hatchSize);
+                        if (clipped) {
+                            lines.push([[clipped[0], clipped[1]], [clipped[2], clipped[3]]]);
+                        }
+                    }
+                }
+            }
+        }
+
+        return lines;
+    }
+
+    _clipLineToBounds(x1, y1, x2, y2, rx1, ry1, rx2, ry2) {
+        // Cohen-Sutherland line clipping
+        const INSIDE = 0, LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
+
+        const computeCode = (x, y) => {
+            let code = INSIDE;
+            if (x < rx1) code |= LEFT;
+            else if (x > rx2) code |= RIGHT;
+            if (y < ry1) code |= BOTTOM;
+            else if (y > ry2) code |= TOP;
+            return code;
+        };
+
+        let code1 = computeCode(x1, y1);
+        let code2 = computeCode(x2, y2);
+
+        while (true) {
+            if ((code1 | code2) === 0) return [x1, y1, x2, y2];
+            if ((code1 & code2) !== 0) return null;
+
+            const codeOut = code1 !== 0 ? code1 : code2;
+            let x, y;
+
+            if (codeOut & TOP) {
+                x = x1 + (x2 - x1) * (ry2 - y1) / (y2 - y1);
+                y = ry2;
+            } else if (codeOut & BOTTOM) {
+                x = x1 + (x2 - x1) * (ry1 - y1) / (y2 - y1);
+                y = ry1;
+            } else if (codeOut & RIGHT) {
+                y = y1 + (y2 - y1) * (rx2 - x1) / (x2 - x1);
+                x = rx2;
+            } else if (codeOut & LEFT) {
+                y = y1 + (y2 - y1) * (rx1 - x1) / (x2 - x1);
+                x = rx1;
+            }
+
+            if (codeOut === code1) {
+                x1 = x; y1 = y;
+                code1 = computeCode(x1, y1);
+            } else {
+                x2 = x; y2 = y;
+                code2 = computeCode(x2, y2);
+            }
+        }
+    }
+
+    _sortLines(lines) {
+        if (lines.length === 0) return [];
+
+        const sorted = [lines[0]];
+        const remaining = lines.slice(1);
+
+        while (remaining.length > 0) {
+            const currentEnd = sorted[sorted.length - 1][sorted[sorted.length - 1].length - 1];
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            let reverse = false;
+
+            for (let i = 0; i < remaining.length; i++) {
+                const line = remaining[i];
+                const dStart = Math.sqrt(
+                    (currentEnd[0] - line[0][0]) ** 2 +
+                    (currentEnd[1] - line[0][1]) ** 2
+                );
+                const dEnd = Math.sqrt(
+                    (currentEnd[0] - line[line.length - 1][0]) ** 2 +
+                    (currentEnd[1] - line[line.length - 1][1]) ** 2
+                );
+
+                if (dStart < bestDist) {
+                    bestDist = dStart;
+                    bestIdx = i;
+                    reverse = false;
+                }
+                if (dEnd < bestDist) {
+                    bestDist = dEnd;
+                    bestIdx = i;
+                    reverse = true;
+                }
+            }
+
+            let nextLine = remaining.splice(bestIdx, 1)[0];
+            if (reverse) nextLine = nextLine.slice().reverse();
+            sorted.push(nextLine);
+        }
+
+        return sorted;
+    }
+
+    _convert_skeleton(gray, w, h, offsetX, offsetY, options) {
+        const turtle = new Turtle();
+
+        const threshold = options.threshold || 128;
+        const invert = options.invert || false;
+
+        // Create binary image
+        const binary = new Uint8Array(w * h);
+        for (let i = 0; i < gray.length; i++) {
+            if (invert) {
+                binary[i] = gray[i] >= threshold ? 1 : 0;
+            } else {
+                binary[i] = gray[i] < threshold ? 1 : 0;
+            }
+        }
+
+        // Apply Zhang-Suen thinning
+        const skeleton = this._zhangSuenThinning(binary, w, h);
+
+        // Trace skeleton into polylines
+        const polylines = this._traceSkeleton(skeleton, w, h);
+
+        // Sort for efficient plotting
+        const sorted = this._sortLines(polylines);
+
+        // Convert to turtle with Y-flip
+        for (const line of sorted) {
+            if (line.length >= 2) {
+                turtle.jumpTo(line[0][0] + offsetX, (h - line[0][1]) + offsetY);
+                for (let i = 1; i < line.length; i++) {
+                    turtle.moveTo(line[i][0] + offsetX, (h - line[i][1]) + offsetY);
+                }
+            }
+        }
+
+        return turtle;
+    }
+
+    _zhangSuenThinning(binary, w, h) {
+        // Zhang-Suen thinning algorithm
+        const im = new Uint8Array(binary);
+        let changed = true;
+
+        while (changed) {
+            changed = false;
+
+            // First pass
+            const marker1 = new Uint8Array(w * h);
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const idx = y * w + x;
+                    if (im[idx] === 0) continue;
+
+                    const p2 = im[(y - 1) * w + x];
+                    const p3 = im[(y - 1) * w + (x + 1)];
+                    const p4 = im[y * w + (x + 1)];
+                    const p5 = im[(y + 1) * w + (x + 1)];
+                    const p6 = im[(y + 1) * w + x];
+                    const p7 = im[(y + 1) * w + (x - 1)];
+                    const p8 = im[y * w + (x - 1)];
+                    const p9 = im[(y - 1) * w + (x - 1)];
+
+                    const A = (p2 === 0 && p3 === 1 ? 1 : 0) + (p3 === 0 && p4 === 1 ? 1 : 0) +
+                              (p4 === 0 && p5 === 1 ? 1 : 0) + (p5 === 0 && p6 === 1 ? 1 : 0) +
+                              (p6 === 0 && p7 === 1 ? 1 : 0) + (p7 === 0 && p8 === 1 ? 1 : 0) +
+                              (p8 === 0 && p9 === 1 ? 1 : 0) + (p9 === 0 && p2 === 1 ? 1 : 0);
+
+                    const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+
+                    if (A === 1 && B >= 2 && B <= 6 && p2 * p4 * p6 === 0 && p4 * p6 * p8 === 0) {
+                        marker1[idx] = 1;
+                    }
+                }
+            }
+
+            for (let i = 0; i < im.length; i++) {
+                if (marker1[i]) {
+                    im[i] = 0;
+                    changed = true;
+                }
+            }
+
+            // Second pass
+            const marker2 = new Uint8Array(w * h);
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const idx = y * w + x;
+                    if (im[idx] === 0) continue;
+
+                    const p2 = im[(y - 1) * w + x];
+                    const p3 = im[(y - 1) * w + (x + 1)];
+                    const p4 = im[y * w + (x + 1)];
+                    const p5 = im[(y + 1) * w + (x + 1)];
+                    const p6 = im[(y + 1) * w + x];
+                    const p7 = im[(y + 1) * w + (x - 1)];
+                    const p8 = im[y * w + (x - 1)];
+                    const p9 = im[(y - 1) * w + (x - 1)];
+
+                    const A = (p2 === 0 && p3 === 1 ? 1 : 0) + (p3 === 0 && p4 === 1 ? 1 : 0) +
+                              (p4 === 0 && p5 === 1 ? 1 : 0) + (p5 === 0 && p6 === 1 ? 1 : 0) +
+                              (p6 === 0 && p7 === 1 ? 1 : 0) + (p7 === 0 && p8 === 1 ? 1 : 0) +
+                              (p8 === 0 && p9 === 1 ? 1 : 0) + (p9 === 0 && p2 === 1 ? 1 : 0);
+
+                    const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+
+                    if (A === 1 && B >= 2 && B <= 6 && p2 * p4 * p8 === 0 && p2 * p6 * p8 === 0) {
+                        marker2[idx] = 1;
+                    }
+                }
+            }
+
+            for (let i = 0; i < im.length; i++) {
+                if (marker2[i]) {
+                    im[i] = 0;
+                    changed = true;
+                }
+            }
+        }
+
+        return im;
+    }
+
+    _traceSkeleton(skeleton, w, h) {
+        const polylines = [];
+        const visited = new Set();
+
+        // Find all skeleton pixels and their neighbors
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const idx = y * w + x;
+                if (skeleton[idx] === 0 || visited.has(idx)) continue;
+
+                // Start tracing from this point
+                const polyline = [[x, y]];
+                visited.add(idx);
+
+                let cx = x, cy = y;
+                while (true) {
+                    let found = false;
+
+                    // Check 8-connected neighbors
+                    for (let dy = -1; dy <= 1 && !found; dy++) {
+                        for (let dx = -1; dx <= 1 && !found; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const nx = cx + dx, ny = cy + dy;
+                            if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                const nidx = ny * w + nx;
+                                if (skeleton[nidx] === 1 && !visited.has(nidx)) {
+                                    polyline.push([nx, ny]);
+                                    visited.add(nidx);
+                                    cx = nx;
+                                    cy = ny;
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!found) break;
+                }
+
+                if (polyline.length >= 2) {
+                    polylines.push(polyline);
+                }
+            }
+        }
+
+        return polylines;
+    }
+
     _convert_trace(gray, w, h, offsetX, offsetY, options) {
         const turtle = new Turtle();
         

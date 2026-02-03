@@ -1253,6 +1253,255 @@ def gpent_generate():
 
 
 # ============================================================================
+# Sheet Music (Legumes) API
+# ============================================================================
+
+@app.route('/api/midi/search', methods=['POST'])
+def midi_search():
+    """Search for MIDI files by song name using BitMidi."""
+    import requests
+    from bs4 import BeautifulSoup
+    import sys
+
+    data = request.json
+    query = data.get('query', '').strip()
+
+    if not query:
+        return jsonify({'success': False, 'error': 'No search query provided'})
+
+    print(f"[MIDI Search] Searching for: {query}", file=sys.stderr, flush=True)
+
+    try:
+        # Search BitMidi
+        search_url = f"https://bitmidi.com/search?q={requests.utils.quote(query)}"
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; Polargraph/1.0)'}
+
+        response = requests.get(search_url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        # Parse results
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        results = []
+        # BitMidi uses article tags for search results
+        for item in soup.select('article, .midi-item, a[href*="/midi/"]')[:10]:
+            title_elem = item.select_one('h3, .title, a')
+            link_elem = item if item.name == 'a' else item.select_one('a[href*="/midi/"]')
+
+            if title_elem and link_elem:
+                title = title_elem.get_text(strip=True)
+                href = link_elem.get('href', '')
+
+                if href and '/midi/' in href:
+                    if not href.startswith('http'):
+                        href = f"https://bitmidi.com{href}"
+
+                    results.append({
+                        'title': title,
+                        'url': href,
+                        'source': 'BitMidi'
+                    })
+
+        print(f"[MIDI Search] Found {len(results)} results", file=sys.stderr, flush=True)
+
+        return jsonify({
+            'success': True,
+            'results': results
+        })
+
+    except requests.RequestException as e:
+        print(f"[MIDI Search] Error: {e}", file=sys.stderr, flush=True)
+        return jsonify({
+            'success': False,
+            'error': f'Search failed: {str(e)}'
+        })
+    except Exception as e:
+        print(f"[MIDI Search] Error: {e}", file=sys.stderr, flush=True)
+        return jsonify({
+            'success': False,
+            'error': f'Search error: {str(e)}'
+        })
+
+
+@app.route('/api/midi/download', methods=['POST'])
+def midi_download():
+    """Download a MIDI file from a URL."""
+    import requests
+    import sys
+    import re
+
+    data = request.json
+    midi_url = data.get('url', '').strip()
+
+    if not midi_url:
+        return jsonify({'success': False, 'error': 'No URL provided'})
+
+    print(f"[MIDI Download] Downloading from: {midi_url}", file=sys.stderr, flush=True)
+
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; Polargraph/1.0)'}
+
+        # For BitMidi, we need to find the actual download link
+        if 'bitmidi.com' in midi_url and not midi_url.endswith('.mid'):
+            # Get the page to find download link
+            response = requests.get(midi_url, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Find download link
+            download_link = soup.select_one('a[href$=".mid"], a[download]')
+            if download_link:
+                midi_url = download_link.get('href', '')
+                if not midi_url.startswith('http'):
+                    midi_url = f"https://bitmidi.com{midi_url}"
+
+        # Download the MIDI file
+        response = requests.get(midi_url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        # Check if it's a MIDI file
+        content_type = response.headers.get('content-type', '')
+        if 'midi' not in content_type.lower() and not midi_url.endswith('.mid'):
+            # Try to detect MIDI by content
+            if not response.content[:4] == b'MThd':
+                return jsonify({
+                    'success': False,
+                    'error': 'Downloaded file is not a valid MIDI file'
+                })
+
+        # Save to uploads folder
+        filename = re.sub(r'[^a-zA-Z0-9_-]', '_', midi_url.split('/')[-1])
+        if not filename.endswith('.mid'):
+            filename += '.mid'
+
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        with open(filepath, 'wb') as f:
+            f.write(response.content)
+
+        print(f"[MIDI Download] Saved to: {filepath}", file=sys.stderr, flush=True)
+
+        return jsonify({
+            'success': True,
+            'filepath': filepath,
+            'filename': filename,
+            'size': len(response.content)
+        })
+
+    except requests.RequestException as e:
+        return jsonify({
+            'success': False,
+            'error': f'Download failed: {str(e)}'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Error: {str(e)}'
+        })
+
+
+@app.route('/api/sheetmusic/generate', methods=['POST'])
+def generate_sheetmusic():
+    """Generate sheet music from MIDI file."""
+    global current_turtle, current_gcode
+    import sys
+
+    data = request.json
+    midi_source = data.get('midi_source', 'upload')
+    filepath = data.get('filepath', '')
+    start_time = float(data.get('start_time', 0))
+    end_time = float(data.get('end_time', 0))
+
+    print(f"[SheetMusic] Generating from {midi_source}, start={start_time}, end={end_time}", file=sys.stderr, flush=True)
+
+    try:
+        # Get MIDI file path
+        if midi_source == 'upload' and filepath:
+            if not os.path.exists(filepath):
+                return jsonify({'success': False, 'error': 'MIDI file not found'})
+        else:
+            return jsonify({'success': False, 'error': 'No MIDI file specified'})
+
+        # Read MIDI file
+        with open(filepath, 'rb') as f:
+            midi_data = f.read()
+
+        # Get work area for sizing
+        work_area = plotter_settings.get_work_area()
+        page_width = work_area['right'] - work_area['left']
+        page_height = work_area['top'] - work_area['bottom']
+
+        # Render to polylines
+        from modules.generators.legumes import render_midi_to_polylines
+
+        polylines = render_midi_to_polylines(
+            midi_data,
+            start_time=start_time,
+            end_time=end_time,
+            page_width=page_width,
+            page_height=page_height
+        )
+
+        print(f"[SheetMusic] Generated {len(polylines)} polylines", file=sys.stderr, flush=True)
+
+        # Convert to Turtle for preview
+        from modules.turtle import Turtle
+        turtle = Turtle()
+
+        for polyline in polylines:
+            if len(polyline) >= 2:
+                x, y = polyline[0]
+                turtle.jump_to(x, y)
+                for x, y in polyline[1:]:
+                    turtle.move_to(x, y)
+
+        # Center in work area
+        bounds = turtle.get_bounds()
+        if bounds:
+            cx = (bounds['min_x'] + bounds['max_x']) / 2
+            cy = (bounds['min_y'] + bounds['max_y']) / 2
+            turtle.translate(-cx, -cy)
+
+        # Fit to work area
+        margin = 20
+        turtle.fit_to_bounds(
+            work_area['left'] + margin,
+            work_area['bottom'] + margin,
+            work_area['right'] - margin,
+            work_area['top'] - margin
+        )
+
+        current_turtle = turtle
+        current_gcode = gcode_generator.turtle_to_gcode(turtle)
+
+        return jsonify({
+            'success': True,
+            'preview': {
+                'paths': turtle.get_paths(),
+                'bounds': turtle.get_bounds()
+            },
+            'gcode_lines': len(current_gcode),
+            'points': turtle.count_points(),
+            'lines': turtle.count_lines()
+        })
+
+    except ImportError as e:
+        return jsonify({
+            'success': False,
+            'error': f'Missing dependency: {str(e)}. Install with: pip install mido'
+        })
+    except Exception as e:
+        import traceback
+        print(f"[SheetMusic] Error: {e}", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+
+# ============================================================================
 # Main
 # ============================================================================
 

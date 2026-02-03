@@ -460,6 +460,67 @@ class TurtleGenerator:
                 'seed': {'type': 'int', 'label': 'Random Seed', 'default': -1, 'min': -1, 'max': 9999},
                 'max_checks': {'type': 'int', 'label': 'Max Checks to Draw', 'default': 500, 'min': 100, 'max': 2000}
             }
+        },
+        'fishdraw': {
+            'name': 'Fish Draw',
+            'description': 'Procedurally generated fish drawings with pseudo-Latin names',
+            'options': {
+                'fish_name': {
+                    'type': 'string',
+                    'label': 'Fish Name (seed)',
+                    'default': '',
+                    'placeholder': 'Leave blank for random Latin name'
+                },
+                'seed': {
+                    'type': 'int',
+                    'label': 'Random Seed',
+                    'default': -1,
+                    'min': -1,
+                    'max': 99999,
+                    'description': 'Use -1 for random'
+                }
+            }
+        },
+        'sheetmusic': {
+            'name': 'Sheet Music',
+            'description': 'Render sheet music from MIDI files - search by song name or upload',
+            'serverOnly': True,
+            'hasUpload': True,
+            'uploadAccept': '.mid,.midi',
+            'options': {
+                'midi_source': {
+                    'type': 'select',
+                    'label': 'MIDI Source',
+                    'default': 'search',
+                    'options': [
+                        {'value': 'search', 'label': 'Search by Song Name'},
+                        {'value': 'upload', 'label': 'Upload MIDI File'}
+                    ]
+                },
+                'song_name': {
+                    'type': 'string',
+                    'label': 'Song Name',
+                    'default': '',
+                    'placeholder': 'Enter song title to search...'
+                },
+                'start_time': {
+                    'type': 'float',
+                    'label': 'Start Time (seconds)',
+                    'default': 0,
+                    'min': 0,
+                    'max': 600,
+                    'step': 1
+                },
+                'end_time': {
+                    'type': 'float',
+                    'label': 'End Time (seconds)',
+                    'default': 0,
+                    'min': 0,
+                    'max': 600,
+                    'step': 1,
+                    'description': 'Set to 0 for auto-fit'
+                }
+            }
         }
     }
     
@@ -4704,7 +4765,7 @@ class TurtleGenerator:
         
         letter_width = size * 0.7
         curr_x = x
-        
+
         for char in text.upper():
             strokes = FONT.get(char, [])
             for stroke in strokes:
@@ -4714,4 +4775,60 @@ class TurtleGenerator:
                     for px, py in stroke[1:]:
                         turtle.move_to(curr_x + px * size * 0.6, y + py * size)
             curr_x += letter_width * (0.5 if char == ' ' else 1)
+
+    def _generate_fishdraw(self, options: Dict[str, Any]) -> Turtle:
+        """Generate a procedural fish drawing."""
+        import sys
+        from .generators.fishdraw import fish, generate_params, binomen
+        from .generators.fishdraw.names import seed_to_int
+
+        fish_name = options.get('fish_name', '').strip()
+        seed = self._get_seed(options, -1)
+
+        # Determine the seed and name to use
+        if fish_name:
+            # User provided a name - use it as the seed
+            actual_seed = seed_to_int(fish_name)
+            display_name = fish_name
+        elif seed != -1:
+            # User provided a numeric seed
+            actual_seed = seed
+            # Generate a name from this seed
+            import random
+            rng = random.Random(actual_seed)
+            display_name = binomen(rng)
+        else:
+            # Random - generate both
+            import random
+            import time
+            actual_seed = int(time.time() * 1000) % 999999
+            rng = random.Random(actual_seed)
+            display_name = binomen(rng)
+
+        print(f"[FishDraw] Generating fish: '{display_name}' (seed={actual_seed})", file=sys.stderr, flush=True)
+
+        # Generate fish parameters and polylines
+        params = generate_params(actual_seed)
+        polylines = fish(params, actual_seed)
+
+        print(f"[FishDraw] Generated {len(polylines)} polylines", file=sys.stderr, flush=True)
+
+        # Convert polylines to Turtle
+        turtle = Turtle()
+
+        for polyline in polylines:
+            if len(polyline) >= 2:
+                x, y = polyline[0]
+                turtle.jump_to(x, y)
+                for x, y in polyline[1:]:
+                    turtle.move_to(x, y)
+
+        # Add the fish name as text below the fish
+        bounds = turtle.get_bounds()
+        if bounds:
+            text_y = bounds['min_y'] - 30
+            text_x = (bounds['min_x'] + bounds['max_x']) / 2 - len(display_name) * 3
+            self._draw_simple_text(turtle, display_name, text_x, text_y, 8)
+
+        return turtle
 

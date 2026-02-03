@@ -448,6 +448,36 @@ class PatternGenerator {
                 seed: { type: 'int', label: 'Random Seed', default: -1, min: -1, max: 9999 },
                 max_checks: { type: 'int', label: 'Max Checks to Draw', default: 500, min: 50, max: 2000 }
             }
+        },
+        fishdraw: {
+            name: 'Fish Draw',
+            description: 'Procedurally generated fish drawings with pseudo-Latin scientific names',
+            options: {
+                fish_name: { type: 'string', label: 'Fish Name (seed)', default: '', placeholder: 'Leave blank for random Latin name' },
+                seed: { type: 'int', label: 'Random Seed', default: -1, min: -1, max: 99999, description: 'Use -1 for random' }
+            },
+            serverOnly: true  // FishDraw requires server-side generation
+        },
+        sheetmusic: {
+            name: 'Sheet Music',
+            description: 'Render sheet music from MIDI files - search by song name or upload',
+            options: {
+                midi_source: {
+                    type: 'select',
+                    label: 'MIDI Source',
+                    default: 'search',
+                    options: [
+                        { value: 'search', label: 'Search by Song Name' },
+                        { value: 'upload', label: 'Upload MIDI File' }
+                    ]
+                },
+                song_name: { type: 'string', label: 'Song Name', default: '', placeholder: 'Enter song title to search...' },
+                start_time: { type: 'float', label: 'Start Time (seconds)', default: 0, min: 0, max: 600, step: 1 },
+                end_time: { type: 'float', label: 'End Time (seconds)', default: 0, min: 0, max: 600, step: 1, description: 'Set to 0 for auto-fit' }
+            },
+            serverOnly: true,
+            hasUpload: true,
+            uploadAccept: '.mid,.midi'
         }
     };
     

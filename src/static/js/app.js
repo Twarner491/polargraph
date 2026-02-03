@@ -4282,7 +4282,88 @@ async function generatePattern() {
     });
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
-    
+
+    // Special handling for Sheet Music - MIDI search/upload
+    if (generator === 'sheetmusic') {
+        try {
+            const midiSource = options.midi_source || 'search';
+            const songName = options.song_name || '';
+            const startTime = parseFloat(options.start_time) || 0;
+            const endTime = parseFloat(options.end_time) || 0;
+
+            if (midiSource === 'search') {
+                if (!songName) {
+                    logConsole('Please enter a song name to search', 'msg-error');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                logConsole(`Searching for MIDI: "${songName}"...`, 'msg-info');
+
+                // Search for MIDI
+                const searchResult = await sendCommand('/api/midi/search', 'POST', { query: songName });
+
+                if (!searchResult.success || !searchResult.results || searchResult.results.length === 0) {
+                    logConsole(`No MIDI files found for "${songName}"`, 'msg-error');
+                    logConsole('Try uploading a MIDI file instead', 'msg-info');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                // Use first result
+                const firstResult = searchResult.results[0];
+                logConsole(`Found: ${firstResult.title}`, 'msg-info');
+                logConsole('Downloading MIDI...', 'msg-info');
+
+                // Download MIDI
+                const downloadResult = await sendCommand('/api/midi/download', 'POST', { url: firstResult.url });
+
+                if (!downloadResult.success) {
+                    logConsole(`Download failed: ${downloadResult.error}`, 'msg-error');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                logConsole('Generating sheet music...', 'msg-info');
+
+                // Generate sheet music
+                const genResult = await sendCommand('/api/sheetmusic/generate', 'POST', {
+                    midi_source: 'upload',
+                    filepath: downloadResult.filepath,
+                    start_time: startTime,
+                    end_time: endTime
+                });
+
+                if (genResult.success) {
+                    const paths = genResult.preview?.paths || [];
+                    addEntity(paths, {
+                        algorithm: 'sheetmusic',
+                        algorithmOptions: options,
+                        name: `Sheet Music: ${firstResult.title}`
+                    });
+                    logConsole(`Generated sheet music: ${genResult.lines} lines`, 'msg-info');
+                    elements.plotStatus.textContent = `${genResult.lines} lines generated`;
+                } else {
+                    logConsole(`Generation failed: ${genResult.error}`, 'msg-error');
+                }
+            } else {
+                // Upload mode - user needs to upload MIDI first
+                logConsole('For upload mode, please upload a MIDI file using the Upload button', 'msg-info');
+                logConsole('After uploading, the sheet music will be generated automatically', 'msg-info');
+            }
+        } catch (error) {
+            logConsole(`Sheet Music Error: ${error.message}`, 'msg-error');
+            console.error('Sheet music error:', error);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+        return;
+    }
+
     // Special handling for GPenT - uses Cloudflare Worker in client mode, server API locally
     if (generator === 'gpent') {
         try {

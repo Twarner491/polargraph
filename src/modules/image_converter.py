@@ -10,12 +10,34 @@ import numpy as np
 
 from .turtle import Turtle
 from .plotter_settings import PlotterSettings
+from .converters import linedraw_convert, trace_skeleton, sort_lines
 
 
 class ImageConverter:
     """Converts images to Turtle paths using various algorithms."""
     
     CONVERTERS = {
+        'linedraw': {
+            'name': 'Line Draw',
+            'description': 'Converts image to line drawing with contours and hatching (recommended)',
+            'options': {
+                'draw_contours': {'type': 'bool', 'default': True, 'label': 'Draw Edge Contours'},
+                'draw_hatch': {'type': 'bool', 'default': True, 'label': 'Draw Hatching'},
+                'contour_simplify': {'type': 'float', 'default': 2.0, 'min': 0.5, 'max': 10, 'label': 'Contour Simplification'},
+                'hatch_size': {'type': 'int', 'default': 16, 'min': 4, 'max': 64, 'label': 'Hatch Grid Size'},
+                'hatch_angle': {'type': 'float', 'default': 45, 'min': 0, 'max': 180, 'label': 'Hatch Angle'},
+                'cross_hatch': {'type': 'bool', 'default': True, 'label': 'Cross-Hatch Darker Areas'}
+            }
+        },
+        'skeleton': {
+            'name': 'Skeleton Trace',
+            'description': 'Extracts centerline skeleton from shapes (good for text/logos)',
+            'options': {
+                'threshold': {'type': 'int', 'default': 128, 'min': 0, 'max': 255, 'label': 'Threshold'},
+                'invert': {'type': 'bool', 'default': False, 'label': 'Invert (trace white on black)'},
+                'chunk_size': {'type': 'int', 'default': 10, 'min': 5, 'max': 50, 'label': 'Chunk Size'}
+            }
+        },
         'spiral': {
             'name': 'Spiral',
             'description': 'Converts image to a continuous spiral pattern',
@@ -595,9 +617,93 @@ class ImageConverter:
                 turtle.pen_up_cmd()
                 turtle.position.x = x
                 turtle.position.y = y
-        
+
         return turtle
-    
+
+    def _convert_linedraw(self, img: np.ndarray, offset_x: float, offset_y: float,
+                          options: Dict[str, Any]) -> Turtle:
+        """Line Draw conversion - contour extraction with hatching.
+
+        Uses the ported linedraw algorithm for high-quality line art.
+        """
+        turtle = Turtle()
+
+        # Get options
+        draw_contours = options.get('draw_contours', True)
+        draw_hatch = options.get('draw_hatch', True)
+        contour_simplify = options.get('contour_simplify', 2.0)
+        hatch_size = options.get('hatch_size', 16)
+        hatch_angle = options.get('hatch_angle', 45)
+        cross_hatch = options.get('cross_hatch', True)
+
+        h, w = img.shape
+
+        # Use the ported linedraw algorithm
+        polylines = linedraw_convert(
+            img,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            draw_contours=draw_contours,
+            draw_hatch=draw_hatch,
+            contour_simplify=contour_simplify,
+            hatch_size=hatch_size,
+            hatch_angle=hatch_angle,
+            cross_hatch=cross_hatch,
+            sort=True
+        )
+
+        # Convert polylines to Turtle paths
+        for polyline in polylines:
+            if len(polyline) >= 2:
+                turtle.jump_to(polyline[0][0], polyline[0][1])
+                for x, y in polyline[1:]:
+                    turtle.move_to(x, y)
+
+        return turtle
+
+    def _convert_skeleton(self, img: np.ndarray, offset_x: float, offset_y: float,
+                          options: Dict[str, Any]) -> Turtle:
+        """Skeleton Trace conversion - extract centerline skeleton.
+
+        Uses Zhang-Suen thinning and divide-and-conquer skeleton tracing.
+        Best for text, logos, and line art where centerlines are desired.
+        """
+        turtle = Turtle()
+
+        # Get options
+        threshold = options.get('threshold', 128)
+        invert = options.get('invert', False)
+        chunk_size = options.get('chunk_size', 10)
+
+        h, w = img.shape
+
+        # Apply threshold
+        if invert:
+            binary = (img >= threshold).astype(np.uint8)
+        else:
+            binary = (img < threshold).astype(np.uint8)
+
+        # Use the ported skeleton tracing algorithm
+        polylines = trace_skeleton(
+            binary,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            chunk_size=chunk_size,
+            do_thinning=True
+        )
+
+        # Sort polylines for efficient plotting
+        polylines = sort_lines(polylines)
+
+        # Convert polylines to Turtle paths
+        for polyline in polylines:
+            if len(polyline) >= 2:
+                turtle.jump_to(polyline[0][0], polyline[0][1])
+                for x, y in polyline[1:]:
+                    turtle.move_to(x, y)
+
+        return turtle
+
     def _convert_trace(self, img: np.ndarray, offset_x: float, offset_y: float,
                        options: Dict[str, Any]) -> Turtle:
         """Trace object outlines with optional fill pattern."""
