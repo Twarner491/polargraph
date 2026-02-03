@@ -3,14 +3,14 @@
  */
 
 var POLARGRAPH_WEBHOOK_URL = "";
-var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev";
-var DCODE_WORKER_URL = "";
-var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev";
+var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/";
+var DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/";
+var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
 
-let CLIENT_SIDE_MODE = !!POLARGRAPH_WEBHOOK_URL || window.location.hostname === 'plotter.onethreenine.net' || window.location.protocol === 'file:';
+let CLIENT_SIDE_MODE = true; // Static build - always client-side
 
 const _h = s => s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
 
