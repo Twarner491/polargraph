@@ -523,11 +523,11 @@ function getStemDirection(staffPosition) {
 function renderScore(midi, config = {}) {
     const cfg = {
         staffHeight: LINE_HEIGHT * (STAFF_LINES - 1),
-        staffMargin: 80,
-        pageMarginX: 50,
-        pageMarginY: 50,
+        staffMargin: 100,
+        pageMarginX: 60,
+        pageMarginY: 60,
         beatsPerMeasure: 4,
-        noteSpacing: NOTE_WIDTH * 2.5,  // Base spacing per beat
+        minNoteSpacing: 20,  // Minimum pixels between any two notes
         noteScale: 1.0,
         stemLength: 28,
         drawClef: true,
@@ -540,23 +540,27 @@ function renderScore(midi, config = {}) {
 
     const polylines = [];
 
-    // Analyze note density to adjust spacing
     let allNotes = midi.getAllNotes();
     if (allNotes.length === 0) return polylines;
-    allNotes = quantizeNotes(allNotes, 0.125);  // Finer quantization for complex music
+    allNotes = quantizeNotes(allNotes, 0.25);  // Quantize to 16th notes
 
-    // Calculate average notes per beat to adjust spacing
     const totalBeats = Math.max(...allNotes.map(n => n.endTime));
-    const noteDensity = allNotes.length / Math.max(1, totalBeats);
 
-    // For dense music (like Bach fugues), increase spacing
-    let adjustedSpacing = cfg.noteSpacing;
-    if (noteDensity > 4) {
-        adjustedSpacing = cfg.noteSpacing * Math.min(2.0, 1 + (noteDensity - 4) * 0.15);
+    // Find the smallest time gap between consecutive notes to set spacing
+    const uniqueTimes = [...new Set(allNotes.map(n => n.startTime))].sort((a, b) => a - b);
+    let minTimeGap = 0.25;  // Default to 16th note
+    for (let i = 1; i < uniqueTimes.length; i++) {
+        const gap = uniqueTimes[i] - uniqueTimes[i - 1];
+        if (gap > 0.01 && gap < minTimeGap) {
+            minTimeGap = gap;
+        }
     }
 
-    const measureWidth = cfg.beatsPerMeasure * adjustedSpacing;
-    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX;
+    // Calculate spacing so the smallest note gap gets minNoteSpacing pixels
+    const noteSpacing = cfg.minNoteSpacing / minTimeGap;
+    const measureWidth = cfg.beatsPerMeasure * noteSpacing;
+
+    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX - 80;  // Reserve space for clef
     const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
     const numMeasures = Math.ceil(totalBeats / cfg.beatsPerMeasure);
 
@@ -613,7 +617,7 @@ function renderScore(midi, config = {}) {
             // Render notes
             for (const note of measure.notes) {
                 const beatInMeasure = note.startTime - measure.startBeat;
-                const noteX = measureX + beatInMeasure * adjustedSpacing;
+                const noteX = measureX + beatInMeasure * noteSpacing;
                 const position = note.staffPosition;
                 const staffLineOffset = position - 2;
                 const noteY = staffCenterY + cfg.staffHeight / 2 - staffLineOffset * LINE_HEIGHT / 2;
@@ -706,21 +710,26 @@ function renderMidiToPolylines(midiData, startTime = 0, endTime = 0, pageWidth =
     if (endTime <= 0) {
         // Auto-fit: calculate how much music fits on the page
         const beatsPerMeasure = midi.timeSignature[0] || 4;
-        const baseSpacing = NOTE_WIDTH * 2.5;
-        const pageMargin = 50;
-        const staffMargin = 80;
+        const pageMargin = 60;
+        const staffMargin = 100;
         const staffHeight = LINE_HEIGHT * (STAFF_LINES - 1);
+        const minNoteSpacing = 20;
 
-        // Calculate note density to adjust spacing estimate
-        const allNotes = midi.getAllNotes();
-        const totalBeatsInMidi = Math.max(...allNotes.map(n => n.endTime), 1);
-        const noteDensity = allNotes.length / totalBeatsInMidi;
-        const adjustedSpacing = noteDensity > 4
-            ? baseSpacing * Math.min(2.0, 1 + (noteDensity - 4) * 0.15)
-            : baseSpacing;
+        // Find smallest time gap in the music
+        let allNotes = midi.getAllNotes();
+        allNotes = quantizeNotes(allNotes, 0.25);
+        const uniqueTimes = [...new Set(allNotes.map(n => n.startTime))].sort((a, b) => a - b);
+        let minTimeGap = 0.25;
+        for (let i = 1; i < uniqueTimes.length; i++) {
+            const gap = uniqueTimes[i] - uniqueTimes[i - 1];
+            if (gap > 0.01 && gap < minTimeGap) {
+                minTimeGap = gap;
+            }
+        }
 
-        const measureWidth = beatsPerMeasure * adjustedSpacing;
-        const usableWidth = pageWidth - 2 * pageMargin;
+        const noteSpacing = minNoteSpacing / minTimeGap;
+        const measureWidth = beatsPerMeasure * noteSpacing;
+        const usableWidth = pageWidth - 2 * pageMargin - 80;
         const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
 
         const usableHeight = pageHeight - 2 * pageMargin;
