@@ -295,13 +295,18 @@ function cropMidi(midi, startTime, endTime) {
 }
 
 // =============================================================================
-// Symbol Rendering
+// Symbol Rendering (Constants from legumes)
 // =============================================================================
 
-const LINE_HEIGHT = 10;  // Space between staff lines
+const EM = 6;                    // Base unit - half the space between staff lines
+const LINE_HEIGHT = EM * 2;      // Space between staff lines (12)
 const STAFF_LINES = 5;
-const NOTE_WIDTH = 16;   // Base note head width
-const HALF_LINE = LINE_HEIGHT / 2;  // Half staff line spacing (for note positioning)
+const STAFF_HEIGHT = LINE_HEIGHT * (STAFF_LINES - 1);  // 48
+const NOTE_WIDTH = 10;           // Width of a note head
+const BEAT_WIDTH = 30;           // Base horizontal space per beat
+const CLEF_WIDTH = 40;           // Space for clef
+const TIME_SIG_WIDTH = 25;       // Space for time signature
+const MEASURE_PADDING = 10;      // Padding at start/end of measure
 
 function ellipse(cx, cy, rx, ry, rotation = 0, segments = 24) {
     const points = [];
@@ -522,14 +527,13 @@ function getStemDirection(staffPosition) {
 
 function renderScore(midi, config = {}) {
     const cfg = {
-        staffHeight: LINE_HEIGHT * (STAFF_LINES - 1),
-        staffMargin: 100,
-        pageMarginX: 60,
-        pageMarginY: 60,
-        beatsPerMeasure: 4,
-        minNoteSpacing: 20,  // Minimum pixels between any two notes
+        pageMarginX: 40,
+        pageMarginY: 40,
+        staffSpacing: 80,           // Vertical space between staff rows
+        beatsPerMeasure: midi.timeSignature[0] || 4,
+        measuresPerRow: 4,          // Target measures per row
         noteScale: 1.0,
-        stemLength: 28,
+        stemLength: EM * 7,
         drawClef: true,
         drawTimeSignature: true,
         drawBarLines: true,
@@ -542,28 +546,23 @@ function renderScore(midi, config = {}) {
 
     let allNotes = midi.getAllNotes();
     if (allNotes.length === 0) return polylines;
-    allNotes = quantizeNotes(allNotes, 0.25);  // Quantize to 16th notes
 
-    const totalBeats = Math.max(...allNotes.map(n => n.endTime));
+    // Quantize notes to 16th note grid
+    allNotes = quantizeNotes(allNotes, 0.25);
 
-    // Find the smallest time gap between consecutive notes to set spacing
-    const uniqueTimes = [...new Set(allNotes.map(n => n.startTime))].sort((a, b) => a - b);
-    let minTimeGap = 0.25;  // Default to 16th note
-    for (let i = 1; i < uniqueTimes.length; i++) {
-        const gap = uniqueTimes[i] - uniqueTimes[i - 1];
-        if (gap > 0.01 && gap < minTimeGap) {
-            minTimeGap = gap;
-        }
-    }
-
-    // Calculate spacing so the smallest note gap gets minNoteSpacing pixels
-    const noteSpacing = cfg.minNoteSpacing / minTimeGap;
-    const measureWidth = cfg.beatsPerMeasure * noteSpacing;
-
-    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX - 80;  // Reserve space for clef
-    const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
+    const totalBeats = Math.max(...allNotes.map(n => n.endTime), cfg.beatsPerMeasure);
     const numMeasures = Math.ceil(totalBeats / cfg.beatsPerMeasure);
 
+    // Calculate layout dimensions
+    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX;
+    const firstRowClefSpace = cfg.drawClef ? CLEF_WIDTH : 0;
+    const firstRowTimeSigSpace = cfg.drawTimeSignature ? TIME_SIG_WIDTH : 0;
+
+    // Calculate measure width to fit measuresPerRow
+    const measureContentWidth = (usableWidth - firstRowClefSpace - firstRowTimeSigSpace) / cfg.measuresPerRow;
+    const beatWidth = (measureContentWidth - 2 * MEASURE_PADDING) / cfg.beatsPerMeasure;
+
+    // Build measure data
     const measures = [];
     for (let i = 0; i < numMeasures; i++) {
         const startBeat = i * cfg.beatsPerMeasure;
@@ -572,55 +571,71 @@ function renderScore(midi, config = {}) {
         measures.push({ number: i + 1, startBeat, endBeat, notes: measureNotes });
     }
 
-    const rowCount = Math.ceil(numMeasures / measuresPerRow);
+    // Calculate actual measures per row (may be fewer on last row)
+    const rowCount = Math.ceil(numMeasures / cfg.measuresPerRow);
 
     for (let row = 0; row < rowCount; row++) {
-        const rowY = cfg.pageMarginY + row * (cfg.staffHeight + cfg.staffMargin);
-        const staffCenterY = rowY + cfg.staffHeight / 2;
+        const rowY = cfg.pageMarginY + row * (STAFF_HEIGHT + cfg.staffSpacing);
+        const staffCenterY = rowY + STAFF_HEIGHT / 2;
         const rowStartX = cfg.pageMarginX;
-        const rowEndX = rowStartX + measuresPerRow * measureWidth;
+
+        const startMeasure = row * cfg.measuresPerRow;
+        const endMeasure = Math.min(startMeasure + cfg.measuresPerRow, numMeasures);
+        const measuresThisRow = endMeasure - startMeasure;
+
+        // Calculate row width
+        const clefSpace = cfg.drawClef ? CLEF_WIDTH : 0;
+        const timeSigSpace = (cfg.drawTimeSignature && row === 0) ? TIME_SIG_WIDTH : 0;
+        const rowContentWidth = usableWidth - clefSpace - timeSigSpace;
+        const actualMeasureWidth = rowContentWidth / measuresThisRow;
+        const actualBeatWidth = (actualMeasureWidth - 2 * MEASURE_PADDING) / cfg.beatsPerMeasure;
+
+        const rowEndX = rowStartX + usableWidth;
 
         // Draw staff lines
         polylines.push(...SYMBOLS.staffLines(rowStartX, rowEndX, staffCenterY, LINE_HEIGHT));
 
         // Draw clef
         if (cfg.drawClef) {
-            polylines.push(...SYMBOLS.trebleClef(rowStartX + 15, staffCenterY));
+            polylines.push(...SYMBOLS.trebleClef(rowStartX + 15, staffCenterY, 0.8));
         }
 
         // Draw time signature (first row only)
         if (cfg.drawTimeSignature && row === 0) {
             polylines.push(...SYMBOLS.timeSignature(
-                rowStartX + 45, staffCenterY,
-                midi.timeSignature[0], midi.timeSignature[1]
+                rowStartX + clefSpace + 10, staffCenterY,
+                midi.timeSignature[0], midi.timeSignature[1], 0.8
             ));
         }
 
-        const noteStartX = rowStartX + (row === 0 ? 70 : 40);
-        const startMeasure = row * measuresPerRow;
-        const endMeasure = Math.min(startMeasure + measuresPerRow, numMeasures);
+        const measureStartX = rowStartX + clefSpace + timeSigSpace;
 
         for (let mIdx = startMeasure; mIdx < endMeasure; mIdx++) {
             const measure = measures[mIdx];
-            const measureOffset = (mIdx - startMeasure) * measureWidth;
-            const measureX = noteStartX + measureOffset;
+            const measureIdx = mIdx - startMeasure;
+            const measureX = measureStartX + measureIdx * actualMeasureWidth + MEASURE_PADDING;
 
-            // Draw bar line
-            if (cfg.drawBarLines && mIdx > startMeasure) {
+            // Draw bar line at start of measure (except first)
+            if (cfg.drawBarLines && measureIdx > 0) {
+                const barX = measureStartX + measureIdx * actualMeasureWidth;
                 polylines.push(...SYMBOLS.barLine(
-                    measureX - 5,
-                    staffCenterY - cfg.staffHeight / 2,
-                    staffCenterY + cfg.staffHeight / 2
+                    barX,
+                    staffCenterY - STAFF_HEIGHT / 2,
+                    staffCenterY + STAFF_HEIGHT / 2
                 ));
             }
 
             // Render notes
             for (const note of measure.notes) {
                 const beatInMeasure = note.startTime - measure.startBeat;
-                const noteX = measureX + beatInMeasure * noteSpacing;
+                const noteX = measureX + beatInMeasure * actualBeatWidth;
+
+                // Convert staff position to Y coordinate
+                // staffPosition: 0 = middle C, 2 = E4 (bottom line), 6 = B4 (middle line), 10 = F5 (top line)
                 const position = note.staffPosition;
-                const staffLineOffset = position - 2;
-                const noteY = staffCenterY + cfg.staffHeight / 2 - staffLineOffset * LINE_HEIGHT / 2;
+                // Y increases downward, staff center is at B4 (position 6)
+                // Each position is half a line height
+                const noteY = staffCenterY + (6 - position) * EM;
 
                 const [noteType, dots] = getNoteDurationType(note.duration);
                 const stemDir = getStemDirection(position);
@@ -668,34 +683,38 @@ function renderScore(midi, config = {}) {
                 }
 
                 // Draw ledger lines
-                if (position < 0) {
-                    for (let ledgerPos = -2; ledgerPos > position - 1; ledgerPos -= 2) {
-                        const ledgerY = staffCenterY + cfg.staffHeight / 2 - ledgerPos * LINE_HEIGHT / 2;
-                        polylines.push(...SYMBOLS.ledgerLine(noteX, ledgerY));
+                // Staff lines are at positions 2, 4, 6, 8, 10 (E4, G4, B4, D5, F5)
+                // Ledger lines needed below position 2 or above position 10
+                if (position < 2) {
+                    // Ledger lines below staff (C4=0, middle C needs one ledger)
+                    for (let ledgerPos = 0; ledgerPos >= position; ledgerPos -= 2) {
+                        const ledgerY = staffCenterY + (6 - ledgerPos) * EM;
+                        polylines.push(...SYMBOLS.ledgerLine(noteX, ledgerY, cfg.noteScale));
                     }
                 } else if (position > 10) {
-                    for (let ledgerPos = 12; ledgerPos < position + 2; ledgerPos += 2) {
-                        const ledgerY = staffCenterY + cfg.staffHeight / 2 - ledgerPos * LINE_HEIGHT / 2;
-                        polylines.push(...SYMBOLS.ledgerLine(noteX, ledgerY));
+                    // Ledger lines above staff
+                    for (let ledgerPos = 12; ledgerPos <= position; ledgerPos += 2) {
+                        const ledgerY = staffCenterY + (6 - ledgerPos) * EM;
+                        polylines.push(...SYMBOLS.ledgerLine(noteX, ledgerY, cfg.noteScale));
                     }
                 }
             }
         }
 
-        // Draw final bar line
+        // Draw final bar line at end of row
         if (cfg.drawBarLines) {
-            const finalBarX = noteStartX + (endMeasure - startMeasure) * measureWidth;
+            const finalBarX = rowEndX;
             if (row === rowCount - 1) {
                 polylines.push(...SYMBOLS.doubleBarLine(
-                    finalBarX,
-                    staffCenterY - cfg.staffHeight / 2,
-                    staffCenterY + cfg.staffHeight / 2
+                    finalBarX - 8,
+                    staffCenterY - STAFF_HEIGHT / 2,
+                    staffCenterY + STAFF_HEIGHT / 2
                 ));
             } else {
                 polylines.push(...SYMBOLS.barLine(
                     finalBarX,
-                    staffCenterY - cfg.staffHeight / 2,
-                    staffCenterY + cfg.staffHeight / 2
+                    staffCenterY - STAFF_HEIGHT / 2,
+                    staffCenterY + STAFF_HEIGHT / 2
                 ));
             }
         }
@@ -707,34 +726,16 @@ function renderScore(midi, config = {}) {
 function renderMidiToPolylines(midiData, startTime = 0, endTime = 0, pageWidth = 800, pageHeight = 600) {
     const midi = parseMidi(midiData);
 
+    // Default layout: 4 measures per row
+    const measuresPerRow = 4;
+    const pageMargin = 40;
+    const staffSpacing = 80;
+    const beatsPerMeasure = midi.timeSignature[0] || 4;
+
     if (endTime <= 0) {
         // Auto-fit: calculate how much music fits on the page
-        const beatsPerMeasure = midi.timeSignature[0] || 4;
-        const pageMargin = 60;
-        const staffMargin = 100;
-        const staffHeight = LINE_HEIGHT * (STAFF_LINES - 1);
-        const minNoteSpacing = 20;
-
-        // Find smallest time gap in the music
-        let allNotes = midi.getAllNotes();
-        allNotes = quantizeNotes(allNotes, 0.25);
-        const uniqueTimes = [...new Set(allNotes.map(n => n.startTime))].sort((a, b) => a - b);
-        let minTimeGap = 0.25;
-        for (let i = 1; i < uniqueTimes.length; i++) {
-            const gap = uniqueTimes[i] - uniqueTimes[i - 1];
-            if (gap > 0.01 && gap < minTimeGap) {
-                minTimeGap = gap;
-            }
-        }
-
-        const noteSpacing = minNoteSpacing / minTimeGap;
-        const measureWidth = beatsPerMeasure * noteSpacing;
-        const usableWidth = pageWidth - 2 * pageMargin - 80;
-        const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
-
         const usableHeight = pageHeight - 2 * pageMargin;
-        const rows = Math.max(1, Math.floor(usableHeight / (staffHeight + staffMargin)));
-
+        const rows = Math.max(1, Math.floor(usableHeight / (STAFF_HEIGHT + staffSpacing)));
         const totalMeasures = measuresPerRow * rows;
         const totalBeats = totalMeasures * beatsPerMeasure;
         endTime = (totalBeats / midi.tempo) * 60;
@@ -745,7 +746,7 @@ function renderMidiToPolylines(midiData, startTime = 0, endTime = 0, pageWidth =
         processedMidi = cropMidi(midi, startTime, endTime);
     }
 
-    return renderScore(processedMidi, { pageWidth, pageHeight });
+    return renderScore(processedMidi, { pageWidth, pageHeight, measuresPerRow });
 }
 
 // =============================================================================
