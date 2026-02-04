@@ -298,9 +298,10 @@ function cropMidi(midi, startTime, endTime) {
 // Symbol Rendering
 // =============================================================================
 
-const LINE_HEIGHT = 9;
+const LINE_HEIGHT = 10;  // Space between staff lines
 const STAFF_LINES = 5;
-const NOTE_WIDTH = 12;
+const NOTE_WIDTH = 16;   // Base note head width
+const HALF_LINE = LINE_HEIGHT / 2;  // Half staff line spacing (for note positioning)
 
 function ellipse(cx, cy, rx, ry, rotation = 0, segments = 24) {
     const points = [];
@@ -522,13 +523,13 @@ function getStemDirection(staffPosition) {
 function renderScore(midi, config = {}) {
     const cfg = {
         staffHeight: LINE_HEIGHT * (STAFF_LINES - 1),
-        staffMargin: 60,
-        pageMarginX: 40,
-        pageMarginY: 40,
+        staffMargin: 80,
+        pageMarginX: 50,
+        pageMarginY: 50,
         beatsPerMeasure: 4,
-        noteSpacing: NOTE_WIDTH * 2,
+        noteSpacing: NOTE_WIDTH * 2.5,  // Base spacing per beat
         noteScale: 1.0,
-        stemLength: 30,
+        stemLength: 28,
         drawClef: true,
         drawTimeSignature: true,
         drawBarLines: true,
@@ -538,16 +539,25 @@ function renderScore(midi, config = {}) {
     };
 
     const polylines = [];
-    const measureWidth = cfg.beatsPerMeasure * cfg.noteSpacing;
-    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX;
-    const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
 
+    // Analyze note density to adjust spacing
     let allNotes = midi.getAllNotes();
     if (allNotes.length === 0) return polylines;
+    allNotes = quantizeNotes(allNotes, 0.125);  // Finer quantization for complex music
 
-    allNotes = quantizeNotes(allNotes);
-
+    // Calculate average notes per beat to adjust spacing
     const totalBeats = Math.max(...allNotes.map(n => n.endTime));
+    const noteDensity = allNotes.length / Math.max(1, totalBeats);
+
+    // For dense music (like Bach fugues), increase spacing
+    let adjustedSpacing = cfg.noteSpacing;
+    if (noteDensity > 4) {
+        adjustedSpacing = cfg.noteSpacing * Math.min(2.0, 1 + (noteDensity - 4) * 0.15);
+    }
+
+    const measureWidth = cfg.beatsPerMeasure * adjustedSpacing;
+    const usableWidth = cfg.pageWidth - 2 * cfg.pageMarginX;
+    const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
     const numMeasures = Math.ceil(totalBeats / cfg.beatsPerMeasure);
 
     const measures = [];
@@ -603,7 +613,7 @@ function renderScore(midi, config = {}) {
             // Render notes
             for (const note of measure.notes) {
                 const beatInMeasure = note.startTime - measure.startBeat;
-                const noteX = measureX + beatInMeasure * cfg.noteSpacing;
+                const noteX = measureX + beatInMeasure * adjustedSpacing;
                 const position = note.staffPosition;
                 const staffLineOffset = position - 2;
                 const noteY = staffCenterY + cfg.staffHeight / 2 - staffLineOffset * LINE_HEIGHT / 2;
@@ -694,14 +704,28 @@ function renderMidiToPolylines(midiData, startTime = 0, endTime = 0, pageWidth =
     const midi = parseMidi(midiData);
 
     if (endTime <= 0) {
-        const config = { pageWidth, pageHeight };
-        const beatsPerMeasure = 4;
-        const measureWidth = beatsPerMeasure * NOTE_WIDTH * 2;
-        const usableWidth = pageWidth - 80;
-        const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
-        const usableHeight = pageHeight - 80;
+        // Auto-fit: calculate how much music fits on the page
+        const beatsPerMeasure = midi.timeSignature[0] || 4;
+        const baseSpacing = NOTE_WIDTH * 2.5;
+        const pageMargin = 50;
+        const staffMargin = 80;
         const staffHeight = LINE_HEIGHT * (STAFF_LINES - 1);
-        const rows = Math.max(1, Math.floor(usableHeight / (staffHeight + 60)));
+
+        // Calculate note density to adjust spacing estimate
+        const allNotes = midi.getAllNotes();
+        const totalBeatsInMidi = Math.max(...allNotes.map(n => n.endTime), 1);
+        const noteDensity = allNotes.length / totalBeatsInMidi;
+        const adjustedSpacing = noteDensity > 4
+            ? baseSpacing * Math.min(2.0, 1 + (noteDensity - 4) * 0.15)
+            : baseSpacing;
+
+        const measureWidth = beatsPerMeasure * adjustedSpacing;
+        const usableWidth = pageWidth - 2 * pageMargin;
+        const measuresPerRow = Math.max(1, Math.floor(usableWidth / measureWidth));
+
+        const usableHeight = pageHeight - 2 * pageMargin;
+        const rows = Math.max(1, Math.floor(usableHeight / (staffHeight + staffMargin)));
+
         const totalMeasures = measuresPerRow * rows;
         const totalBeats = totalMeasures * beatsPerMeasure;
         endTime = (totalBeats / midi.tempo) * 60;
