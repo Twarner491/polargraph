@@ -6,6 +6,7 @@ var POLARGRAPH_WEBHOOK_URL = "";
 var GPENT_WORKER_URL = "";
 var DCODE_WORKER_URL = "";
 var FISHDRAW_WORKER_URL = "";
+var SHEETMUSIC_WORKER_URL = "";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
@@ -4284,21 +4285,98 @@ async function generatePattern() {
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
 
-    // Special handling for Sheet Music - MIDI search/upload (requires server)
+    // Special handling for Sheet Music - MIDI search/upload
     if (generator === 'sheetmusic') {
-        if (CLIENT_SIDE_MODE) {
-            logConsole('Sheet Music requires connection to plotter.local', 'msg-error');
-            logConsole('This generator needs the server to parse MIDI files', 'msg-info');
-            btn.disabled = false;
-            btn.textContent = originalText;
-            return;
-        }
         try {
             const midiSource = options.midi_source || 'search';
             const songName = options.song_name || '';
             const startTime = parseFloat(options.start_time) || 0;
             const endTime = parseFloat(options.end_time) || 0;
 
+            if (CLIENT_SIDE_MODE) {
+                // In client mode, use Cloudflare Worker for MIDI processing
+                if (!SHEETMUSIC_WORKER_URL) {
+                    logConsole('Sheet Music requires worker URL to be configured', 'msg-error');
+                    logConsole('Connect to plotter.local for local Sheet Music', 'msg-info');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                if (midiSource === 'search') {
+                    logConsole('MIDI search is not available in remote mode', 'msg-error');
+                    logConsole('Please use Upload mode: select a MIDI file from your computer', 'msg-info');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+
+                // Upload mode in client - prompt for file
+                logConsole('Select a MIDI file to generate sheet music...', 'msg-info');
+
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = '.mid,.midi';
+
+                fileInput.onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) {
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                        return;
+                    }
+
+                    try {
+                        logConsole(`Processing: ${file.name}`, 'msg-info');
+                        logConsole('Generating sheet music...', 'msg-info');
+
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        formData.append('start_time', startTime.toString());
+                        formData.append('end_time', endTime.toString());
+                        formData.append('page_width', '800');
+                        formData.append('page_height', '600');
+
+                        const response = await fetch(SHEETMUSIC_WORKER_URL, {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        const result = await response.json();
+
+                        if (!result.success) {
+                            logConsole(`Sheet Music Error: ${result.error}`, 'msg-error');
+                            btn.disabled = false;
+                            btn.textContent = originalText;
+                            return;
+                        }
+
+                        // Convert worker paths format to our format {points: [{x, y}, ...]}
+                        const paths = result.paths.map(line => ({
+                            points: line.map(p => ({ x: p.x, y: p.y }))
+                        }));
+
+                        addEntity(paths, {
+                            algorithm: 'sheetmusic',
+                            algorithmOptions: options,
+                            name: `Sheet Music: ${file.name.replace(/\.(mid|midi)$/i, '')}`
+                        });
+                        logConsole(`Generated sheet music: ${paths.length} lines`, 'msg-info');
+                        elements.plotStatus.textContent = `${paths.length} lines generated`;
+                    } catch (error) {
+                        logConsole(`Sheet Music Error: ${error.message}`, 'msg-error');
+                        console.error('Sheet music error:', error);
+                    } finally {
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                    }
+                };
+
+                fileInput.click();
+                return;
+            }
+
+            // Server mode - use server APIs
             if (midiSource === 'search') {
                 if (!songName) {
                     logConsole('Please enter a song name to search', 'msg-error');
@@ -4430,8 +4508,10 @@ async function generatePattern() {
                 return;
             }
 
-            // Convert worker paths format to our format
-            const paths = result.paths.map(line => line.map(p => [p.x, p.y]));
+            // Convert worker paths format to our format {points: [{x, y}, ...]}
+            const paths = result.paths.map(line => ({
+                points: line.map(p => ({ x: p.x, y: p.y }))
+            }));
 
             addEntity(paths, {
                 algorithm: 'fishdraw',

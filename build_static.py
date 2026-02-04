@@ -15,6 +15,7 @@ HA_WEBHOOK_URL = ""
 GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
 DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/"
 FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/"
+SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev/"
 
 def _js_hash(s):
     """Match JS hash: s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)"""
@@ -79,6 +80,12 @@ def build():
         js_content = js_content.replace(
             'var FISHDRAW_WORKER_URL = "";',
             f'var FISHDRAW_WORKER_URL = "{FISHDRAW_WORKER_URL}";'
+        )
+
+        # Replace sheetmusic Worker URL placeholder
+        js_content = js_content.replace(
+            'var SHEETMUSIC_WORKER_URL = "";',
+            f'var SHEETMUSIC_WORKER_URL = "{SHEETMUSIC_WORKER_URL}";'
         )
 
         # Remote access configuration from environment
