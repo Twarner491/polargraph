@@ -7,6 +7,7 @@ var GPENT_WORKER_URL = "";
 var DCODE_WORKER_URL = "";
 var FISHDRAW_WORKER_URL = "";
 var SHEETMUSIC_WORKER_URL = "";
+var MIDISEARCH_WORKER_URL = "";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
@@ -4294,7 +4295,7 @@ async function generatePattern() {
             const endTime = parseFloat(options.end_time) || 0;
 
             if (CLIENT_SIDE_MODE) {
-                // In client mode, use Cloudflare Worker for MIDI processing
+                // In client mode, use Cloudflare Workers for MIDI search and processing
                 if (!SHEETMUSIC_WORKER_URL) {
                     logConsole('Sheet Music requires worker URL to be configured', 'msg-error');
                     logConsole('Connect to plotter.local for local Sheet Music', 'msg-info');
@@ -4304,10 +4305,104 @@ async function generatePattern() {
                 }
 
                 if (midiSource === 'search') {
-                    logConsole('MIDI search is not available in remote mode', 'msg-error');
-                    logConsole('Please use Upload mode: select a MIDI file from your computer', 'msg-info');
-                    btn.disabled = false;
-                    btn.textContent = originalText;
+                    // Search mode via MIDI search worker
+                    if (!MIDISEARCH_WORKER_URL) {
+                        logConsole('MIDI search requires worker URL to be configured', 'msg-error');
+                        logConsole('Please use Upload mode instead', 'msg-info');
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                        return;
+                    }
+
+                    if (!songName) {
+                        logConsole('Please enter a song name to search', 'msg-error');
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                        return;
+                    }
+
+                    logConsole(`Searching for MIDI: "${songName}"...`, 'msg-info');
+
+                    try {
+                        // Search for MIDI via worker
+                        const searchResp = await fetch(`${MIDISEARCH_WORKER_URL}/search`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query: songName })
+                        });
+                        const searchResult = await searchResp.json();
+
+                        if (!searchResult.success || !searchResult.results || searchResult.results.length === 0) {
+                            logConsole(`No MIDI files found for "${songName}"`, 'msg-error');
+                            logConsole('Try a different search term or use Upload mode', 'msg-info');
+                            btn.disabled = false;
+                            btn.textContent = originalText;
+                            return;
+                        }
+
+                        // Use first result
+                        const firstResult = searchResult.results[0];
+                        logConsole(`Found: ${firstResult.title}`, 'msg-info');
+                        logConsole('Downloading MIDI...', 'msg-info');
+
+                        // Download MIDI via worker
+                        const downloadResp = await fetch(`${MIDISEARCH_WORKER_URL}/download`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: firstResult.url })
+                        });
+                        const downloadResult = await downloadResp.json();
+
+                        if (!downloadResult.success) {
+                            logConsole(`Download failed: ${downloadResult.error}`, 'msg-error');
+                            btn.disabled = false;
+                            btn.textContent = originalText;
+                            return;
+                        }
+
+                        logConsole('Generating sheet music...', 'msg-info');
+
+                        // Send MIDI data to sheetmusic worker
+                        const sheetResp = await fetch(SHEETMUSIC_WORKER_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                midi_data: downloadResult.midi_data,
+                                start_time: startTime,
+                                end_time: endTime,
+                                page_width: 800,
+                                page_height: 600
+                            })
+                        });
+                        const sheetResult = await sheetResp.json();
+
+                        if (!sheetResult.success) {
+                            logConsole(`Sheet Music Error: ${sheetResult.error}`, 'msg-error');
+                            btn.disabled = false;
+                            btn.textContent = originalText;
+                            return;
+                        }
+
+                        // Convert paths format
+                        const paths = sheetResult.paths.map(line => ({
+                            points: line.map(p => ({ x: p.x, y: p.y }))
+                        }));
+
+                        addEntity(paths, {
+                            algorithm: 'sheetmusic',
+                            algorithmOptions: options,
+                            name: `Sheet Music: ${firstResult.title}`
+                        });
+                        logConsole(`Generated sheet music: ${paths.length} lines`, 'msg-info');
+                        elements.plotStatus.textContent = `${paths.length} lines generated`;
+
+                    } catch (error) {
+                        logConsole(`Sheet Music Error: ${error.message}`, 'msg-error');
+                        console.error('Sheet music search error:', error);
+                    } finally {
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                    }
                     return;
                 }
 

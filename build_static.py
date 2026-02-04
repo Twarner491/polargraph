@@ -16,6 +16,7 @@ GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
 DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/"
 FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/"
 SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev/"
+MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev/"
 
 def _js_hash(s):
     """Match JS hash: s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)"""
@@ -86,6 +87,12 @@ def build():
         js_content = js_content.replace(
             'var SHEETMUSIC_WORKER_URL = "";',
             f'var SHEETMUSIC_WORKER_URL = "{SHEETMUSIC_WORKER_URL}";'
+        )
+
+        # Replace midisearch Worker URL placeholder
+        js_content = js_content.replace(
+            'var MIDISEARCH_WORKER_URL = "";',
+            f'var MIDISEARCH_WORKER_URL = "{MIDISEARCH_WORKER_URL}";'
         )
 
         # Remote access configuration from environment
