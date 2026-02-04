@@ -181,7 +181,7 @@ class PatternGenerator {
             options: {
                 inspiration: { type: 'string', label: 'Inspiration', default: '', placeholder: 'Optional' }
             },
-            serverOnly: true  // GPenT requires server API call
+            workerEnabled: true  // GPenT uses Cloudflare Worker in client mode
         },
         dcode: {
             name: 'dcode',
@@ -194,7 +194,7 @@ class PatternGenerator {
                 guidance: { type: 'float', label: 'Guidance', default: 10.0, min: 5.0, max: 20.0, step: 0.5, collapsible: true },
                 seed: { type: 'string', label: 'Seed', default: '-1', placeholder: '-1 for random', collapsible: true }
             },
-            serverOnly: true  // dcode requires HuggingFace Space API call
+            workerEnabled: true  // dcode uses HuggingFace Space in client mode
         },
         slimemold: {
             name: 'Slime Mold',
@@ -456,28 +456,22 @@ class PatternGenerator {
                 fish_name: { type: 'string', label: 'Fish Name (seed)', default: '', placeholder: 'Leave blank for random Latin name' },
                 seed: { type: 'int', label: 'Random Seed', default: -1, min: -1, max: 99999, description: 'Use -1 for random' }
             },
-            serverOnly: true  // FishDraw requires server-side generation
+            workerEnabled: true  // FishDraw uses Cloudflare Worker in client mode
         },
         sheetmusic: {
             name: 'Sheet Music',
             description: 'Render sheet music from MIDI files - search by song name or upload',
             options: {
-                midi_source: {
-                    type: 'select',
-                    label: 'MIDI Source',
-                    default: 'search',
-                    options: [
-                        { value: 'search', label: 'Search by Song Name' },
-                        { value: 'upload', label: 'Upload MIDI File' }
-                    ]
-                },
-                song_name: { type: 'string', label: 'Song Name', default: '', placeholder: 'Enter song title to search...' },
-                start_time: { type: 'float', label: 'Start Time (seconds)', default: 0, min: 0, max: 600, step: 1 },
-                end_time: { type: 'float', label: 'End Time (seconds)', default: 0, min: 0, max: 600, step: 1, description: 'Set to 0 for auto-fit' }
+                // Hidden fields to store selected MIDI data
+                midi_data: { type: 'hidden', default: '' },
+                selected_title: { type: 'hidden', default: '' },
+                start_time: { type: 'hidden', default: 0 },
+                end_time: { type: 'hidden', default: 0 }
             },
-            serverOnly: true,
+            workerEnabled: true,
             hasUpload: true,
-            uploadAccept: '.mid,.midi'
+            uploadAccept: '.mid,.midi',
+            customUI: 'sheetmusic'  // Use custom UI rendering
         }
     };
     

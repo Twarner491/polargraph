@@ -6,6 +6,8 @@ var POLARGRAPH_WEBHOOK_URL = "";
 var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/";
 var DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/";
 var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/";
+var SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev/";
+var MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev/";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
@@ -4015,6 +4017,9 @@ function populateGeneratorSelect(generators) {
         option.value = gen.id;
         option.textContent = gen.name;
         option.dataset.options = JSON.stringify(gen.options || {});
+        if (gen.customUI) {
+            option.dataset.customUI = gen.customUI;
+        }
         elements.generatorSelect.appendChild(option);
     });
     updateGeneratorOptions();
@@ -4037,7 +4042,14 @@ function updateGeneratorOptions() {
         const hideColorPicker = generatorsWithColorProfiles.includes(generatorId);
         elements.colorPickerSection.style.display = hideColorPicker ? 'none' : 'block';
     }
-    
+
+    // Check for custom UI generators
+    const generatorConfig = selected.dataset.customUI;
+    if (generatorConfig === 'sheetmusic' || generatorId === 'sheetmusic') {
+        renderSheetMusicUI(elements.generatorOptions, options);
+        return;
+    }
+
     // Separate main options from collapsible options
     const mainOptions = [];
     const collapsibleOptions = [];
@@ -4146,6 +4158,270 @@ function updateGeneratorOptions() {
         details.appendChild(settingsContainer);
         elements.generatorOptions.appendChild(details);
     }
+}
+
+// =========================================================================
+// SHEET MUSIC CUSTOM UI
+// =========================================================================
+
+let sheetMusicState = {
+    midiData: null,
+    selectedTitle: '',
+    searchResults: [],
+    searchTimeout: null
+};
+
+function renderSheetMusicUI(container, options) {
+    container.innerHTML = `
+        <div class="sheetmusic-ui">
+            <!-- MIDI Upload Drop Zone -->
+            <div class="midi-upload-zone" id="midiUploadZone">
+                <div class="upload-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                </div>
+                <div class="upload-text">Drop MIDI file here or click to upload</div>
+                <input type="file" id="midiFileInput" accept=".mid,.midi" style="display:none">
+            </div>
+
+            <!-- Search Section -->
+            <div class="midi-search-section">
+                <label>Or search for a song:</label>
+                <div class="search-input-wrapper">
+                    <input type="text" id="midiSearchInput" placeholder="Enter song title..." class="midi-search-input">
+                    <div class="search-spinner" id="searchSpinner" style="display:none"></div>
+                </div>
+                <div class="midi-search-results" id="midiSearchResults"></div>
+            </div>
+
+            <!-- Selected Song Display (hidden until song selected) -->
+            <div class="midi-selected" id="midiSelected" style="display:none">
+                <div class="selected-header">
+                    <span class="selected-title" id="selectedSongTitle"></span>
+                    <button type="button" class="clear-selection-btn" id="clearMidiSelection">&times;</button>
+                </div>
+
+                <!-- Time Range Options (only shown after selection) -->
+                <div class="time-range-options">
+                    <div class="form-group">
+                        <label>Start Time (seconds)</label>
+                        <input type="number" id="gen_start_time" value="0" min="0" max="600" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label>End Time (seconds)</label>
+                        <input type="number" id="gen_end_time" value="0" min="0" max="600" step="1">
+                        <small class="hint">0 = auto-fit to page</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hidden fields for form submission -->
+            <input type="hidden" id="gen_midi_data" value="">
+            <input type="hidden" id="gen_selected_title" value="">
+        </div>
+    `;
+
+    // Reset state
+    sheetMusicState = {
+        midiData: null,
+        selectedTitle: '',
+        searchResults: [],
+        searchTimeout: null
+    };
+
+    // Setup event listeners
+    const uploadZone = document.getElementById('midiUploadZone');
+    const fileInput = document.getElementById('midiFileInput');
+    const searchInput = document.getElementById('midiSearchInput');
+    const clearBtn = document.getElementById('clearMidiSelection');
+
+    // Upload zone click
+    uploadZone.addEventListener('click', () => fileInput.click());
+
+    // Drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+    uploadZone.addEventListener('dragleave', () => {
+        uploadZone.classList.remove('dragover');
+    });
+    uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleMidiFileSelect(files[0]);
+        }
+    });
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleMidiFileSelect(e.target.files[0]);
+        }
+    });
+
+    // Search input with debounce
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        clearTimeout(sheetMusicState.searchTimeout);
+
+        if (query.length < 2) {
+            document.getElementById('midiSearchResults').innerHTML = '';
+            return;
+        }
+
+        sheetMusicState.searchTimeout = setTimeout(() => {
+            searchMidiFiles(query);
+        }, 300);
+    });
+
+    // Clear selection
+    clearBtn.addEventListener('click', clearMidiSelection);
+}
+
+function handleMidiFileSelect(file) {
+    if (!file.name.match(/\.midi?$/i)) {
+        logConsole('Please select a MIDI file (.mid or .midi)', 'msg-error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+        selectMidiSong(file.name.replace(/\.midi?$/i, ''), base64);
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+async function searchMidiFiles(query) {
+    const resultsContainer = document.getElementById('midiSearchResults');
+    const spinner = document.getElementById('searchSpinner');
+
+    if (!MIDISEARCH_WORKER_URL) {
+        resultsContainer.innerHTML = '<div class="search-error">Search not available in this mode</div>';
+        return;
+    }
+
+    spinner.style.display = 'block';
+    resultsContainer.innerHTML = '';
+
+    try {
+        const response = await fetch(`${MIDISEARCH_WORKER_URL}/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+
+        const data = await response.json();
+        spinner.style.display = 'none';
+
+        if (!data.success || !data.results || data.results.length === 0) {
+            resultsContainer.innerHTML = '<div class="search-no-results">No results found</div>';
+            return;
+        }
+
+        sheetMusicState.searchResults = data.results;
+
+        resultsContainer.innerHTML = data.results.map((result, i) => `
+            <div class="search-result-item" data-index="${i}">
+                <span class="result-title">${escapeHtml(result.title)}</span>
+                <span class="result-source">${escapeHtml(result.source)}</span>
+            </div>
+        `).join('');
+
+        // Add click handlers
+        resultsContainer.querySelectorAll('.search-result-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const index = parseInt(item.dataset.index);
+                const result = sheetMusicState.searchResults[index];
+                downloadAndSelectMidi(result);
+            });
+        });
+
+    } catch (error) {
+        spinner.style.display = 'none';
+        resultsContainer.innerHTML = `<div class="search-error">Search failed: ${error.message}</div>`;
+    }
+}
+
+async function downloadAndSelectMidi(result) {
+    const resultsContainer = document.getElementById('midiSearchResults');
+    resultsContainer.innerHTML = `<div class="search-loading">Downloading ${escapeHtml(result.title)}...</div>`;
+
+    try {
+        const response = await fetch(`${MIDISEARCH_WORKER_URL}/download`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: result.url })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            // Check if it's a FreeMidi manual download error
+            if (data.manual_url) {
+                resultsContainer.innerHTML = `
+                    <div class="search-error">
+                        Direct download not available.<br>
+                        <a href="${escapeHtml(data.manual_url)}" target="_blank">Download manually</a> then use drag & drop above.
+                    </div>
+                `;
+            } else {
+                resultsContainer.innerHTML = `<div class="search-error">${escapeHtml(data.error)}</div>`;
+            }
+            return;
+        }
+
+        selectMidiSong(result.title, data.midi_data);
+        resultsContainer.innerHTML = '';
+        document.getElementById('midiSearchInput').value = '';
+
+    } catch (error) {
+        resultsContainer.innerHTML = `<div class="search-error">Download failed: ${error.message}</div>`;
+    }
+}
+
+function selectMidiSong(title, base64Data) {
+    sheetMusicState.midiData = base64Data;
+    sheetMusicState.selectedTitle = title;
+
+    // Update hidden fields
+    document.getElementById('gen_midi_data').value = base64Data;
+    document.getElementById('gen_selected_title').value = title;
+
+    // Show selected section
+    document.getElementById('midiSelected').style.display = 'block';
+    document.getElementById('selectedSongTitle').textContent = title;
+
+    // Hide upload zone
+    document.getElementById('midiUploadZone').style.display = 'none';
+    document.getElementById('midiSearchResults').innerHTML = '';
+
+    logConsole(`Selected: ${title}`, 'msg-info');
+}
+
+function clearMidiSelection() {
+    sheetMusicState.midiData = null;
+    sheetMusicState.selectedTitle = '';
+
+    document.getElementById('gen_midi_data').value = '';
+    document.getElementById('gen_selected_title').value = '';
+    document.getElementById('gen_start_time').value = '0';
+    document.getElementById('gen_end_time').value = '0';
+
+    document.getElementById('midiSelected').style.display = 'none';
+    document.getElementById('midiUploadZone').style.display = 'block';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // =========================================================================
@@ -4284,63 +4560,71 @@ async function generatePattern() {
     
     console.log('[GENERATE] Collected options:', JSON.stringify(options, null, 2));
 
-    // Special handling for Sheet Music - MIDI search/upload (requires server)
+    // Special handling for Sheet Music - uses custom UI with pre-selected MIDI data
     if (generator === 'sheetmusic') {
-        if (CLIENT_SIDE_MODE) {
-            logConsole('Sheet Music requires connection to plotter.local', 'msg-error');
-            logConsole('This generator needs the server to parse MIDI files', 'msg-info');
-            btn.disabled = false;
-            btn.textContent = originalText;
-            return;
-        }
         try {
-            const midiSource = options.midi_source || 'search';
-            const songName = options.song_name || '';
+            const midiData = options.midi_data || '';
+            const selectedTitle = options.selected_title || 'Unknown';
             const startTime = parseFloat(options.start_time) || 0;
             const endTime = parseFloat(options.end_time) || 0;
 
-            if (midiSource === 'search') {
-                if (!songName) {
-                    logConsole('Please enter a song name to search', 'msg-error');
+            // Check if MIDI has been selected
+            if (!midiData) {
+                logConsole('Please select a MIDI file first', 'msg-error');
+                logConsole('Search for a song or drag & drop a MIDI file above', 'msg-info');
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            logConsole(`Generating sheet music: ${selectedTitle}...`, 'msg-info');
+
+            if (CLIENT_SIDE_MODE) {
+                // Client mode - use Cloudflare Worker
+                if (!SHEETMUSIC_WORKER_URL) {
+                    logConsole('Sheet Music requires worker URL to be configured', 'msg-error');
                     btn.disabled = false;
                     btn.textContent = originalText;
                     return;
                 }
 
-                logConsole(`Searching for MIDI: "${songName}"...`, 'msg-info');
+                const sheetResp = await fetch(SHEETMUSIC_WORKER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        midi_data: midiData,
+                        start_time: startTime,
+                        end_time: endTime,
+                        page_width: 800,
+                        page_height: 600
+                    })
+                });
+                const sheetResult = await sheetResp.json();
 
-                // Search for MIDI
-                const searchResult = await sendCommand('/api/midi/search', 'POST', { query: songName });
-
-                if (!searchResult.success || !searchResult.results || searchResult.results.length === 0) {
-                    logConsole(`No MIDI files found for "${songName}"`, 'msg-error');
-                    logConsole('Try uploading a MIDI file instead', 'msg-info');
+                if (!sheetResult.success) {
+                    logConsole(`Sheet Music Error: ${sheetResult.error}`, 'msg-error');
                     btn.disabled = false;
                     btn.textContent = originalText;
                     return;
                 }
 
-                // Use first result
-                const firstResult = searchResult.results[0];
-                logConsole(`Found: ${firstResult.title}`, 'msg-info');
-                logConsole('Downloading MIDI...', 'msg-info');
+                // Convert paths format
+                const paths = sheetResult.paths.map(line => ({
+                    points: line.map(p => ({ x: p.x, y: p.y }))
+                }));
 
-                // Download MIDI
-                const downloadResult = await sendCommand('/api/midi/download', 'POST', { url: firstResult.url });
+                addEntity(paths, {
+                    algorithm: 'sheetmusic',
+                    algorithmOptions: options,
+                    name: `Sheet Music: ${selectedTitle}`
+                });
+                logConsole(`Generated sheet music: ${paths.length} lines`, 'msg-info');
+                elements.plotStatus.textContent = `${paths.length} lines generated`;
 
-                if (!downloadResult.success) {
-                    logConsole(`Download failed: ${downloadResult.error}`, 'msg-error');
-                    btn.disabled = false;
-                    btn.textContent = originalText;
-                    return;
-                }
-
-                logConsole('Generating sheet music...', 'msg-info');
-
-                // Generate sheet music
+            } else {
+                // Server mode - send base64 data to server
                 const genResult = await sendCommand('/api/sheetmusic/generate', 'POST', {
-                    midi_source: 'upload',
-                    filepath: downloadResult.filepath,
+                    midi_data: midiData,
                     start_time: startTime,
                     end_time: endTime
                 });
@@ -4350,17 +4634,13 @@ async function generatePattern() {
                     addEntity(paths, {
                         algorithm: 'sheetmusic',
                         algorithmOptions: options,
-                        name: `Sheet Music: ${firstResult.title}`
+                        name: `Sheet Music: ${selectedTitle}`
                     });
-                    logConsole(`Generated sheet music: ${genResult.lines} lines`, 'msg-info');
-                    elements.plotStatus.textContent = `${genResult.lines} lines generated`;
+                    logConsole(`Generated sheet music: ${genResult.lines || paths.length} lines`, 'msg-info');
+                    elements.plotStatus.textContent = `${genResult.lines || paths.length} lines generated`;
                 } else {
                     logConsole(`Generation failed: ${genResult.error}`, 'msg-error');
                 }
-            } else {
-                // Upload mode - user needs to upload MIDI first
-                logConsole('For upload mode, please upload a MIDI file using the Upload button', 'msg-info');
-                logConsole('After uploading, the sheet music will be generated automatically', 'msg-info');
             }
         } catch (error) {
             logConsole(`Sheet Music Error: ${error.message}`, 'msg-error');
@@ -4430,8 +4710,10 @@ async function generatePattern() {
                 return;
             }
 
-            // Convert worker paths format to our format
-            const paths = result.paths.map(line => line.map(p => [p.x, p.y]));
+            // Convert worker paths format to our format {points: [{x, y}, ...]}
+            const paths = result.paths.map(line => ({
+                points: line.map(p => ({ x: p.x, y: p.y }))
+            }));
 
             addEntity(paths, {
                 algorithm: 'fishdraw',

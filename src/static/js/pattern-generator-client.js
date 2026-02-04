@@ -462,22 +462,16 @@ class PatternGenerator {
             name: 'Sheet Music',
             description: 'Render sheet music from MIDI files - search by song name or upload',
             options: {
-                midi_source: {
-                    type: 'select',
-                    label: 'MIDI Source',
-                    default: 'search',
-                    options: [
-                        { value: 'search', label: 'Search by Song Name' },
-                        { value: 'upload', label: 'Upload MIDI File' }
-                    ]
-                },
-                song_name: { type: 'string', label: 'Song Name', default: '', placeholder: 'Enter song title to search...' },
-                start_time: { type: 'float', label: 'Start Time (seconds)', default: 0, min: 0, max: 600, step: 1 },
-                end_time: { type: 'float', label: 'End Time (seconds)', default: 0, min: 0, max: 600, step: 1, description: 'Set to 0 for auto-fit' }
+                // Hidden fields to store selected MIDI data
+                midi_data: { type: 'hidden', default: '' },
+                selected_title: { type: 'hidden', default: '' },
+                start_time: { type: 'hidden', default: 0 },
+                end_time: { type: 'hidden', default: 0 }
             },
-            workerEnabled: true,  // Sheet Music uses Cloudflare Worker in client mode
+            workerEnabled: true,
             hasUpload: true,
-            uploadAccept: '.mid,.midi'
+            uploadAccept: '.mid,.midi',
+            customUI: 'sheetmusic'  // Use custom UI rendering
         }
     };
     

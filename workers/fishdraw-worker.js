@@ -1,11 +1,11 @@
 /**
  * Fish Draw Cloudflare Worker
  * Generates procedural fish drawings
- * Ported from https://github.com/LingDong-/fishdraw
+ * Full port from https://github.com/LingDong-/fishdraw
  */
 
 // ============================================================================
-// Perlin Noise with seeded PRNG
+// Seeded Random Number Generator
 // ============================================================================
 
 class SeededRandom {
@@ -23,7 +23,30 @@ class SeededRandom {
     random() {
         return this.next();
     }
+
+    // Triangular distribution
+    triangular(min, mode, max) {
+        const u = this.random();
+        const fc = (mode - min) / (max - min);
+        if (u < fc) {
+            return min + Math.sqrt(u * (max - min) * (mode - min));
+        } else {
+            return max - Math.sqrt((1 - u) * (max - min) * (max - mode));
+        }
+    }
+
+    choice(arr) {
+        return arr[Math.floor(this.random() * arr.length)];
+    }
+
+    randint(min, max) {
+        return Math.floor(this.random() * (max - min + 1)) + min;
+    }
 }
+
+// ============================================================================
+// Perlin Noise
+// ============================================================================
 
 class PerlinNoise {
     constructor(seed = 0) {
@@ -31,7 +54,6 @@ class PerlinNoise {
         this.p = new Array(512);
         const perm = Array.from({length: 256}, (_, i) => i);
 
-        // Shuffle
         for (let i = 255; i > 0; i--) {
             const j = Math.floor(this.rng.random() * (i + 1));
             [perm[i], perm[j]] = [perm[j], perm[i]];
@@ -57,7 +79,7 @@ class PerlinNoise {
         return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
     }
 
-    noise2d(x, y) {
+    noise(x, y = 0) {
         const X = Math.floor(x) & 255;
         const Y = Math.floor(y) & 255;
 
@@ -79,12 +101,10 @@ class PerlinNoise {
 }
 
 // ============================================================================
-// Geometry utilities
+// Geometry Utilities
 // ============================================================================
 
-function lerp(a, b, t) {
-    return a + (b - a) * t;
-}
+const PI = Math.PI;
 
 function dist(p1, p2) {
     const dx = p2[0] - p1[0];
@@ -92,17 +112,27 @@ function dist(p1, p2) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
-function normalize(v) {
-    const len = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
-    if (len === 0) return [0, 0];
-    return [v[0] / len, v[1] / len];
+function lerp(a, b, t) {
+    return a + (b - a) * t;
 }
 
-function perpendicular(v) {
-    return [-v[1], v[0]];
+function lerp2d(a, b, t) {
+    return [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
 }
 
-function pointInPolygon(point, polygon) {
+function getBbox(points) {
+    if (!points.length) return [0, 0, 0, 0];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of points) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+    }
+    return [minX, minY, maxX, maxY];
+}
+
+function ptInPoly(point, polygon) {
     let inside = false;
     const x = point[0], y = point[1];
 
@@ -117,62 +147,112 @@ function pointInPolygon(point, polygon) {
     return inside;
 }
 
-function resamplePolyline(points, step) {
-    if (points.length < 2) return points;
+// Point to segment distance for line clipping
+function ptSegDist(pt, a, b) {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const lenSq = dx * dx + dy * dy;
 
-    const result = [points[0]];
+    if (lenSq === 0) return dist(pt, a);
+
+    let t = ((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+
+    const proj = [a[0] + t * dx, a[1] + t * dy];
+    return dist(pt, proj);
+}
+
+// ============================================================================
+// Curve Utilities
+// ============================================================================
+
+function catmullRomPoint(p0, p1, p2, p3, t) {
+    const t2 = t * t;
+    const t3 = t2 * t;
+
+    const x = 0.5 * ((2 * p1[0]) +
+               (-p0[0] + p2[0]) * t +
+               (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+               (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+
+    const y = 0.5 * ((2 * p1[1]) +
+               (-p0[1] + p2[1]) * t +
+               (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+               (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
+
+    return [x, y];
+}
+
+function catmullRomSpline(points, segmentsPerCurve = 10) {
+    if (points.length < 2) return [...points];
+    if (points.length === 2) return [...points];
+
+    const result = [];
+    const extended = [points[0], ...points, points[points.length - 1]];
+
+    for (let i = 1; i < extended.length - 2; i++) {
+        const p0 = extended[i - 1];
+        const p1 = extended[i];
+        const p2 = extended[i + 1];
+        const p3 = extended[i + 2];
+
+        for (let j = 0; j < segmentsPerCurve; j++) {
+            const t = j / segmentsPerCurve;
+            result.push(catmullRomPoint(p0, p1, p2, p3, t));
+        }
+    }
+
+    result.push(points[points.length - 1]);
+    return result;
+}
+
+function circlePoints(cx, cy, radius, segments = 32) {
+    const points = [];
+    for (let i = 0; i <= segments; i++) {
+        const angle = (2 * PI * i) / segments;
+        points.push([cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+    }
+    return points;
+}
+
+function resample(polyline, step) {
+    if (polyline.length < 2) return [...polyline];
+
+    const result = [polyline[0]];
     let remaining = step;
 
-    for (let i = 1; i < points.length; i++) {
-        const prev = points[i - 1];
-        const curr = points[i];
+    for (let i = 1; i < polyline.length; i++) {
+        const prev = polyline[i - 1];
+        const curr = polyline[i];
         let segLen = dist(prev, curr);
-        let t = 0;
 
-        while (remaining <= segLen) {
-            t += remaining / segLen;
-            result.push([
-                lerp(prev[0], curr[0], t),
-                lerp(prev[1], curr[1], t)
-            ]);
-            segLen = segLen * (1 - remaining / segLen);
+        if (segLen < 1e-10) continue;
+
+        let pos = prev;
+        while (remaining <= dist(pos, curr)) {
+            const t = remaining / dist(pos, curr);
+            const newPt = lerp2d(pos, curr, t);
+            result.push(newPt);
+            pos = newPt;
             remaining = step;
         }
-        remaining -= segLen;
+        remaining -= dist(pos, curr);
     }
 
-    if (result.length > 0 && dist(result[result.length - 1], points[points.length - 1]) > step * 0.5) {
-        result.push(points[points.length - 1]);
+    if (dist(result[result.length - 1], polyline[polyline.length - 1]) > step * 0.1) {
+        result.push(polyline[polyline.length - 1]);
     }
 
     return result;
 }
 
-function smoothPolyline(points, iterations = 1) {
-    if (points.length < 3) return points;
-
-    let result = [...points];
-    for (let iter = 0; iter < iterations; iter++) {
-        const smoothed = [result[0]];
-        for (let i = 1; i < result.length - 1; i++) {
-            smoothed.push([
-                (result[i - 1][0] + result[i][0] * 2 + result[i + 1][0]) / 4,
-                (result[i - 1][1] + result[i][1] * 2 + result[i + 1][1]) / 4
-            ]);
-        }
-        smoothed.push(result[result.length - 1]);
-        result = smoothed;
-    }
-    return result;
-}
-
-// Clip polyline to polygon
-function clipPolylineToPolygon(polyline, polygon) {
+// Simple line clipping to polygon (returns segments inside polygon)
+function clipPolyline(polyline, polygon) {
     const result = [];
     let currentSegment = [];
 
     for (const point of polyline) {
-        if (pointInPolygon(point, polygon)) {
+        if (ptInPoly(point, polygon)) {
             currentSegment.push(point);
         } else {
             if (currentSegment.length >= 2) {
@@ -193,336 +273,531 @@ function clipPolylineToPolygon(polyline, polygon) {
 // Fish Name Generator
 // ============================================================================
 
-const GENUS_PREFIXES = ['Pseu', 'Neo', 'Pro', 'Para', 'Eu', 'Mega', 'Micro', 'Macro', 'Poly', 'Mono'];
-const GENUS_ROOTS = ['ichthy', 'pter', 'cephal', 'branch', 'stom', 'derm', 'pod', 'gnath', 'rhynch', 'dont'];
-const GENUS_SUFFIXES = ['us', 'is', 'os', 'a', 'um', 'es', 'ax', 'ix', 'ops', 'ias'];
+const GENUS_PREFIXES = ['Pseu', 'Neo', 'Pro', 'Para', 'Eu', 'Mega', 'Micro', 'Macro', 'Poly', 'Mono', 'Hemi', 'Tri'];
+const GENUS_ROOTS = ['ichthy', 'pter', 'cephal', 'branch', 'stom', 'derm', 'pod', 'gnath', 'rhynch', 'dont', 'cheil', 'ophr'];
+const GENUS_SUFFIXES = ['us', 'is', 'os', 'a', 'um', 'es', 'ax', 'ix', 'ops', 'ias', 'ys', 'on'];
 
-const SPECIES_PREFIXES = ['longi', 'brevi', 'lati', 'angust', 'magn', 'parv', 'nigr', 'alb', 'rub', 'vir'];
-const SPECIES_ROOTS = ['cauda', 'pinn', 'squam', 'later', 'ventr', 'dors', 'rostr', 'ocul', 'line', 'macula'];
-const SPECIES_SUFFIXES = ['us', 'is', 'atus', 'ensis', 'oides', 'formis', 'alis', 'inus', 'icus', 'eus'];
+const SPECIES_PREFIXES = ['longi', 'brevi', 'lati', 'angust', 'magn', 'parv', 'nigr', 'alb', 'rub', 'vir', 'flav', 'caeru'];
+const SPECIES_ROOTS = ['cauda', 'pinn', 'squam', 'later', 'ventr', 'dors', 'rostr', 'ocul', 'line', 'macula', 'gutta', 'fascia'];
+const SPECIES_SUFFIXES = ['us', 'is', 'atus', 'ensis', 'oides', 'formis', 'alis', 'inus', 'icus', 'eus', 'ius', 'ilis'];
 
 function generateFishName(rng) {
-    const pick = arr => arr[Math.floor(rng.random() * arr.length)];
-
-    const genus = pick(GENUS_PREFIXES) + pick(GENUS_ROOTS) + pick(GENUS_SUFFIXES);
-    const species = pick(SPECIES_PREFIXES) + pick(SPECIES_ROOTS) + pick(SPECIES_SUFFIXES);
+    const genus = rng.choice(GENUS_PREFIXES) + rng.choice(GENUS_ROOTS) + rng.choice(GENUS_SUFFIXES);
+    const species = rng.choice(SPECIES_PREFIXES) + rng.choice(SPECIES_ROOTS) + rng.choice(SPECIES_SUFFIXES);
 
     return genus.charAt(0).toUpperCase() + genus.slice(1) + ' ' + species.toLowerCase();
 }
 
 // ============================================================================
-// Fish Generation
+// Fish Parameter Generation
 // ============================================================================
 
-function generateFishParams(rng) {
+function generateParams(rng) {
     return {
-        bodyLength: 200 + rng.random() * 100,
-        bodyHeight: 0.3 + rng.random() * 0.3,
-        bodyBend: (rng.random() - 0.5) * 0.3,
-        headSize: 0.15 + rng.random() * 0.1,
-        tailSize: 0.2 + rng.random() * 0.15,
-        tailFork: 0.3 + rng.random() * 0.4,
-        dorsalHeight: 0.2 + rng.random() * 0.2,
-        dorsalStart: 0.2 + rng.random() * 0.2,
-        dorsalEnd: 0.5 + rng.random() * 0.2,
-        ventralHeight: 0.1 + rng.random() * 0.1,
-        pectoralSize: 0.1 + rng.random() * 0.1,
-        hasStripes: rng.random() > 0.6,
-        hasSpots: rng.random() > 0.7,
-        hasScales: rng.random() > 0.3,
-        eyeSize: 0.03 + rng.random() * 0.02,
+        bodyCurveType: rng.choice([0, 1]),
+        bodyCurveAmount: rng.triangular(0.5, 0.85, 0.98),
+        bodyLength: rng.triangular(200, 300, 420),
+        bodyHeight: rng.triangular(45, 80, 150),
+
+        scaleType: rng.choice([0, 1, 2, 3]),
+        patternType: rng.choice([0, 1, 2, 3, 4]),
+
+        hasDorsal: rng.random() > 0.1,
+        hasPectoral: rng.random() > 0.05,
+        hasPelvic: rng.random() > 0.3,
+        hasAnal: rng.random() > 0.2,
+        hasFinlet: rng.random() > 0.85,
+        hasAdipose: rng.random() > 0.9,
+        hasTail: true,
+
+        dorsalStart: rng.triangular(0.1, 0.2, 0.4),
+        dorsalEnd: rng.triangular(0.5, 0.7, 0.9),
+        dorsalHeight: rng.triangular(30, 60, 120),
+        dorsalTexture: rng.random() > 0.3,
+
+        pectoralStart: rng.triangular(0.15, 0.25, 0.35),
+        pectoralLength: rng.triangular(30, 50, 80),
+        pectoralAngle: rng.triangular(-0.6, -0.3, 0.1),
+
+        pelvicStart: rng.triangular(0.35, 0.45, 0.55),
+        pelvicLength: rng.triangular(15, 30, 50),
+
+        analStart: rng.triangular(0.4, 0.55, 0.7),
+        analEnd: rng.triangular(0.7, 0.8, 0.95),
+        analHeight: rng.triangular(15, 30, 50),
+
+        tailType: rng.choice([0, 1, 2]),
+        tailLength: rng.triangular(40, 60, 100),
+        tailSpread: rng.triangular(0.5, 0.8, 1.2),
+
+        eyeSize: rng.triangular(8, 15, 25),
+        eyePos: rng.triangular(0.1, 0.15, 0.25),
+        mouthSize: rng.triangular(0.15, 0.3, 0.5),
+        mouthOpen: rng.triangular(0, 0.2, 0.5),
+        hasTeeth: rng.random() > 0.8,
+        hasWhisker: rng.random() > 0.9,
+
+        bodyStripeCount: rng.randint(3, 8),
+        bodySpotCount: rng.randint(5, 20),
+        bodyTextureDensity: rng.triangular(0.5, 1.0, 1.5),
     };
 }
 
-function generateFishBody(params, rng) {
-    const { bodyLength, bodyHeight, bodyBend, headSize } = params;
-    const points = [];
-    const steps = 50;
+// ============================================================================
+// Fish Generator Class
+// ============================================================================
 
-    // Generate body outline
-    for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const x = t * bodyLength;
+class FishGenerator {
+    constructor(params, seed) {
+        this.params = params;
+        this.rng = new SeededRandom(seed);
+        this.noise = new PerlinNoise(seed);
 
-        // Body profile - wider in middle, tapers at ends
-        let y = Math.sin(t * Math.PI) * bodyHeight * bodyLength * 0.5;
-
-        // Head shape adjustment
-        if (t < headSize) {
-            const ht = t / headSize;
-            y *= 0.7 + 0.3 * Math.sqrt(ht);
-        }
-
-        // Tail taper
-        if (t > 0.7) {
-            const tt = (t - 0.7) / 0.3;
-            y *= 1 - tt * 0.6;
-        }
-
-        // Body bend
-        const bendOffset = Math.sin(t * Math.PI) * bodyBend * bodyLength;
-
-        points.push([x, y + bendOffset]);
+        this.curveTop = [];
+        this.curveBottom = [];
+        this.outline = [];
+        this.polylines = [];
     }
 
-    // Create closed body outline (top and bottom)
-    const topPoints = points.map(p => [p[0], p[1]]);
-    const bottomPoints = points.map(p => [p[0], -p[1]]).reverse();
-
-    return [...topPoints, ...bottomPoints.slice(1)];
-}
-
-function generateFin(startX, startY, length, height, angle, rng) {
-    const points = [];
-    const steps = 15;
-
-    const cosA = Math.cos(angle);
-    const sinA = Math.sin(angle);
-
-    for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const baseX = t * length;
-        const baseY = Math.sin(t * Math.PI) * height * (1 - t * 0.3);
-
-        // Add some waviness
-        const wave = Math.sin(t * Math.PI * 3) * height * 0.1;
-
-        const x = startX + baseX * cosA - (baseY + wave) * sinA;
-        const y = startY + baseX * sinA + (baseY + wave) * cosA;
-
-        points.push([x, y]);
+    generate() {
+        this._generateBodyCurves();
+        this._generateBodyOutline();
+        this._generateBodyTexture();
+        this._generateFins();
+        this._generateHead();
+        return this.polylines;
     }
 
-    return points;
-}
+    _generateBodyCurves() {
+        const n = 32;
+        const p = this.params;
+        const length = p.bodyLength;
+        const height = p.bodyHeight;
+        const amount = p.bodyCurveAmount;
 
-function generateTail(bodyLength, bodyHeight, params, rng) {
-    const { tailSize, tailFork } = params;
-    const tailLength = bodyLength * tailSize;
-    const tailHeight = bodyLength * bodyHeight * 0.8;
+        this.curveTop = [];
+        this.curveBottom = [];
 
-    const lines = [];
+        for (let i = 0; i < n; i++) {
+            const t = i / (n - 1);
+            const x = (t - 0.5) * length;
 
-    // Upper tail lobe
-    const upper = [];
-    for (let i = 0; i <= 20; i++) {
-        const t = i / 20;
-        const x = bodyLength + t * tailLength;
-        const y = (1 - t) * tailHeight * 0.2 + t * tailHeight * tailFork;
-        upper.push([x, y]);
-    }
-    lines.push(upper);
+            let yFactor, yTop, yBottom;
 
-    // Lower tail lobe
-    const lower = [];
-    for (let i = 0; i <= 20; i++) {
-        const t = i / 20;
-        const x = bodyLength + t * tailLength;
-        const y = -((1 - t) * tailHeight * 0.2 + t * tailHeight * tailFork);
-        lower.push([x, y]);
-    }
-    lines.push(lower);
-
-    // Tail rays
-    const numRays = 5 + Math.floor(rng.random() * 5);
-    for (let i = 0; i < numRays; i++) {
-        const t = i / (numRays - 1);
-        const startY = lerp(tailHeight * 0.2, -tailHeight * 0.2, t);
-        const endY = lerp(tailHeight * tailFork, -tailHeight * tailFork, t);
-
-        lines.push([
-            [bodyLength, startY],
-            [bodyLength + tailLength, endY]
-        ]);
-    }
-
-    return lines;
-}
-
-function generateScales(body, params, rng, perlin) {
-    const lines = [];
-    const scaleSize = params.bodyLength * 0.03;
-    const rows = Math.floor(params.bodyLength * params.bodyHeight / scaleSize);
-    const cols = Math.floor(params.bodyLength / scaleSize);
-
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-            const x = col * scaleSize + (row % 2) * scaleSize * 0.5 + scaleSize;
-            const y = (row - rows / 2) * scaleSize * 0.8;
-
-            // Check if inside body
-            if (!pointInPolygon([x, y], body)) continue;
-
-            // Scale arc
-            const scale = [];
-            for (let i = 0; i <= 8; i++) {
-                const angle = Math.PI * 0.3 + (i / 8) * Math.PI * 0.4;
-                const noise = perlin.noise2d(x * 0.1, y * 0.1) * 0.2;
-                const r = scaleSize * (0.8 + noise);
-                scale.push([
-                    x + Math.cos(angle) * r,
-                    y + Math.sin(angle) * r
-                ]);
+            if (p.bodyCurveType === 0) {
+                // Smooth sine-based body
+                yFactor = Math.sin(t * PI) * lerp(0.5, 1.0, this.noise.noise(t * 2, 1));
+                yTop = height * (amount * yFactor + (1 - amount));
+                yBottom = -height * (amount * yFactor + (1 - amount));
+            } else {
+                // Bean-shaped body
+                yFactor = Math.sin(t * PI) * (1 - 0.3 * Math.sin(t * PI * 2));
+                yTop = height * yFactor * amount;
+                yBottom = -height * yFactor * amount * 0.8;
             }
-            lines.push(scale);
+
+            this.curveTop.push([x, yTop]);
+            this.curveBottom.push([x, yBottom]);
         }
     }
 
-    return lines;
-}
+    _generateBodyOutline() {
+        this.outline = [...this.curveTop, ...this.curveBottom.slice().reverse()];
+    }
 
-function generateStripes(body, params, rng, perlin) {
-    const lines = [];
-    const numStripes = 3 + Math.floor(rng.random() * 5);
+    _generateBodyTexture() {
+        const p = this.params;
 
-    for (let i = 0; i < numStripes; i++) {
-        const x = params.bodyLength * (0.2 + (i / numStripes) * 0.6);
-        const stripe = [];
+        // Add body outline
+        this.polylines.push([...this.curveTop]);
+        this.polylines.push([...this.curveBottom].reverse());
 
-        for (let y = -params.bodyLength * params.bodyHeight; y <= params.bodyLength * params.bodyHeight; y += 3) {
-            const noise = perlin.noise2d(x * 0.05, y * 0.05) * 10;
-            stripe.push([x + noise, y]);
+        const scaleType = p.scaleType;
+
+        if (scaleType === 0) {
+            this._generateScales();
+        } else if (scaleType === 1) {
+            this._generateStripes();
+        } else if (scaleType === 2) {
+            this._generateSpots();
+        } else {
+            this._generateHatching();
+        }
+    }
+
+    _generateScales() {
+        const p = this.params;
+        const density = p.bodyTextureDensity;
+        const bbox = getBbox(this.outline);
+        const [minX, minY, maxX, maxY] = bbox;
+        const scaleSize = 12 / density;
+
+        let y = minY + scaleSize;
+        let row = 0;
+
+        while (y < maxY - scaleSize) {
+            let x = minX + scaleSize + (row % 2) * scaleSize * 0.5;
+            while (x < maxX - scaleSize) {
+                if (ptInPoly([x, y], this.outline)) {
+                    const scale = this._drawScale(x, y, scaleSize * 0.8);
+                    const clipped = clipPolyline(scale, this.outline);
+                    this.polylines.push(...clipped);
+                }
+                x += scaleSize;
+            }
+            y += scaleSize * 0.6;
+            row++;
+        }
+    }
+
+    _drawScale(cx, cy, radius) {
+        const points = [];
+        const segments = 12;
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const angle = PI * 0.3 + t * PI * 0.4;
+            const x = cx + radius * Math.cos(angle) * 0.8;
+            const y = cy + radius * Math.sin(angle) - radius * 0.3;
+            points.push([x, y]);
+        }
+        return points;
+    }
+
+    _generateStripes() {
+        const p = this.params;
+        const count = p.bodyStripeCount;
+        const bbox = getBbox(this.outline);
+        const [minX, minY, maxX, maxY] = bbox;
+        const stripeWidth = (maxX - minX) / (count + 1);
+
+        for (let i = 0; i < count; i++) {
+            const x = minX + stripeWidth * (i + 1);
+            const stripe = [[x, minY - 10], [x, maxY + 10]];
+
+            const clipped = clipPolyline(resample(stripe, 5), this.outline);
+            for (const line of clipped) {
+                if (line.length >= 2) {
+                    const wavy = line.map((pt, j) => [
+                        pt[0] + this.noise.noise(pt[1] * 0.1, i) * 3,
+                        pt[1]
+                    ]);
+                    if (wavy.length >= 2) {
+                        this.polylines.push(wavy);
+                    }
+                }
+            }
+        }
+    }
+
+    _generateSpots() {
+        const p = this.params;
+        const count = p.bodySpotCount;
+        const bbox = getBbox(this.outline);
+        const [minX, minY, maxX, maxY] = bbox;
+
+        for (let i = 0; i < count; i++) {
+            const x = minX + this.rng.random() * (maxX - minX);
+            const y = minY + this.rng.random() * (maxY - minY);
+
+            if (ptInPoly([x, y], this.outline)) {
+                const radius = 3 + this.rng.random() * 5;
+                const spot = circlePoints(x, y, radius, 12);
+                this.polylines.push(spot);
+            }
+        }
+    }
+
+    _generateHatching() {
+        const p = this.params;
+        const density = p.bodyTextureDensity;
+        const bbox = getBbox(this.outline);
+        const [minX, minY, maxX, maxY] = bbox;
+        const step = 8 / density;
+        const angle = PI / 4;
+
+        const start = minX + minY;
+        const end = maxX + maxY;
+        let pos = start;
+
+        while (pos < end) {
+            const x1 = pos;
+            const y1 = minY - 10;
+            const x2 = pos - (maxY - minY + 20) * Math.tan(angle);
+            const y2 = maxY + 10;
+
+            const line = [[x1, y1], [x2, y2]];
+            const clipped = clipPolyline(line, this.outline);
+            this.polylines.push(...clipped);
+
+            pos += step;
+        }
+    }
+
+    _generateFins() {
+        const p = this.params;
+
+        if (p.hasDorsal) this._generateDorsalFin();
+        if (p.hasPectoral) this._generatePectoralFin();
+        if (p.hasPelvic) this._generatePelvicFin();
+        if (p.hasAnal) this._generateAnalFin();
+        if (p.hasTail) this._generateTail();
+    }
+
+    _generateDorsalFin() {
+        const p = this.params;
+        const startT = p.dorsalStart;
+        const endT = p.dorsalEnd;
+        const height = p.dorsalHeight;
+
+        const nTop = this.curveTop.length;
+        const startIdx = Math.floor(startT * nTop);
+        const endIdx = Math.floor(endT * nTop);
+
+        if (startIdx >= endIdx) return;
+
+        const base = this.curveTop.slice(startIdx, endIdx + 1);
+        const finOutline = [base[0]];
+
+        for (let i = 0; i < base.length; i++) {
+            const t = i / base.length;
+            const profile = Math.pow(Math.sin(t * PI), 0.5);
+            const h = height * profile * (0.8 + 0.4 * this.noise.noise(t * 3, 0));
+            finOutline.push([base[i][0], base[i][1] + h]);
         }
 
-        // Clip to body
-        const clipped = clipPolylineToPolygon(stripe, body);
-        lines.push(...clipped);
-    }
+        finOutline.push(base[base.length - 1]);
+        this.polylines.push(finOutline);
 
-    return lines;
-}
-
-function generateSpots(body, params, rng, perlin) {
-    const lines = [];
-    const numSpots = 5 + Math.floor(rng.random() * 10);
-
-    for (let i = 0; i < numSpots; i++) {
-        const x = params.bodyLength * (0.15 + rng.random() * 0.7);
-        const y = (rng.random() - 0.5) * params.bodyLength * params.bodyHeight * 0.8;
-
-        if (!pointInPolygon([x, y], body)) continue;
-
-        const spotSize = params.bodyLength * (0.02 + rng.random() * 0.03);
-        const spot = [];
-
-        for (let j = 0; j <= 12; j++) {
-            const angle = (j / 12) * Math.PI * 2;
-            const noise = perlin.noise2d(x + j, y) * 0.3;
-            const r = spotSize * (0.8 + noise);
-            spot.push([x + Math.cos(angle) * r, y + Math.sin(angle) * r]);
+        // Add fin rays
+        if (p.dorsalTexture) {
+            const numRays = Math.max(3, Math.floor(base.length / 3));
+            for (let i = 0; i < numRays; i++) {
+                const t = (i + 0.5) / numRays;
+                const idx = Math.floor(t * (base.length - 1));
+                const basePt = base[Math.min(idx, base.length - 1)];
+                const topPt = finOutline[Math.min(idx + 1, finOutline.length - 2)];
+                this.polylines.push([basePt, topPt]);
+            }
         }
-        spot.push(spot[0]); // Close the circle
-
-        lines.push(spot);
     }
 
-    return lines;
+    _generatePectoralFin() {
+        const p = this.params;
+        const posT = p.pectoralStart;
+        const length = p.pectoralLength;
+        const angle = p.pectoralAngle;
+
+        const n = this.curveBottom.length;
+        const idx = Math.floor(posT * n);
+        const attachPt = this.curveBottom[Math.min(idx, n - 1)];
+
+        const fin = this._generateFinShape(attachPt, length, angle, 0.6);
+        this.polylines.push(fin);
+    }
+
+    _generatePelvicFin() {
+        const p = this.params;
+        const posT = p.pelvicStart;
+        const length = p.pelvicLength;
+
+        const n = this.curveBottom.length;
+        const idx = Math.floor(posT * n);
+        const attachPt = this.curveBottom[Math.min(idx, n - 1)];
+
+        const fin = this._generateFinShape(attachPt, length, -0.5, 0.4);
+        this.polylines.push(fin);
+    }
+
+    _generateAnalFin() {
+        const p = this.params;
+        const startT = p.analStart;
+        const endT = p.analEnd;
+        const height = p.analHeight;
+
+        const n = this.curveBottom.length;
+        const startIdx = Math.floor(startT * n);
+        const endIdx = Math.floor(endT * n);
+
+        if (startIdx >= endIdx) return;
+
+        const base = this.curveBottom.slice(startIdx, endIdx + 1);
+        const finOutline = [base[0]];
+
+        for (let i = 0; i < base.length; i++) {
+            const t = i / base.length;
+            const profile = Math.pow(Math.sin(t * PI), 0.7);
+            const h = height * profile;
+            finOutline.push([base[i][0], base[i][1] - h]);
+        }
+
+        finOutline.push(base[base.length - 1]);
+        this.polylines.push(finOutline);
+    }
+
+    _generateTail() {
+        const p = this.params;
+        const tailType = p.tailType;
+        const length = p.tailLength;
+        const spread = p.tailSpread;
+
+        const topPt = this.curveTop[this.curveTop.length - 1];
+        const bottomPt = this.curveBottom[this.curveBottom.length - 1];
+        const centerY = (topPt[1] + bottomPt[1]) / 2;
+        const backX = topPt[0];
+
+        if (tailType === 0) {
+            this._generateForkedTail(backX, centerY, topPt[1], bottomPt[1], length, spread);
+        } else if (tailType === 1) {
+            this._generateRoundedTail(backX, centerY, topPt[1], bottomPt[1], length);
+        } else {
+            this._generatePointedTail(backX, centerY, topPt[1], bottomPt[1], length);
+        }
+    }
+
+    _generateForkedTail(x, cy, yTop, yBottom, length, spread) {
+        const upper = [
+            [x, yTop],
+            [x + length * 0.3, yTop + (yTop - cy) * spread * 0.3],
+            [x + length * 0.7, yTop + (yTop - cy) * spread * 0.6],
+            [x + length, yTop + (yTop - cy) * spread],
+        ];
+
+        const lower = [
+            [x, yBottom],
+            [x + length * 0.3, yBottom + (yBottom - cy) * spread * 0.3],
+            [x + length * 0.7, yBottom + (yBottom - cy) * spread * 0.6],
+            [x + length, yBottom + (yBottom - cy) * spread],
+        ];
+
+        const upperSmooth = catmullRomSpline(upper, 8);
+        const lowerSmooth = catmullRomSpline(lower, 8);
+
+        // Center notch
+        const centerNotch = [[x + length * 0.4, cy]];
+
+        const tail = [...upperSmooth, ...centerNotch.reverse(), ...lowerSmooth.reverse()];
+        this.polylines.push(tail);
+
+        // Tail rays
+        const numRays = 5;
+        for (let i = 0; i < numRays; i++) {
+            const t = (i + 0.5) / numRays;
+            const startY = lerp(yTop, yBottom, t);
+            const endY = lerp(yTop + (yTop - cy) * spread, yBottom + (yBottom - cy) * spread, t);
+            this.polylines.push([[x, startY], [x + length * 0.9, endY]]);
+        }
+    }
+
+    _generateRoundedTail(x, cy, yTop, yBottom, length) {
+        const points = [];
+        const segments = 16;
+
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const angle = -PI / 2 + t * PI;
+            const px = x + length * Math.cos(angle) * 0.5 + length * 0.5;
+            const py = cy + (yTop - yBottom) * 0.5 * Math.sin(angle);
+            points.push([px, py]);
+        }
+
+        const tail = [[x, yTop], ...points, [x, yBottom]];
+        this.polylines.push(tail);
+    }
+
+    _generatePointedTail(x, cy, yTop, yBottom, length) {
+        const tail = [[x, yTop], [x + length, cy], [x, yBottom]];
+        const smooth = catmullRomSpline(tail, 8);
+        this.polylines.push(smooth);
+    }
+
+    _generateFinShape(attach, length, angle, widthRatio) {
+        const [cx, cy] = attach;
+        const endX = cx + length * Math.cos(angle);
+        const endY = cy + length * Math.sin(angle);
+
+        const perpAngle = angle + PI / 2;
+        const halfWidth = length * widthRatio * 0.5;
+
+        const fin = [
+            [cx, cy],
+            [cx + halfWidth * 0.3 * Math.cos(perpAngle), cy + halfWidth * 0.3 * Math.sin(perpAngle)],
+            [endX + halfWidth * Math.cos(perpAngle), endY + halfWidth * Math.sin(perpAngle)],
+            [endX, endY],
+            [endX - halfWidth * Math.cos(perpAngle), endY - halfWidth * Math.sin(perpAngle)],
+            [cx - halfWidth * 0.3 * Math.cos(perpAngle), cy - halfWidth * 0.3 * Math.sin(perpAngle)],
+            [cx, cy]
+        ];
+
+        return catmullRomSpline(fin, 6);
+    }
+
+    _generateHead() {
+        const p = this.params;
+
+        const headX = this.curveTop[0][0];
+        const centerY = (this.curveTop[0][1] + this.curveBottom[0][1]) / 2;
+
+        // Eye
+        const eyeOffsetX = p.bodyLength * p.eyePos;
+        const eyeX = headX + eyeOffsetX;
+        const eyeY = centerY + p.bodyHeight * 0.2;
+        const eyeSize = p.eyeSize;
+
+        // Eye outline
+        const eye = circlePoints(eyeX, eyeY, eyeSize, 16);
+        this.polylines.push(eye);
+
+        // Pupil
+        const pupil = circlePoints(eyeX + eyeSize * 0.15, eyeY, eyeSize * 0.5, 12);
+        this.polylines.push(pupil);
+
+        // Mouth
+        const mouthY = centerY - p.bodyHeight * 0.1;
+        const mouthLength = p.bodyLength * p.mouthSize;
+        const mouthOpen = p.mouthOpen;
+
+        if (mouthOpen > 0.1) {
+            const mouthTop = [[headX - 5, mouthY + mouthOpen * 10], [headX + mouthLength * 0.5, mouthY + mouthOpen * 5]];
+            const mouthBottom = [[headX - 5, mouthY - mouthOpen * 10], [headX + mouthLength * 0.5, mouthY - mouthOpen * 5]];
+            this.polylines.push(mouthTop);
+            this.polylines.push(mouthBottom);
+        } else {
+            const mouth = [[headX - 5, mouthY], [headX + mouthLength, mouthY + 2]];
+            this.polylines.push(mouth);
+        }
+
+        // Gill line
+        const gillX = headX + p.bodyLength * 0.15;
+        const gillTopY = centerY + p.bodyHeight * 0.6;
+        const gillBottomY = centerY - p.bodyHeight * 0.4;
+        const gill = [[gillX, gillTopY], [gillX + 5, centerY], [gillX, gillBottomY]];
+        const gillSmooth = catmullRomSpline(gill, 6);
+        this.polylines.push(gillSmooth);
+    }
 }
 
-function generateEye(params, rng) {
-    const x = params.bodyLength * params.headSize * 0.6;
-    const y = params.bodyLength * params.bodyHeight * 0.15;
-    const size = params.bodyLength * params.eyeSize;
-
-    const lines = [];
-
-    // Eye outline
-    const outline = [];
-    for (let i = 0; i <= 20; i++) {
-        const angle = (i / 20) * Math.PI * 2;
-        outline.push([x + Math.cos(angle) * size, y + Math.sin(angle) * size]);
-    }
-    lines.push(outline);
-
-    // Pupil
-    const pupil = [];
-    const pupilSize = size * 0.5;
-    for (let i = 0; i <= 12; i++) {
-        const angle = (i / 12) * Math.PI * 2;
-        pupil.push([x + Math.cos(angle) * pupilSize, y + Math.sin(angle) * pupilSize]);
-    }
-    lines.push(pupil);
-
-    return lines;
-}
+// ============================================================================
+// Main Fish Function
+// ============================================================================
 
 function generateFish(seed) {
     const rng = new SeededRandom(seed);
-    const perlin = new PerlinNoise(seed);
-    const params = generateFishParams(rng);
+    const params = generateParams(rng);
 
-    const polylines = [];
-
-    // Generate body outline
-    const body = generateFishBody(params, rng);
-    polylines.push(body);
-
-    // Generate tail
-    const tail = generateTail(params.bodyLength, params.bodyHeight, params, rng);
-    polylines.push(...tail);
-
-    // Generate dorsal fin
-    const dorsalX = params.bodyLength * params.dorsalStart;
-    const dorsalY = params.bodyLength * params.bodyHeight * 0.45;
-    const dorsalFin = generateFin(
-        dorsalX, dorsalY,
-        params.bodyLength * (params.dorsalEnd - params.dorsalStart),
-        params.bodyLength * params.dorsalHeight,
-        -Math.PI * 0.1,
-        rng
-    );
-    polylines.push(dorsalFin);
-
-    // Generate ventral fin
-    const ventralFin = generateFin(
-        params.bodyLength * 0.5, -params.bodyLength * params.bodyHeight * 0.4,
-        params.bodyLength * 0.15,
-        params.bodyLength * params.ventralHeight,
-        Math.PI * 0.7,
-        rng
-    );
-    polylines.push(ventralFin);
-
-    // Generate pectoral fin
-    const pectoralFin = generateFin(
-        params.bodyLength * 0.2, 0,
-        params.bodyLength * params.pectoralSize,
-        params.bodyLength * params.pectoralSize * 0.6,
-        Math.PI * 0.3,
-        rng
-    );
-    polylines.push(pectoralFin);
-
-    // Generate eye
-    const eye = generateEye(params, rng);
-    polylines.push(...eye);
-
-    // Generate textures
-    if (params.hasScales) {
-        const scales = generateScales(body, params, rng, perlin);
-        polylines.push(...scales);
-    }
-
-    if (params.hasStripes) {
-        const stripes = generateStripes(body, params, rng, perlin);
-        polylines.push(...stripes);
-    }
-
-    if (params.hasSpots) {
-        const spots = generateSpots(body, params, rng, perlin);
-        polylines.push(...spots);
-    }
+    const generator = new FishGenerator(params, seed);
+    const polylines = generator.generate();
 
     // Center the fish
-    const centerX = params.bodyLength / 2;
-    const centeredPolylines = polylines.map(line =>
-        line.map(p => [p[0] - centerX, p[1]])
-    );
+    const allPoints = polylines.flat();
+    if (allPoints.length > 0) {
+        const bbox = getBbox(allPoints);
+        const cx = (bbox[0] + bbox[2]) / 2;
+        const cy = (bbox[1] + bbox[3]) / 2;
 
-    return {
-        polylines: centeredPolylines,
-        params: params
-    };
+        return polylines.map(poly => poly.map(p => [p[0] - cx, p[1] - cy]));
+    }
+
+    return polylines;
 }
 
 // ============================================================================
@@ -553,7 +828,6 @@ export default {
 
             // Generate seed from name or use random
             if (fishName) {
-                // Hash the name to get a seed
                 seed = 0;
                 for (let i = 0; i < fishName.length; i++) {
                     seed = ((seed << 5) - seed + fishName.charCodeAt(i)) | 0;
@@ -570,10 +844,10 @@ export default {
             }
 
             // Generate the fish
-            const fish = generateFish(seed);
+            const polylines = generateFish(seed);
 
             // Convert polylines to the format expected by the client
-            const paths = fish.polylines.map(line =>
+            const paths = polylines.map(line =>
                 line.map(p => ({ x: p[0], y: p[1] }))
             );
 

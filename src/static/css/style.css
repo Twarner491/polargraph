@@ -1726,3 +1726,245 @@ html, body {
     font-size: 14px;
     font-family: var(--font-mono);
 }
+
+/* =========================================================================
+   SHEET MUSIC CUSTOM UI
+   ========================================================================= */
+
+.sheetmusic-ui {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* MIDI Upload Drop Zone */
+.midi-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--bg-light);
+}
+
+.midi-upload-zone:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.midi-upload-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.1);
+    border-style: solid;
+}
+
+.midi-upload-zone .upload-icon {
+    color: var(--text-mid);
+    margin-bottom: 8px;
+}
+
+.midi-upload-zone .upload-text {
+    font-size: 12px;
+    color: var(--text-mid);
+}
+
+/* Search Section */
+.midi-search-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.midi-search-section label {
+    font-size: 12px;
+    color: var(--text-mid);
+}
+
+.search-input-wrapper {
+    position: relative;
+}
+
+.midi-search-input {
+    width: 100%;
+    padding: 8px 10px;
+    padding-right: 30px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    background: var(--bg-light);
+    color: var(--text-dark);
+}
+
+.midi-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.search-spinner {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* Search Results */
+.midi-search-results {
+    max-height: 180px;
+    overflow-y: auto;
+    border-radius: 4px;
+}
+
+.search-result-item {
+    padding: 8px 10px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-light);
+    border: 1px solid var(--border);
+    border-top: none;
+    transition: background 0.15s ease;
+}
+
+.search-result-item:first-child {
+    border-top: 1px solid var(--border);
+    border-radius: 4px 4px 0 0;
+}
+
+.search-result-item:last-child {
+    border-radius: 0 0 4px 4px;
+}
+
+.search-result-item:only-child {
+    border-radius: 4px;
+}
+
+.search-result-item:hover {
+    background: var(--bg-hover);
+}
+
+.search-result-item .result-title {
+    font-size: 13px;
+    color: var(--text-dark);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.search-result-item .result-source {
+    font-size: 10px;
+    color: var(--text-mid);
+    background: var(--bg-mid);
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: 8px;
+}
+
+.search-no-results,
+.search-error,
+.search-loading {
+    padding: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-mid);
+    background: var(--bg-light);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.search-error {
+    color: var(--error);
+}
+
+.search-error a {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* Selected Song Display */
+.midi-selected {
+    background: var(--bg-light);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.midi-selected .selected-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.midi-selected .selected-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-dark);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.clear-selection-btn {
+    background: none;
+    border: none;
+    font-size: 18px;
+    color: var(--text-mid);
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.clear-selection-btn:hover {
+    color: var(--error);
+}
+
+/* Time Range Options */
+.time-range-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.time-range-options .form-group {
+    margin: 0;
+}
+
+.time-range-options .form-group label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-mid);
+    margin-bottom: 4px;
+}
+
+.time-range-options .form-group input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    background: var(--bg-mid);
+    color: var(--text-dark);
+}
+
+.time-range-options .hint {
+    display: block;
+    font-size: 10px;
+    color: var(--text-mid);
+    margin-top: 2px;
+}

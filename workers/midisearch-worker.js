@@ -81,40 +81,82 @@ async function handleSearch(data) {
 
     console.log(`Searching for: ${query}`);
 
+    // Try multiple sources
+    let results = [];
+    let lastError = null;
+
+    // Try BitMidi first
     try {
-        // Search BitMidi
-        const searchUrl = `https://bitmidi.com/search?q=${encodeURIComponent(query)}`;
-        const response = await fetch(searchUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (compatible; Polargraph/1.0)",
-                "Accept": "text/html"
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`BitMidi search failed: ${response.status}`);
-        }
-
-        const html = await response.text();
-        const results = parseSearchResults(html);
-
-        console.log(`Found ${results.length} results`);
-
-        return corsResponse(JSON.stringify({
-            success: true,
-            results: results
-        }));
-
+        const bitmidiResults = await searchBitMidi(query);
+        results = results.concat(bitmidiResults);
+        console.log(`BitMidi: Found ${bitmidiResults.length} results`);
     } catch (error) {
-        console.error("Search error:", error);
+        console.error("BitMidi search failed:", error.message);
+        lastError = error;
+    }
+
+    // Try FreeMidi as fallback/additional source
+    try {
+        const freemidiResults = await searchFreeMidi(query);
+        results = results.concat(freemidiResults);
+        console.log(`FreeMidi: Found ${freemidiResults.length} results`);
+    } catch (error) {
+        console.error("FreeMidi search failed:", error.message);
+        if (!lastError) lastError = error;
+    }
+
+    if (results.length === 0 && lastError) {
         return corsResponse(JSON.stringify({
             success: false,
-            error: `Search failed: ${error.message}`
+            error: `Search failed: ${lastError.message}`
         }), 500);
     }
+
+    console.log(`Total: Found ${results.length} results`);
+
+    return corsResponse(JSON.stringify({
+        success: true,
+        results: results
+    }));
 }
 
-function parseSearchResults(html) {
+async function searchBitMidi(query) {
+    const searchUrl = `https://bitmidi.com/search?q=${encodeURIComponent(query)}`;
+    const response = await fetch(searchUrl, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html"
+        },
+        signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+        throw new Error(`BitMidi returned ${response.status}`);
+    }
+
+    const html = await response.text();
+    return parseBitMidiResults(html);
+}
+
+async function searchFreeMidi(query) {
+    const searchUrl = `https://freemidi.org/search?q=${encodeURIComponent(query)}`;
+    const response = await fetch(searchUrl, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html"
+        },
+        signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+        throw new Error(`FreeMidi returned ${response.status}`);
+    }
+
+    const html = await response.text();
+    return parseFreeMidiResults(html);
+}
+
+function parseBitMidiResults(html) {
     const results = [];
 
     // Look for MIDI links in the HTML
@@ -166,6 +208,56 @@ function parseSearchResults(html) {
     return results;
 }
 
+function parseFreeMidiResults(html) {
+    const results = [];
+
+    // FreeMidi uses /download3-XXXXX-song-name format
+    // Pattern in card titles: <h5 class=card-title><a href=download3-9410-happy-birthday-stevie-wonder title="Happy Birthday">Happy Birthday</a></h5>
+    const downloadPattern = /<a[^>]*href="?\/?download3?-(\d+-[^"\s>]+)"?[^>]*(?:title="([^"]+)")?[^>]*>([^<]+)<\/a>/gi;
+    let match;
+
+    while ((match = downloadPattern.exec(html)) !== null && results.length < 10) {
+        const href = `/download3-${match[1]}`;
+        // Use title attribute if available, otherwise use link text
+        let title = (match[2] || match[3] || "").trim();
+
+        // Clean up title
+        title = title.replace(/\.mid$/i, "");
+
+        if (title.length < 3) continue;
+
+        const fullUrl = `https://freemidi.org${href}`;
+        if (!results.find(r => r.url === fullUrl)) {
+            results.push({
+                title: title,
+                url: fullUrl,
+                source: "FreeMidi"
+            });
+        }
+    }
+
+    // Also try getter links
+    const getterPattern = /<a[^>]*href="?\/?getter-([^"\s>]+)"?[^>]*>([^<]+)<\/a>/gi;
+
+    while ((match = getterPattern.exec(html)) !== null && results.length < 10) {
+        const href = `/getter-${match[1]}`;
+        let title = match[2].trim();
+
+        if (title.length < 3) continue;
+
+        const fullUrl = `https://freemidi.org${href}`;
+        if (!results.find(r => r.url === fullUrl)) {
+            results.push({
+                title: title,
+                url: fullUrl,
+                source: "FreeMidi"
+            });
+        }
+    }
+
+    return results;
+}
+
 async function handleDownload(data) {
     let midiUrl = (data.url || "").trim();
 
@@ -208,6 +300,41 @@ async function handleDownload(data) {
             }
         }
 
+        // For FreeMidi pages, we need to find the actual download link
+        if (midiUrl.includes("freemidi.org") && !midiUrl.endsWith(".mid")) {
+            console.log("Fetching FreeMidi page to find download link...");
+
+            const pageResponse = await fetch(midiUrl, {
+                headers,
+                redirect: "follow"
+            });
+            if (!pageResponse.ok) {
+                throw new Error(`Failed to fetch FreeMidi page: ${pageResponse.status}`);
+            }
+
+            const html = await pageResponse.text();
+
+            // FreeMidi uses /getter-XXX for actual downloads
+            // Look for the download button/link
+            let downloadMatch = html.match(/href="?\/?getter-(\d+)"?/i);
+            if (downloadMatch) {
+                midiUrl = `https://freemidi.org/getter-${downloadMatch[1]}`;
+                console.log(`Found getter link: ${midiUrl}`);
+            } else {
+                // Try direct .mid link
+                downloadMatch = html.match(/href="([^"]*\.mid[^"]*)"/i);
+                if (downloadMatch) {
+                    midiUrl = downloadMatch[1];
+                    if (!midiUrl.startsWith("http")) {
+                        midiUrl = `https://freemidi.org${midiUrl.startsWith("/") ? "" : "/"}${midiUrl}`;
+                    }
+                    console.log(`Found direct midi link: ${midiUrl}`);
+                } else {
+                    throw new Error("Could not find MIDI download link on page");
+                }
+            }
+        }
+
         // Download the MIDI file
         const response = await fetch(midiUrl, { headers });
         if (!response.ok) {
@@ -238,9 +365,17 @@ async function handleDownload(data) {
 
     } catch (error) {
         console.error("Download error:", error);
+
+        // Provide helpful message for FreeMidi which has anti-scraping protection
+        let errorMsg = `Download failed: ${error.message}`;
+        if (data.url && data.url.includes("freemidi.org")) {
+            errorMsg = "FreeMidi requires browser download. Please visit the URL directly to download the MIDI file, then use Upload mode.";
+        }
+
         return corsResponse(JSON.stringify({
             success: false,
-            error: `Download failed: ${error.message}`
+            error: errorMsg,
+            manual_url: data.url // Include URL so user can manually download
         }), 500);
     }
 }

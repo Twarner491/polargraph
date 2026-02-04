@@ -177,9 +177,71 @@ async function ensureSpaceAwake() {
 }
 
 /**
- * Call the Gradio API using queue-based approach (Gradio 5.x)
+ * Call the Gradio API using the /call endpoint (Gradio 5.x named endpoints)
  */
 async function callGradioAPI(inputs) {
+    // Try the /gradio_api/call/generate endpoint (Gradio 5.x named endpoints)
+    console.log("Calling /gradio_api/call/generate...");
+    const callResp = await fetch(`${DCODE_SPACE_URL}/gradio_api/call/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: inputs }),
+        signal: AbortSignal.timeout(30000)
+    });
+
+    if (!callResp.ok) {
+        const text = await callResp.text();
+        if (callResp.status === 503 || text.includes("sleeping") || text.includes("loading")) {
+            throw new Error("Space is sleeping or loading. Please try again in a moment.");
+        }
+        // Fall back to queue API if /call fails
+        console.log("Call API failed, trying queue API...");
+        return await callGradioQueueAPI(inputs);
+    }
+
+    const callResult = await callResp.json();
+    console.log("Got event_id:", callResult.event_id);
+
+    if (!callResult.event_id) {
+        throw new Error("No event_id returned from /call/generate");
+    }
+
+    // Poll for results
+    console.log("Fetching result...");
+    const resultResp = await fetch(`${DCODE_SPACE_URL}/gradio_api/call/generate/${callResult.event_id}`, {
+        headers: { "Accept": "text/event-stream" },
+        signal: AbortSignal.timeout(120000)
+    });
+
+    if (!resultResp.ok) {
+        throw new Error(`Result fetch failed: ${resultResp.status}`);
+    }
+
+    const sseText = await resultResp.text();
+    console.log("SSE response length:", sseText.length);
+
+    // Parse SSE to find the data line
+    for (const line of sseText.split('\n')) {
+        if (line.startsWith('data:')) {
+            try {
+                const data = JSON.parse(line.substring(5).trim());
+                if (Array.isArray(data) && data.length >= 1) {
+                    console.log("Success! Got result.");
+                    return { gcode: data[0], svg: data.length > 1 ? data[1] : null };
+                }
+            } catch (e) {
+                // Continue looking
+            }
+        }
+    }
+
+    throw new Error("No valid result in SSE response");
+}
+
+/**
+ * Fallback: Call the Gradio API using queue-based approach
+ */
+async function callGradioQueueAPI(inputs) {
     const sessionHash = generateSessionHash();
 
     // Step 1: Join the queue
