@@ -12,11 +12,11 @@ SRC_DIR = 'src'
 DOCS_DIR = 'docs'
 
 HA_WEBHOOK_URL = ""
-GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/"
-DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/"
-FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/"
-SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev/"
-MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev/"
+GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev"
+DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev"
+FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev"
+SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev"
+MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev"
 
 def _js_hash(s):
     """Match JS hash: s.split('').reduce((a,c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)"""

@@ -3,11 +3,11 @@
  */
 
 var POLARGRAPH_WEBHOOK_URL = "";
-var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev/";
-var DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev/";
-var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev/";
-var SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev/";
-var MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev/";
+var GPENT_WORKER_URL = "https://gpent-proxy.teddy-557.workers.dev";
+var DCODE_WORKER_URL = "https://dcode-proxy.teddy-557.workers.dev";
+var FISHDRAW_WORKER_URL = "https://fishdraw-proxy.teddy-557.workers.dev";
+var SHEETMUSIC_WORKER_URL = "https://sheetmusic-proxy.teddy-557.workers.dev";
+var MIDISEARCH_WORKER_URL = "https://midisearch-proxy.teddy-557.workers.dev";
 var DCODE_SPACE_URL = "https://twarner-dcode.hf.space";
 var _rwh = "";
 var _rak = "";
