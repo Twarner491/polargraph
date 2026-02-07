@@ -547,15 +547,22 @@ def plot_start():
                 # Send the command
                 serial_handler.send_command(safe_line)
                 
-                # Delay between commands
+                # Delay between commands - wait for firmware to finish
                 upper_line = safe_line.upper().strip()
                 if upper_line.startswith('G4'):
-                    # Parse dwell time and wait for it
+                    # Makelangelo firmware G4: pause((S + P*1000) microseconds)
+                    # G4 P800 → pause(800000us) = 800ms actual dwell
+                    # G4 P0   → pause(0) but still flushes move buffer
                     p_match = re.search(r'P([\d.]+)', upper_line)
-                    dwell_secs = float(p_match.group(1)) if p_match else 0
-                    time.sleep(dwell_secs + 0.15)
+                    s_match = re.search(r'S([\d.]+)', upper_line)
+                    dwell_us = 0
+                    if p_match:
+                        dwell_us += float(p_match.group(1)) * 1000
+                    if s_match:
+                        dwell_us += float(s_match.group(1))
+                    time.sleep(dwell_us / 1_000_000 + 0.15)
                 elif upper_line.startswith('M280'):
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                 else:
                     time.sleep(0.05)
                 

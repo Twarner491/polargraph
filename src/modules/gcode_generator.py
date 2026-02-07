@@ -25,45 +25,44 @@ class GCodeGenerator:
         gcode.append(f'G0 F{self.settings.get("feed_rate_travel")} ; Set travel speed')
         
         # Pen up to start
-        gcode.append(self.settings.get_pen_up_command())
-        
+        self._push_pen_up(gcode)
+
         last_point = None
         pen_is_up = True
-        
+
         for layer in turtle.layers:
             for line in layer.lines:
                 if len(line.points) < 2:
                     continue
-                
+
                 # Move to start of line (travel move)
                 start = line.points[0]
-                
+
                 if last_point is None or self._distance(last_point, start) > 0.1:
                     # Pen up if not already
                     if not pen_is_up:
-                        gcode.append(self.settings.get_pen_up_command())
+                        self._push_pen_up(gcode)
                         pen_is_up = True
-                    
+
                     # Travel to start
                     gcode.append(f'G0 X{start.x:.3f} Y{start.y:.3f} F{self.settings.get("feed_rate_travel")}')
-                
+
                 # Pen down
                 if pen_is_up:
-                    gcode.append(self.settings.get_pen_down_command())
+                    self._push_pen_down(gcode)
                     pen_is_up = False
-                
+
                 # Draw line segments
                 for i in range(1, len(line.points)):
                     point = line.points[i]
                     gcode.append(f'G1 X{point.x:.3f} Y{point.y:.3f} F{self.settings.get("feed_rate_draw")}')
-                
+
                 last_point = line.points[-1]
-        
-        # Footer - pen up, wait, then return home
+
+        # Footer - pen up, then return home
         gcode.append('')
         gcode.append('; End of drawing')
-        gcode.append(self.settings.get_pen_up_command())
-        gcode.append('G4 P0.5 ; Wait 500ms for pen to lift')
+        self._push_pen_up(gcode)
         gcode.append(f'G0 X0 Y0 F{self.settings.get("feed_rate_travel")} ; Return home')
         
         return gcode
@@ -162,6 +161,25 @@ class GCodeGenerator:
                     pass
         return params
     
+    def _push_pen_up(self, gcode: List[str]):
+        """Pen up: flush move buffer, actuate servo, dwell for servo travel.
+
+        Uses M280 (direct servo, bypasses motion planner) with G4 dwells.
+        NOTE: Makelangelo firmware G4 passes P*1000 to pause() which expects
+        microseconds, so P800 = 800*1000us = 800ms of actual dwell.
+        """
+        up_angle = self.settings.get('pen_angle_up')
+        gcode.append('G4 P0 ; Flush move buffer')
+        gcode.append(f'M280 P0 S{up_angle} ; Pen up')
+        gcode.append('G4 P800 ; Wait 800ms for servo')
+
+    def _push_pen_down(self, gcode: List[str]):
+        """Pen down: flush move buffer, actuate servo, dwell for servo travel."""
+        down_angle = self.settings.get('pen_angle_down')
+        gcode.append('G4 P0 ; Flush move buffer')
+        gcode.append(f'M280 P0 S{down_angle} ; Pen down')
+        gcode.append('G4 P800 ; Wait 800ms for servo')
+
     def _distance(self, p1: Point, p2: Point) -> float:
         """Calculate distance between two points."""
         dx = p2.x - p1.x

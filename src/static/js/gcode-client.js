@@ -365,18 +365,20 @@ class GCodeGenerator {
     
     // Push pen up command with proper synchronization
     _pushPenUp(gcode) {
-        // G4 P0 waits for move buffer to empty (ensures previous moves complete)
-        gcode.push('G4 P0 ; Wait for moves to complete');
+        // G4 P0 flushes the move buffer (ensures previous moves complete)
+        // G4 P800 dwells 800ms for servo to physically move
+        // NOTE: Makelangelo firmware G4 uses P in seconds * 1000 passed to
+        // pause() which expects microseconds, so P800 = 800*1000 = 800000us = 800ms
+        gcode.push('G4 P0 ; Flush move buffer');
         gcode.push(`M280 P0 S${this.settings.pen_angle_up} ; Pen up`);
-        gcode.push('G4 P0.8 ; Wait 800ms for servo to fully lift');
+        gcode.push('G4 P800 ; Wait 800ms for servo');
     }
-    
+
     // Push pen down command with proper synchronization
     _pushPenDown(gcode) {
-        // G4 P0 waits for move buffer to empty (ensures previous moves complete)
-        gcode.push('G4 P0 ; Wait for moves to complete');
+        gcode.push('G4 P0 ; Flush move buffer');
         gcode.push(`M280 P0 S${this.settings.pen_angle_down} ; Pen down`);
-        gcode.push('G4 P0.8 ; Wait 800ms for servo to fully lower');
+        gcode.push('G4 P800 ; Wait 800ms for servo');
     }
     
     getPenUpCommand() {
