@@ -2348,12 +2348,14 @@ async function emergencyStop() {
     drawCanvas();
 }
 
-function jog(direction) {
+let _jogBusy = false;
+let _jogPending = null;  // accumulates clicks while a jog is in flight
+async function jog(direction) {
     if (!state.connected) return;
-    
+
     const d = state.jogDistance;
     let x = 0, y = 0;
-    
+
     // Note: X/Y are swapped for polargraph coordinate system
     // UI "up/down" controls X, UI "left/right" controls Y
     switch (direction) {
@@ -2365,14 +2367,35 @@ function jog(direction) {
         case 'up-right': x = d; y = d; break;
         case 'down-left': x = -d; y = -d; break;
         case 'down-right': x = -d; y = d; break;
-        case 'center': 
+        case 'center':
+            if (_jogBusy) return;
+            _jogBusy = true;
             logConsole('Goto center (0, 0)', 'msg-out');
-            sendCommand('/api/goto', 'POST', { x: 0, y: 0 });
+            await sendCommand('/api/goto', 'POST', { x: 0, y: 0 });
+            _jogBusy = false;
             return;
     }
-    
+
+    // If a jog is already in flight, accumulate into a pending move
+    if (_jogBusy) {
+        if (!_jogPending) _jogPending = { x: 0, y: 0 };
+        _jogPending.x += x;
+        _jogPending.y += y;
+        return;
+    }
+
+    _jogBusy = true;
     logConsole(`Jog X:${x} Y:${y}`, 'msg-out');
-    sendCommand('/api/jog', 'POST', { x, y });
+    await sendCommand('/api/jog', 'POST', { x, y });
+
+    // Drain any accumulated clicks as a single combined move
+    while (_jogPending) {
+        const p = _jogPending;
+        _jogPending = null;
+        logConsole(`Jog X:${p.x} Y:${p.y}`, 'msg-out');
+        await sendCommand('/api/jog', 'POST', p);
+    }
+    _jogBusy = false;
 }
 
 // ============================================================================
@@ -5728,14 +5751,16 @@ function showCalibrationStep(step) {
     calibration.step = step;
 }
 
-function calibrationJog(direction) {
+let _calibJogBusy = false;
+let _calibJogPending = null;
+async function calibrationJog(direction) {
     // Get step size from the current step's select
-    const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`) 
+    const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`)
                     || document.getElementById('calibJogStep');
     const stepSize = parseFloat(stepSelect?.value || 10);
-    
+
     let x = 0, y = 0;
-    
+
     // Note: X/Y are swapped for polargraph coordinate system
     // UI "up/down" controls X, UI "left/right" controls Y
     switch (direction) {
@@ -5748,16 +5773,29 @@ function calibrationJog(direction) {
         case 'down-left': x = -stepSize; y = -stepSize; break;
         case 'down-right': x = -stepSize; y = stepSize; break;
     }
-    
-    // Track cumulative offset from center
+
+    // Always track offset immediately for responsive UI
     calibration.currentOffset.x += x;
     calibration.currentOffset.y += y;
-    
-    // Update distance display
     updateCalibrationDistance();
-    
-    // Send jog command (fire and forget for responsiveness)
-    sendCommand('/api/jog', 'POST', { x, y });
+
+    // Accumulate if a jog is already in flight
+    if (_calibJogBusy) {
+        if (!_calibJogPending) _calibJogPending = { x: 0, y: 0 };
+        _calibJogPending.x += x;
+        _calibJogPending.y += y;
+        return;
+    }
+
+    _calibJogBusy = true;
+    await sendCommand('/api/jog', 'POST', { x, y });
+
+    while (_calibJogPending) {
+        const p = _calibJogPending;
+        _calibJogPending = null;
+        await sendCommand('/api/jog', 'POST', p);
+    }
+    _calibJogBusy = false;
 }
 
 function updateCalibrationDistance() {
