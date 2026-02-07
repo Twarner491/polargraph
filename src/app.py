@@ -543,16 +543,17 @@ def plot_start():
             if line.strip() and not line.strip().startswith(';'):
                 # Limit feedrates - ultra conservative for polargraph reliability
                 safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
-                
-                # Send the command
-                serial_handler.send_command(safe_line)
-                
-                # Delay between commands - wait for firmware to finish
+
+                # Send with flow control - G0/G1 waits for firmware OK,
+                # other commands (M280, G4) return immediately
+                serial_handler.send_streaming(safe_line)
+
+                # For non-move commands, add time-based delays since
+                # the firmware doesn't send OK for these
                 upper_line = safe_line.upper().strip()
                 if upper_line.startswith('G4'):
                     # Makelangelo firmware G4: pause((S + P*1000) microseconds)
                     # G4 P800 → pause(800000us) = 800ms actual dwell
-                    # G4 P0   → pause(0) but still flushes move buffer
                     p_match = re.search(r'P([\d.]+)', upper_line)
                     s_match = re.search(r'S([\d.]+)', upper_line)
                     dwell_us = 0
@@ -563,9 +564,7 @@ def plot_start():
                     time.sleep(dwell_us / 1_000_000 + 0.15)
                 elif upper_line.startswith('M280'):
                     time.sleep(0.05)
-                else:
-                    time.sleep(0.05)
-                
+
                 update_gondola_position(safe_line)
             
             # Save progress and emit updates every 100 lines
