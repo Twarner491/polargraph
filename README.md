@@ -44,6 +44,12 @@ All project CAD may be found in the [hardware](https://github.com/Twarner491/pol
 
 *Total: ~$595.82*
 
+### Kits
+
+I offer a kit for the polargraph with electronics and neccessary hardware. I put up a store for some of my open-source projects and will soon be able to offer kits cheaper than buying all the components individually, once I start buying in bulk. Check it out!
+
+- [GPENT kit](https://theodore.net/store/polargraph/)
+
 ---
 
 **Raspberry Pi Setup**
