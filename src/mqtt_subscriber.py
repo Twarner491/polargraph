@@ -142,6 +142,15 @@ def handle_command(data):
         'pen_change': '/api/pen_change',
         'save_settings': '/api/settings',
         'get_settings': '/api/settings',
+        'calibrate_spacing': '/api/calibrate/spacing/solve',
+        'calibrate_apply': '/api/calibrate/apply',
+        'pen_pressure_test': '/api/calibrate/pen_pressure/test',
+        'pen_pressure_save': '/api/calibrate/pen_pressure/save',
+        'pen_eject': '/api/pen/eject',
+        'pen_retract': '/api/pen/retract',
+        'pen_select_color': '/api/pen/select_color',
+        'motion_test': '/api/calibrate/motion/test',
+        'motion_save': '/api/calibrate/motion/save',
     }
     
     if cmd in endpoints:
@@ -163,6 +172,32 @@ def handle_command(data):
                 payload = {'x': data.get('x', 0), 'y': data.get('y', 0)}
             elif cmd == 'gcode':
                 payload = {'command': data.get('gcode', '')}
+            elif cmd == 'calibrate_spacing':
+                payload = {'commanded_mm': data.get('commanded_mm'), 'measured_mm': data.get('measured_mm')}
+            elif cmd == 'pen_pressure_test':
+                payload = {'down_angle': data.get('down_angle')}
+                if 'x' in data:
+                    payload['x'] = data.get('x')
+                if 'y' in data:
+                    payload['y'] = data.get('y')
+            elif cmd == 'pen_pressure_save':
+                payload = {'color': data.get('color'), 'down_angle': data.get('down_angle')}
+            elif cmd == 'pen_select_color':
+                payload = {'color': data.get('color')}
+            elif cmd == 'motion_test':
+                payload = {
+                    'max_step_rate': data.get('max_step_rate'),
+                    'accel': data.get('accel'),
+                    'jerk': data.get('jerk'),
+                    'span_mm': data.get('span_mm'),
+                    'cycles': data.get('cycles'),
+                }
+            elif cmd == 'motion_save':
+                payload = {
+                    'max_step_rate': data.get('max_step_rate'),
+                    'accel': data.get('accel'),
+                    'jerk': data.get('jerk'),
+                }
             elif cmd == 'start':
                 # Include gcode if provided, and home setting
                 if 'gcode' in data:

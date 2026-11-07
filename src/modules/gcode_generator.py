@@ -41,6 +41,7 @@ class GCodeGenerator:
         gcode.append('G90 ; Absolute positioning')
         gcode.append(f'G0 F{feed_travel} ; Set travel speed')
         gcode.append(f'G1 F{feed_draw} ; Set draw speed')
+        gcode.append(f'G1 A{self.settings.get("accel"):.0f} ; Set acceleration (modal, mm/s^2)')
 
         # Pen up to start
         self._push_pen_up(gcode)
@@ -88,6 +89,74 @@ class GCodeGenerator:
         gcode.append(f'G0 X0 Y0 ; Return home')
 
         return gcode
+
+    def generate_calibration_pattern(self, size: float, cx: float = 0.0, cy: float = 0.0,
+                                     down_angle: float = None) -> List[str]:
+        """A caliper-measurable test artifact for draw-and-measure calibration:
+        a `size` x `size` square with a centered cross. The user measures the
+        horizontal span, vertical span, and the two diagonals with calipers to
+        recover X/Y scale and squareness at this point on the page.
+
+        cx, cy place the artifact - use the page center and each edge region for
+        multi-point precision calibration. size should fit the user's calipers.
+        """
+        if down_angle is None:
+            down_angle = self.settings.get('pen_angle_down')
+        feed_travel = self.settings.get('feed_rate_travel')
+        feed_draw = self.settings.get('feed_rate_draw')
+        h = size / 2.0
+
+        g = [
+            f'; Calibration pattern: {size:.1f}mm square + cross at ({cx:.1f}, {cy:.1f})',
+            'G21', 'G90',
+            f'G0 F{feed_travel}', f'G1 F{feed_draw}', f'G1 A{self.settings.get("accel"):.0f}',
+        ]
+        self._push_pen_up(g)
+
+        # Square
+        g.append(f'G0 X{cx - h:.3f} Y{cy - h:.3f}')
+        self._push_pen_down_angle(g, down_angle)
+        g.append(f'G1 X{cx + h:.3f} Y{cy - h:.3f}')
+        g.append(f'G1 X{cx + h:.3f} Y{cy + h:.3f}')
+        g.append(f'G1 X{cx - h:.3f} Y{cy + h:.3f}')
+        g.append(f'G1 X{cx - h:.3f} Y{cy - h:.3f}')
+        self._push_pen_up(g)
+
+        # Horizontal arm of the cross
+        g.append(f'G0 X{cx - h:.3f} Y{cy:.3f}')
+        self._push_pen_down_angle(g, down_angle)
+        g.append(f'G1 X{cx + h:.3f} Y{cy:.3f}')
+        self._push_pen_up(g)
+
+        # Vertical arm of the cross
+        g.append(f'G0 X{cx:.3f} Y{cy - h:.3f}')
+        self._push_pen_down_angle(g, down_angle)
+        g.append(f'G1 X{cx:.3f} Y{cy + h:.3f}')
+        self._push_pen_up(g)
+
+        return g
+
+    def generate_pressure_test_line(self, down_angle: float, cx: float = 0.0,
+                                    cy: float = 0.0, length: float = 40.0) -> List[str]:
+        """A single short line drawn at an explicit pen-down angle, for pen
+        pressure ('first layer') calibration. Each pass nudges the angle deeper
+        until the drawn line is consistent end to end.
+        """
+        feed_travel = self.settings.get('feed_rate_travel')
+        feed_draw = self.settings.get('feed_rate_draw')
+        h = length / 2.0
+
+        g = [
+            f'; Pressure test line at servo angle {down_angle}',
+            'G21', 'G90',
+            f'G0 F{feed_travel}', f'G1 F{feed_draw}', f'G1 A{self.settings.get("accel"):.0f}',
+        ]
+        self._push_pen_up(g)
+        g.append(f'G0 X{cx - h:.3f} Y{cy:.3f}')
+        self._push_pen_down_angle(g, down_angle)
+        g.append(f'G1 X{cx + h:.3f} Y{cy:.3f}')
+        self._push_pen_up(g)
+        return g
 
     def gcode_to_turtle(self, gcode: List[str]) -> Turtle:
         """Parse G-code back into a Turtle for preview.
@@ -320,10 +389,13 @@ class GCodeGenerator:
         gcode.append('G4 P800 ; Wait for servo')
 
     def _push_pen_down(self, gcode: List[str]):
-        """Pen down: flush move buffer, actuate servo, dwell for servo travel."""
-        down_angle = self.settings.get('pen_angle_down')
+        """Pen down at the default pen-down angle."""
+        self._push_pen_down_angle(gcode, self.settings.get('pen_angle_down'))
+
+    def _push_pen_down_angle(self, gcode: List[str], angle: float):
+        """Pen down at an explicit servo angle (used for per-color pressure)."""
         gcode.append('G4 P0 ; Flush move buffer')
-        gcode.append(f'M280 P0 S{down_angle} ; Pen down')
+        gcode.append(f'M280 P0 S{angle} ; Pen down')
         gcode.append('G4 P800 ; Wait for servo')
 
     def _distance(self, p1: Point, p2: Point) -> float:

@@ -6,15 +6,18 @@ Replicates Makelangelo software functionality via a web interface.
 
 import os
 import json
+import math
 import re
 import threading
 import time
+import subprocess
+import sys
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
 
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, g
 from flask_socketio import SocketIO, emit
 
 # Import modules
@@ -25,6 +28,8 @@ from modules.turtle_generator import TurtleGenerator
 from modules.file_handler import FileHandler
 from modules.plotter_settings import PlotterSettings
 from modules import gpent
+from modules.calibration_session import CalibrationSession
+from modules.calibration_geometry import fit_geometry
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
@@ -50,6 +55,140 @@ current_gcode = []
 is_plotting = False
 is_paused = False
 current_line = 0
+
+calibration_session = CalibrationSession(serial_handler, plotter_settings, lambda: is_plotting)
+_machine_request_lock = threading.RLock()
+# Calibration holds exclusive ownership through physical reference confirmation.
+_MACHINE_ROUTES = {'home', 'jog', 'goto', 'pen_control', 'pen_change', 'motor_control',
+    'send_gcode', 'plot_start', 'plot_resume_from', 'plot_goto_line', 'update_settings',
+    'calibrate_apply', 'calibrate_spacing_solve', 'calibrate_pen_pressure_test',
+    'calibrate_pen_pressure_save', 'pen_eject', 'pen_retract', 'pen_select_color',
+    'calibrate_motion_test', 'calibrate_motion_save', 'motion_autotune',
+    'calibration_reference', 'calibration_finish', 'calibration_capture', 'calibration_target', 'connect', 'plot_rewind', 'get_position'}
+
+@app.before_request
+def reserve_machine_request():
+    if request.endpoint not in _MACHINE_ROUTES:
+        return None
+    if not _machine_request_lock.acquire(blocking=False):
+        return jsonify(success=False, error='Another machine request is running.'), 409
+    g.machine_lock_held = True
+    recovery = request.endpoint in {'calibration_reference', 'calibration_finish'} or (request.endpoint == 'connect' and not calibration_session.status()['running'])
+    if calibration_session.blocks_motion and not recovery:
+        return jsonify(success=False, error='Setup owns the controller or was interrupted. Open Setup wizard to recover.'), 409
+    if is_plotting:
+        return jsonify(success=False, error='Stop the current plot before changing the machine.'), 409
+
+@app.teardown_request
+def release_machine_request(error=None):
+    if getattr(g, 'machine_lock_held', False):
+        g.machine_lock_held = False
+        _machine_request_lock.release()
+
+@app.route('/api/calibration/preview', methods=['POST'])
+def calibration_preview():
+    try:
+        return jsonify(success=True, **calibration_session.preview(request.get_json() or {}))
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+@app.route('/api/calibration/status')
+def calibration_status():
+    return jsonify(success=True, **calibration_session.status())
+
+@app.route('/api/calibration/reference', methods=['POST'])
+def calibration_reference():
+    try:
+        calibration_session.start_reference(request.get_json() or {})
+        return jsonify(success=True, **calibration_session.status()), 202
+    except (ValueError, RuntimeError, OSError) as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+@app.route('/api/calibration/finish', methods=['POST'])
+def calibration_finish():
+    try:
+        return jsonify(success=True, profile=calibration_session.finish(request.get_json() or {}))
+    except (ValueError, RuntimeError, OSError) as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+def capture_calibration_position():
+    """Read settled pulses and validate the saved geometry under operation lock."""
+    if not plotter_settings.get('calibrated'):
+        raise RuntimeError('Complete Setup wizard before collecting targets.')
+    if not serial_handler.is_connected():
+        raise RuntimeError('Connect to the local controller before collecting targets.')
+    require_completion_protocol()
+    raw = serial_handler.query('M114 S1', 'BELT_STEPS ', timeout=5)
+    match = re.fullmatch(r'BELT_STEPS L(-?\d+) R(-?\d+) E(\d+)', raw or '')
+    if not match:
+        raise RuntimeError('No valid pulse counter report.')
+    current = calibration_session._read_geometry()
+    profile = plotter_settings.get('calibration_profile') or {}
+    expected = profile.get('persisted_controller_readback')
+    if expected is None or not calibration_session._geometry_matches(current, expected):
+        raise RuntimeError('Controller geometry differs from the saved reference. Repeat setup.')
+    absolute_left, absolute_right, epoch = map(int, match.groups())
+    home_steps = [math.floor(belt * spu + .5) for belt, spu in zip(current['belts'], current['steps'])]
+    return dict(left_steps=absolute_left-home_steps[0], right_steps=absolute_right-home_steps[1],
+                reference_epoch=epoch, session_id=profile.get('session_id'),
+                connection_id=serial_handler.connection_id, pulse_counts_only=True)
+
+
+def calibration_reference_key(capture):
+    return f"{capture['session_id']}:{capture['connection_id']}:{capture['reference_epoch']}"
+
+
+@app.route('/api/calibration/capture', methods=['POST'])
+def calibration_capture():
+    """Record settled pulse counters for one independently measured target."""
+    try:
+        with serial_handler._operation_lock:
+            result = capture_calibration_position()
+        return jsonify(success=True, **result,
+                       note='Motor pulses do not detect belt slip. Measure the physical pen axis independently.')
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+
+@app.route('/api/calibration/target', methods=['POST'])
+def calibration_target():
+    """One explicit pen-free move and pulse capture, with no automatic retries."""
+    try:
+        data = request.get_json() or {}
+        if not isinstance(data, dict) or data.get('paths_clear') is not True:
+            raise ValueError('Confirm the pen is removed and the paths are clear.')
+        for key in ('x', 'y'):
+            if isinstance(data.get(key), bool) or not isinstance(data.get(key), (int, float)) or not math.isfinite(data[key]):
+                raise ValueError('Supply finite numeric target X and Y in millimeters.')
+        expected = data.get('expected_reference')
+        if not isinstance(expected, str) or not expected:
+            raise ValueError('Prepare a measurement set before moving to its targets.')
+        with serial_handler._operation_lock:
+            before = capture_calibration_position()
+            if calibration_reference_key(before) != expected:
+                raise RuntimeError('The home reference changed. Start a fresh measurement set.')
+            target = checked_position_move({'x': data['x'], 'y': data['y'], 'feedrate': 1200}, acceleration=200)
+            result = capture_calibration_position()
+            if calibration_reference_key(result) != expected:
+                raise RuntimeError('The home reference changed during the move. Discard this measurement set.')
+        return jsonify(success=True, completed=True, target=target, **result)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+
+@app.route('/api/calibration/fit', methods=['POST'])
+def calibration_fit():
+    data = request.get_json() or {}
+    try:
+        if not isinstance(data, dict):
+            raise ValueError('Calibration data must be an object.')
+        if len(data.get('samples', [])) > 100 or len(data.get('validation_samples', [])) > 100:
+            raise ValueError('Use at most 100 fitting and 100 validation targets.')
+        result = fit_geometry(data.get('samples'), data.get('initial'),
+                              data.get('fit_parameters'), data.get('validation_samples'))
+        return jsonify(success=True, result=result, applied=False)
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
 
 # Progress file for resume capability
 PROGRESS_FILE = '/tmp/polargraph_progress.json'
@@ -101,6 +240,10 @@ def load_gcode_backup():
 
 def serial_callback(message):
     """Callback for serial messages from the plotter."""
+    # Preserve the homing evidence even if no browser console is connected.
+    if message.startswith(('Error:', 'ENDSTOP', 'LIMIT ', 'HOMESTEPS ',
+                           'HOME_REFERENCE ', 'HOMING_GLITCH ', 'HOMING_FILTER ', 'Find Home')):
+        print(f'[CONTROLLER] {message}', flush=True)
     # Emit to websocket for UI display
     socketio.emit('serial_message', {'message': message})
 
@@ -252,6 +395,10 @@ def connect():
     data = request.json
     port = data.get('port')
     baud = data.get('baud', 57600)  # Match firmware
+
+    if (serial_handler.is_connected() and serial_handler.current_port == port
+            and serial_handler.serial.baudrate == baud):
+        return jsonify({'success': True, 'port': port})
     
     success = serial_handler.connect(port, baud, serial_callback)
     
@@ -260,13 +407,14 @@ def connect():
         time.sleep(0.5)  # Wait for firmware
         serial_handler.send_command('M100')  # Get info
         time.sleep(0.3)
-        serial_handler.send_command('G92 X0 Y0 Z90')  # Reset position
+        # Connecting does not establish a physical origin. Home or run Setup wizard.
     
     return jsonify({'success': success, 'port': port})
 
 
 @app.route('/api/disconnect', methods=['POST'])
 def disconnect():
+    calibration_session.cancel()
     """Disconnect from serial port."""
     serial_handler.disconnect()
     return jsonify({'success': True})
@@ -285,65 +433,85 @@ def connection_status():
 # Routes - Plotter Control
 # ============================================================================
 
+def require_completion_protocol(*, recovery=False):
+    reply = serial_handler.query('M100', 'CALIBRATION_PROTOCOL ', timeout=5)
+    if reply != 'CALIBRATION_PROTOCOL 1':
+        raise RuntimeError('Update the controller to calibration protocol 1 before using this host version.')
+    if not serial_handler.wait_until_idle(timeout=15, **({'allow_reference_recovery': True} if recovery else {})):
+        raise RuntimeError('Controller position or motion completion is unverified. Run Setup wizard.')
+
+
+def checked_send(command, timeout=10):
+    if not serial_handler.send_streaming(command, timeout=timeout):
+        raise RuntimeError(f'Controller did not accept {command}.')
+
+
+def verified_home():
+    require_completion_protocol(recovery=True)
+    checked_send(f"M280 P0 S{plotter_settings.get('pen_angle_up')}")
+    checked_send('M17')
+    checked_send(f"G1 F{plotter_settings.get('feed_rate_travel')} A{plotter_settings.get('accel')}")
+    if serial_handler.send_capture('G28', 'HOMESTEPS ', 'Done.', timeout=150) is None:
+        raise RuntimeError('Homing failed or timed out.')
+    if not serial_handler.wait_until_idle(timeout=120):
+        raise RuntimeError('Homing return did not finish.')
+
+
 @app.route('/api/home', methods=['POST'])
 def home():
-    """Homing sequence for polargraph with smooth movement."""
     if not serial_handler.is_connected():
-        return jsonify({'success': False, 'error': 'Not connected'})
-    
-    # Pen up first for safety
-    serial_handler.send_command('M280 P0 S90')
-    time.sleep(0.3)
-    
-    # Enable motors
-    serial_handler.send_command('M17')
-    time.sleep(0.2)
-    
-    # Use firmware's G28 which implements polargraph homing:
-    # - Reels in both belts until endstops are hit
-    # - Backs off and slowly re-approaches for precision
-    # - Calculates position from calibration values
-    # - Moves to home position (center top of work area)
-    serial_handler.send_command('G28')
-    
-    return jsonify({'success': True})
+        return jsonify(success=False, error='Not connected'), 409
+    try:
+        with serial_handler._operation_lock:
+            verified_home()
+        return jsonify(success=True, completed=True)
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+
+def checked_position_move(data, relative=False, acceleration=None):
+    require_completion_protocol()
+    x, y = float(data.get('x', 0)), float(data.get('y', 0))
+    feed = float(data.get('feedrate', plotter_settings.get('feed_rate_travel')))
+    if not all(math.isfinite(v) for v in (x, y, feed)) or not 1 <= feed <= 3000:
+        raise ValueError('Use finite coordinates and a feed rate from 1 to 3000 mm/min.')
+    if relative:
+        position = _parse_m114(serial_handler.query('M114', 'M114 ', timeout=5))
+        if not position or 'y' not in position:
+            raise RuntimeError('No verified starting position.')
+        x, y = x + position['x'], y + position['y']
+    bounds = plotter_settings.get_work_area()
+    if not bounds['left'] <= x <= bounds['right'] or not bounds['bottom'] <= y <= bounds['top']:
+        raise ValueError('Target is outside the configured drawing area.')
+    checked_send('M17')
+    checked_send('G90')
+    accel = plotter_settings.get('accel') if acceleration is None else acceleration
+    # The firmware ACK follows segment enqueueing and can arrive near the end
+    # of a long move. Completion still requires the separate M400 barrier.
+    checked_send(f"G0 X{x:.4f} Y{y:.4f} F{feed:.2f} A{accel}", timeout=120)
+    if not serial_handler.wait_until_idle(timeout=120):
+        raise RuntimeError('Move completion was not confirmed. Position is unverified.')
+    return {'x': x, 'y': y}
 
 
 @app.route('/api/jog', methods=['POST'])
 def jog():
-    """Jog the plotter by a relative amount in Cartesian coordinates.
-    The firmware handles polargraph IK internally.
-    """
-    if not serial_handler.is_connected():
-        return jsonify({'success': False, 'error': 'Not connected'})
-    
-    data = request.json
-    x = data.get('x', 0)
-    y = data.get('y', 0)
-    feedrate = data.get('feedrate', 80)
-    
-    # Enable motors and do relative move
-    serial_handler.send_command('M17')
-    serial_handler.send_command('G91')
-    serial_handler.send_command(f'G0 X{x} Y{y} F{feedrate}')
-    serial_handler.send_command('G90')
-    
-    return jsonify({'success': True})
+    try:
+        with serial_handler._operation_lock:
+            target = checked_position_move(request.get_json() or {}, relative=True)
+        return jsonify(success=True, completed=True, target=target)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        return jsonify(success=False, error=str(exc)), 409
 
 
 @app.route('/api/goto', methods=['POST'])
 def goto():
-    """Move to an absolute position."""
-    if not serial_handler.is_connected():
-        return jsonify({'success': False, 'error': 'Not connected'})
-    
-    data = request.json
-    x = data.get('x', 0)
-    y = data.get('y', 0)
-    feedrate = data.get('feedrate', plotter_settings.get('feed_rate_travel'))
-    
-    serial_handler.send_command(f'G0 X{x} Y{y} F{feedrate}')
-    return jsonify({'success': True})
+    try:
+        with serial_handler._operation_lock:
+            target = checked_position_move(request.get_json() or {})
+        return jsonify(success=True, completed=True, target=target)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        return jsonify(success=False, error=str(exc)), 409
 
 
 @app.route('/api/pen', methods=['POST'])
@@ -354,16 +522,16 @@ def pen_control():
     
     data = request.json
     action = data.get('action', 'up')
-    
-    # Get angles from settings or use defaults
-    up_angle = plotter_settings.get('pen_up_angle', 120)
-    down_angle = plotter_settings.get('pen_down_angle', 40)
-    
+
+    # Pen up is global; pen down uses the active color's pressure profile.
+    up_angle = plotter_settings.get('pen_angle_up')
+    down_angle = plotter_settings.get_pen_down_angle(plotter_settings.get('active_color'))
+
     target_angle = up_angle if action == 'up' else down_angle
-    
+
     # M280 P0 S<angle> directly controls servo 0, bypasses planner
     serial_handler.send_command(f'M280 P0 S{target_angle}')
-    
+
     return jsonify({'success': True, 'action': action, 'angle': target_angle})
 
 
@@ -374,7 +542,7 @@ def pen_change():
         return jsonify({'success': False, 'error': 'Not connected'})
     
     # Pen up first using direct servo control
-    serial_handler.send_command('M280 P0 S90')
+    serial_handler.send_command(f"M280 P0 S{plotter_settings.get('pen_angle_up')}")
     time.sleep(0.5)
     
     # Enable motors
@@ -382,8 +550,8 @@ def pen_change():
     time.sleep(0.2)
     
     # Get work area from settings
-    left = plotter_settings.get('work_area_left', -420)
-    top = plotter_settings.get('work_area_top', 590)
+    left = plotter_settings.get('limit_left')
+    top = plotter_settings.get('limit_top')
     
     # Move to top-left corner of work area (add 50mm margin from edges)
     target_x = left + 50
@@ -414,30 +582,13 @@ def motor_control():
 
 @app.route('/api/emergency_stop', methods=['POST'])
 def emergency_stop():
-    """Emergency stop - HIGHEST PRIORITY, stops everything immediately."""
     global is_plotting, is_paused
     is_plotting = False
     is_paused = False
-    
-    if serial_handler.is_connected():
-        # Send emergency stop commands as raw bytes to bypass any buffering
-        # M112 is the universal emergency stop G-code
-        for _ in range(5):
-            serial_handler.send_raw('M112')
-        time.sleep(0.1)
-        
-        # Also disable motors
-        serial_handler.send_raw('M18')
-        
-        # Raise pen for safety
-        serial_handler.send_raw('G0 Z90 F1000')
-        
-        # Flush serial buffers
-        if serial_handler.serial:
-            serial_handler.serial.reset_input_buffer()
-            serial_handler.serial.reset_output_buffer()
-    
-    return jsonify({'success': True})
+    calibration_session.cancel()
+    sent = serial_handler.request_emergency_stop()
+    return jsonify(success=sent, stopped_verified=False,
+                   message='Stop requested. If motion continues, cut power. Homing cannot process serial stop commands.')
 
 
 @app.route('/api/send_gcode', methods=['POST'])
@@ -458,6 +609,31 @@ def send_gcode():
 # ============================================================================
 # Routes - Plotting
 # ============================================================================
+
+def fail_plot(message):
+    global is_plotting, is_paused
+    is_plotting = False
+    is_paused = False
+    save_progress()
+    serial_handler.request_emergency_stop()
+    socketio.emit('plot_error', {'error': message + ' Stop requested; verify the machine has stopped.'})
+
+
+def finish_plot():
+    global is_plotting
+    if not serial_handler.wait_until_idle(timeout=120):
+        fail_plot('Controller did not confirm completion. Inspect the machine before continuing.')
+        return
+    if not serial_handler.send_streaming(f"M280 P0 S{plotter_settings.get('pen_angle_up')}"):
+        fail_plot('Pen-up command was not accepted.')
+        return
+    if not serial_handler.wait_until_idle(timeout=15):
+        fail_plot('Final pen-up command was not confirmed.')
+        return
+    is_plotting = False
+    save_progress()
+    socketio.emit('plot_complete', {'message': 'Plot complete.'})
+
 
 @app.route('/api/plot/start', methods=['POST'])
 def plot_start():
@@ -480,6 +656,11 @@ def plot_start():
     if not current_gcode:
         return jsonify({'success': False, 'error': 'No G-code loaded'})
     
+    try:
+        require_completion_protocol(recovery=bool(data.get('home', True)))
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
     home_before_plot = data.get('home', True)  # Default to True for safety
     
     is_plotting = True
@@ -491,26 +672,17 @@ def plot_start():
     print(f"[PLOT] Received {len(current_gcode)} G-code lines, initializing...")
     socketio.emit('plot_status', {'status': 'initializing', 'lines': len(current_gcode)})
     
-    # Enable motors and set up machine parameters
-    serial_handler.send_command('M17')  # Enable motors
-    serial_handler.send_command('G90')  # Absolute positioning
-    time.sleep(0.1)
-    
-    # Run homing sequence before plotting (if enabled)
-    if home_before_plot:
-        serial_handler.send_command('G28 X')  # Home left
-        time.sleep(1.0)
-        serial_handler.send_command('G28 Y')  # Home right  
-        time.sleep(1.0)
-        serial_handler.send_command('G90')    # Absolute mode
-        serial_handler.send_command('G0 X0 Y0 F300')  # Go to center slowly
-        time.sleep(2.0)
-    else:
-        # No homing - set current position as origin
-        # This means "wherever the gondola is now = 0,0"
-        serial_handler.send_command('G92 X0 Y0')  # Set current position as origin
-        serial_handler.send_command('G90')    # Absolute mode
-    
+    try:
+        checked_send('M17')
+        checked_send('G90')
+        if home_before_plot:
+            verified_home()  # Both belts home in one G28 operation.
+        # Without homing, preserve the existing measured coordinate reference.
+    except RuntimeError as exc:
+        is_plotting = False
+        socketio.emit('plot_error', {'error': str(exc)})
+        return jsonify(success=False, error=str(exc)), 409
+
     # Send start G-code if any
     start_gcode = plotter_settings.get('start_gcode')
     if start_gcode:
@@ -541,12 +713,16 @@ def plot_start():
             line = current_gcode[current_line]
             
             if line.strip() and not line.strip().startswith(';'):
-                # Limit feedrates - ultra conservative for polargraph reliability
-                safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
+                # Firmware F is mm/min; use the saved, calibrated speed limits.
+                safe_line = limit_feedrate(line,
+                    max_travel=plotter_settings.get('feed_rate_travel'),
+                    max_draw=plotter_settings.get('feed_rate_draw'))
 
                 # Send with flow control - G0/G1 waits for firmware OK,
                 # other commands (M280, G4) return immediately
-                serial_handler.send_streaming(safe_line)
+                if not serial_handler.send_streaming(safe_line):
+                    fail_plot(f'Command {current_line + 1} was not confirmed. Position is unverified.')
+                    return
 
                 # For non-move commands, add time-based delays since
                 # the firmware doesn't send OK for these
@@ -581,25 +757,8 @@ def plot_start():
             current_line += 1
         
         if is_plotting and current_line >= len(current_gcode):
-            is_plotting = False
-            print(f"[PLOT] All commands sent. Waiting for firmware to finish...")
-            
-            # Wait for firmware to finish executing buffered moves
-            # G4 P0 forces buffer flush in Makelangelo firmware
-            serial_handler.send_command('G4 P0')
-            time.sleep(3.0)  # Give firmware time to complete all moves
-            
-            print(f"[PLOT] Retracting pen...")
-            
-            # Retract pen using M280 (direct servo control, bypasses planner)
-            pen_up_angle = plotter_settings.get('pen_up_angle', 120)
-            serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
-            time.sleep(0.5)  # Wait for servo to move
-            
-            print(f"[PLOT] Pen retracted. Plot complete!")
-            socketio.emit('plot_complete', {'message': 'Plot complete!'})
-            clear_uploads_folder()
-    
+            finish_plot()
+
     # Start streaming in background thread
     thread = threading.Thread(target=stream_gcode, daemon=True)
     thread.start()
@@ -684,11 +843,20 @@ def plot_resume_from():
     data = request.get_json() or {}
     start_line = data.get('line', 0)
     
+    try:
+        require_completion_protocol()
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 409
+    if not isinstance(start_line, int) or start_line < 0:
+        return jsonify(success=False, error='Invalid resume line.'), 400
+
     # Load G-code from backup
     backup_gcode = load_gcode_backup()
     if not backup_gcode:
         return jsonify({'success': False, 'error': 'No G-code backup found'})
     
+    if start_line >= len(backup_gcode):
+        return jsonify(success=False, error='Resume line is beyond the job.'), 400
     current_gcode = backup_gcode
     current_line = start_line
     is_plotting = True
@@ -700,7 +868,7 @@ def plot_resume_from():
     # Set up machine (pen up, absolute mode)
     serial_handler.send_command('M17')
     serial_handler.send_command('G90')
-    pen_up_angle = plotter_settings.get('pen_up_angle', 120)
+    pen_up_angle = plotter_settings.get('pen_angle_up')
     serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
     time.sleep(0.5)
     
@@ -721,13 +889,17 @@ def plot_resume_from():
             line = current_gcode[current_line]
             
             if line.strip() and not line.strip().startswith(';'):
-                safe_line = limit_feedrate(line, max_travel=100, max_draw=80)
-                serial_handler.send_command(safe_line)
+                safe_line = limit_feedrate(line,
+                    max_travel=plotter_settings.get('feed_rate_travel'),
+                    max_draw=plotter_settings.get('feed_rate_draw'))
+                if not serial_handler.send_streaming(safe_line):
+                    fail_plot(f'Command {current_line + 1} was not confirmed. Position is unverified.')
+                    return
                 
                 upper_line = safe_line.upper().strip()
                 if upper_line.startswith('G4'):
                     p_match = re.search(r'P([\d.]+)', upper_line)
-                    dwell_secs = float(p_match.group(1)) if p_match else 0
+                    dwell_secs = float(p_match.group(1)) / 1000 if p_match else 0
                     time.sleep(dwell_secs + 0.15)
                 elif upper_line.startswith('M280'):
                     time.sleep(0.1)
@@ -749,14 +921,8 @@ def plot_resume_from():
             current_line += 1
         
         if is_plotting and current_line >= len(current_gcode):
-            is_plotting = False
-            print(f"[PLOT] Resume complete!")
-            serial_handler.send_command('G4 P0')
-            time.sleep(3.0)
-            serial_handler.send_command(f'M280 P0 S{pen_up_angle}')
-            time.sleep(0.5)
-            socketio.emit('plot_complete', {'message': 'Plot complete!'})
-    
+            finish_plot()
+
     thread = threading.Thread(target=stream_gcode, daemon=True)
     thread.start()
     
@@ -1064,10 +1230,30 @@ def get_settings():
 @app.route('/api/settings', methods=['POST'])
 def update_settings():
     """Update plotter settings."""
-    data = request.json
-    plotter_settings.update(data)
-    plotter_settings.save()
-    return jsonify({'success': True})
+    data = request.get_json() or {}
+    protected = {'motor_spacing', 'motor_y', 'home_belt_left', 'home_belt_right',
+                 'steps_per_unit', 'calibrated', 'calibration_date',
+                 'calibration_pending', 'calibration_profile'}
+    if not isinstance(data, dict) or protected.intersection(data):
+        return jsonify(success=False, error='Geometry is managed by Setup wizard.'), 400
+    before = plotter_settings.get_all()
+    try:
+        # Reject unknown keys and non-finite numeric settings before persistence.
+        if set(data) - set(before) - {'pen_dwell'}:
+            raise ValueError('Unknown setting.')
+        for key, value in data.items():
+            if isinstance(value, (int, float)) and not math.isfinite(value):
+                raise ValueError(f'{key} must be finite.')
+        plotter_settings.update(data)
+        area = plotter_settings.get_work_area()
+        if area['width'] <= 0 or area['height'] <= 0:
+            raise ValueError('Drawing area must have positive width and height.')
+        if plotter_settings.save() is not True:
+            raise OSError('Settings were not saved.')
+    except (ValueError, TypeError, OSError) as exc:
+        plotter_settings.settings = before
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True)
 
 
 @app.route('/api/settings/machine', methods=['GET'])
@@ -1083,6 +1269,181 @@ def get_machine_info():
             'bottom': plotter_settings.get('limit_bottom')
         }
     })
+
+
+# ============================================================================
+# Routes - Calibration & Setup
+# ============================================================================
+
+def _parse_m114(line):
+    """Parse an 'M114 X.. Y.. Z.. F.. A..' reply into a dict, or None."""
+    if not line:
+        return None
+    out = {}
+    for axis in ('X', 'Y', 'Z', 'F', 'A'):
+        m = re.search(rf'{axis}(-?\d+(?:\.\d+)?)', line)
+        if m:
+            out[axis.lower()] = float(m.group(1))
+    return out if 'x' in out else None
+
+
+@app.route('/api/position', methods=['GET'])
+def get_position():
+    """Read the controller's current position via M114. Serial/local only."""
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    reply = serial_handler.query('M114', 'M114', timeout=3.0)
+    pos = _parse_m114(reply)
+    if pos is None:
+        return jsonify({'success': False, 'error': 'No position reply'})
+    return jsonify({'success': True, 'raw': reply, **pos})
+
+
+@app.route('/api/calibrate/apply', methods=['POST'])
+@app.route('/api/calibrate/spacing/solve', methods=['POST'])
+def calibrate_apply():
+    return jsonify(success=False, error='Use Setup wizard. Unverified geometry application and single-span scaling have been retired.'), 410
+
+
+@app.route('/api/calibrate/pen_pressure/test', methods=['POST'])
+def calibrate_pen_pressure_test():
+    """Draw one short test line at an explicit pen-down angle (first-layer
+    style). The wizard nudges the angle deeper until the line is consistent.
+    Requires a pen loaded and uncapped.
+    """
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    data = request.json or {}
+    down_angle = float(data.get('down_angle', plotter_settings.get('pen_angle_down')))
+    cx = float(data.get('x', 0))
+    cy = float(data.get('y', 0))
+
+    for line in gcode_generator.generate_pressure_test_line(down_angle, cx, cy):
+        serial_handler.send_streaming(line)
+    return jsonify({'success': True, 'down_angle': down_angle})
+
+
+@app.route('/api/calibrate/pen_pressure/save', methods=['POST'])
+def calibrate_pen_pressure_save():
+    """Save the dialed-in pen-down angle for a color."""
+    data = request.json or {}
+    color = data.get('color')
+    down_angle = data.get('down_angle')
+    if not color or down_angle is None:
+        return jsonify({'success': False, 'error': 'color and down_angle required'})
+    angles = dict(plotter_settings.get('pen_down_angles') or {})
+    angles[color] = float(down_angle)
+    plotter_settings.set('pen_down_angles', angles)
+    plotter_settings.save()
+    return jsonify({'success': True, 'color': color, 'down_angle': float(down_angle)})
+
+
+@app.route('/api/pen/eject', methods=['POST'])
+def pen_eject():
+    """Rotate the servo to eject the pen holder for a color swap."""
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    angle = plotter_settings.get('pen_eject_angle')
+    serial_handler.send_command(f'M280 P0 S{angle}')
+    return jsonify({'success': True, 'angle': angle})
+
+
+@app.route('/api/pen/retract', methods=['POST'])
+def pen_retract():
+    """Pull the pen holder back in (pen-up angle) after a swap."""
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    angle = plotter_settings.get('pen_angle_up')
+    serial_handler.send_command(f'M280 P0 S{angle}')
+    return jsonify({'success': True, 'angle': angle})
+
+
+@app.route('/api/pen/select_color', methods=['POST'])
+def pen_select_color():
+    """Set the active pen color so the matching pressure profile is used."""
+    data = request.json or {}
+    color = data.get('color')
+    if not color:
+        return jsonify({'success': False, 'error': 'color required'})
+    plotter_settings.set('active_color', color)
+    plotter_settings.save()
+    return jsonify({'success': True, 'active_color': color,
+                    'down_angle': plotter_settings.get_pen_down_angle(color)})
+
+
+@app.route('/api/calibrate/motion/test', methods=['POST'])
+def calibrate_motion_test():
+    """Run a bounded stress pattern at the given motion params in a safe
+    central region, for belt-slip detection. The wizard ramps the params and
+    re-homes between runs to detect lost steps; it backs off to a safe margin.
+    """
+    if not serial_handler.is_connected():
+        return jsonify({'success': False, 'error': 'Not connected'})
+    data = request.json or {}
+    rate = float(data.get('max_step_rate', plotter_settings.get('max_step_rate')))
+    accel = float(data.get('accel', plotter_settings.get('accel')))
+    jerk = float(data.get('jerk', plotter_settings.get('jerk')))
+    span = float(data.get('span_mm', 150.0))
+    cycles = max(1, int(data.get('cycles', 6)))
+    cx = float(data.get('x', 0))
+    cy = float(data.get('y', 0))
+    # Keep the stress pattern in a safe central band, clear of the edges and the
+    # top (where the belts bind). Clamp the center and half-span to the work area.
+    half_w = (plotter_settings.get('limit_right') - plotter_settings.get('limit_left')) / 2.0
+    half_h = (plotter_settings.get('limit_top') - plotter_settings.get('limit_bottom')) / 2.0
+    cx = max(-0.4 * half_w, min(0.4 * half_w, cx))
+    cy = max(-0.4 * half_h, min(0.4 * half_h, cy))
+    h = min(span / 2.0, 0.4 * half_w)
+
+    serial_handler.send_command(f'M203 X{rate:.2f} Y{rate:.2f}')
+    serial_handler.send_command(f'M205 X{jerk:.2f} Y{jerk:.2f}')
+    serial_handler.send_command('M17')
+    serial_handler.send_command('G90')
+    serial_handler.send_command(f'G1 A{accel:.0f}')  # set acceleration (no move)
+    for _ in range(cycles):
+        serial_handler.send_streaming(f'G0 X{cx - h:.2f} Y{cy:.2f}')
+        serial_handler.send_streaming(f'G0 X{cx + h:.2f} Y{cy:.2f}')
+    serial_handler.send_streaming(f'G0 X{cx:.2f} Y{cy:.2f}')
+    return jsonify({'success': True, 'max_step_rate': rate, 'accel': accel,
+                    'jerk': jerk, 'cycles': cycles, 'span_mm': span})
+
+
+@app.route('/api/calibrate/motion/save', methods=['POST'])
+def calibrate_motion_save():
+    """Persist the slip-free motion limits (step rate + jerk to EEPROM via
+    M500; acceleration is applied per job via the G1 'A' parameter)."""
+    data = request.json or {}
+    for key in ('max_step_rate', 'accel', 'jerk'):
+        if key in data:
+            plotter_settings.set(key, float(data[key]))
+    plotter_settings.save()
+    if serial_handler.is_connected():
+        rate = plotter_settings.get('max_step_rate')
+        jerk = plotter_settings.get('jerk')
+        serial_handler.send_command(f'M203 X{rate:.2f} Y{rate:.2f}')
+        serial_handler.send_command(f'M205 X{jerk:.2f} Y{jerk:.2f}')
+        serial_handler.send_command('M500')
+    return jsonify({'success': True, 'max_step_rate': plotter_settings.get('max_step_rate'),
+                    'accel': plotter_settings.get('accel'), 'jerk': plotter_settings.get('jerk')})
+
+
+# ---------------------------------------------------------------------------
+# Motion auto-tune: recursive accel/speed limit-test.
+#
+# Uses the firmware's HOMESTEPS reel-in count (printed by polargraph_homeAtSpeed)
+# as a calibration-independent slip sensor: reeling in from a fixed commanded
+# position is constant unless steps were lost. After each level's stress burst we
+# re-home and compare the count to a gentle baseline; the first level whose count
+# shifts > threshold is the slip ceiling. Stress stays in a small mid-height band
+# so the counterweights never reach the switches even at speed. Jitter is NOT
+# sensor-detectable, so the recommendation sits well under the slip ceiling and the
+# user confirms smoothness by feel.
+# ---------------------------------------------------------------------------
+@app.route('/api/calibrate/motion/autotune', methods=['POST'])
+@app.route('/api/calibrate/motion/autotune/status', methods=['GET'])
+def motion_autotune():
+    return jsonify(success=False, running=False,
+                   error='Automatic speed tuning is unavailable: the old routine overwrote home belt calibration.'), 410
 
 
 # ============================================================================
@@ -1513,4 +1874,3 @@ def generate_sheetmusic():
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
-
