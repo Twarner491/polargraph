@@ -109,6 +109,10 @@ sudo systemctl enable --now polargraph.service
 
 Access at **http://plotter.local**
 
+**Calibrate**
+
+Open http://plotter.local/#setup and follow the setup wizard: two tape measurements, a center mark, then a home and return check. Advanced calibration (Settings) measures accuracy at eight points. The [writeup](https://theodore.net/projects/Polargraph/#setup-wizard) walks through both.
+
 **Home Assistant Integration *(Optional)***
 
 For remote access via `plotter.onethreenine.net` → Home Assistant → MQTT → Pi.

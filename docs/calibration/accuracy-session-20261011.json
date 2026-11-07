@@ -1,0 +1,482 @@
+{
+  "schema_version": 1,
+  "reference": "2a388cb321064b0b9e4eac376768d045:c948be0b6a66c71ce201e62a:3",
+  "initial": {
+    "motor_spacing": 1058.24,
+    "anchor_y": 694.22,
+    "home_belt_left": 1352.5,
+    "home_belt_right": 1349.02,
+    "steps_per_mm_left": 100.0,
+    "steps_per_mm_right": 100.0
+  },
+  "plan": [
+    {
+      "x": -144,
+      "y": 174,
+      "group": "fit"
+    },
+    {
+      "x": 0,
+      "y": 174,
+      "group": "fit"
+    },
+    {
+      "x": 144,
+      "y": 174,
+      "group": "fit"
+    },
+    {
+      "x": 144,
+      "y": 0,
+      "group": "validation"
+    },
+    {
+      "x": 144,
+      "y": -212,
+      "group": "fit"
+    },
+    {
+      "x": 0,
+      "y": -212,
+      "group": "fit"
+    },
+    {
+      "x": -144,
+      "y": -212,
+      "group": "fit"
+    },
+    {
+      "x": -144,
+      "y": 0,
+      "group": "validation"
+    }
+  ],
+  "measurements": [
+    {
+      "x": -145.0,
+      "y": 170.0,
+      "left_steps": -70524,
+      "right_steps": -49830,
+      "group": "fit",
+      "target": {
+        "x": -144,
+        "y": 174
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -70524,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -49830,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -144.0,
+          "y": 174.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -73904,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -45008,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -204.0,
+          "y": 174.0
+        }
+      },
+      "reported_measurement": {
+        "left_cm": 14.5,
+        "up_cm": 17
+      },
+      "command_error_mm": 4.123105625617661
+    },
+    {
+      "x": 0.0,
+      "y": 174.0,
+      "left_steps": -61048,
+      "right_steps": -60700,
+      "group": "fit",
+      "target": {
+        "x": 0,
+        "y": 174
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -61048,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -60700,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 0.0,
+          "y": 174.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -65200,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -56309,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -60.0,
+          "y": 174.0
+        }
+      },
+      "reported_measurement": {
+        "up_mm": 174,
+        "sideways_mm": 0,
+        "repeat_reading": null
+      },
+      "command_error_mm": 0.0
+    },
+    {
+      "x": 144.0,
+      "y": 174.0,
+      "left_steps": -50178,
+      "right_steps": -70176,
+      "group": "fit",
+      "target": {
+        "x": 144,
+        "y": 174
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -50178,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -70176,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 144.0,
+          "y": 174.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -54842,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -66436,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 84.0,
+          "y": 174.0
+        }
+      },
+      "reported_measurement": {
+        "right_cm": 14.4,
+        "up_cm": 17.4
+      },
+      "command_error_mm": 0.0
+    },
+    {
+      "x": 144.0,
+      "y": 0.0,
+      "left_steps": -38553,
+      "right_steps": -55513,
+      "group": "validation",
+      "target": {
+        "x": 144,
+        "y": 0
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -38553,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -55513,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 144.0,
+          "y": 0.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -34284,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -58244,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 204.0,
+          "y": 0.0
+        }
+      },
+      "reported_measurement": {
+        "right_mm": 144,
+        "vertical_mm": 0
+      },
+      "command_error_mm": 0.0,
+      "parking_history": [
+        {
+          "completed": true,
+          "connection_id": "c948be0b6a66c71ce201e62a",
+          "left_steps": -42629,
+          "pulse_counts_only": true,
+          "reference_epoch": 3,
+          "right_steps": -52435,
+          "session_id": "2a388cb321064b0b9e4eac376768d045",
+          "success": true,
+          "target": {
+            "x": 84.0,
+            "y": 0.0
+          }
+        }
+      ],
+      "parking_note": "Move outward from center: right of right-side marks, left of left-side marks."
+    },
+    {
+      "x": 147.0,
+      "y": -202.0,
+      "left_steps": -22364,
+      "right_steps": -36436,
+      "group": "fit",
+      "target": {
+        "x": 144,
+        "y": -212
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -22364,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -36436,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 144.0,
+          "y": -212.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -18687,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -38624,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 204.0,
+          "y": -212.0
+        }
+      },
+      "reported_measurement": {
+        "right_mm": 147,
+        "down_mm": 202
+      },
+      "command_error_mm": 10.44030650891055,
+      "repeat_measurements": [
+        {
+          "x": 142.0,
+          "y": -209.0,
+          "reported_measurement": {
+            "down_mm": 209,
+            "right_mm": 142,
+            "clarification": "Initially typed 109 down, 142 right; confirmed 209 down and 142 right."
+          },
+          "method": "Remeasurement of existing physical mark from original center mark; no new plotter motion.",
+          "used_for_fit": false
+        },
+        {
+          "x": 143.0,
+          "y": -216.0,
+          "reported_measurement": {
+            "down_mm": 216,
+            "right_mm": 143
+          },
+          "method": "Second requested remeasurement of the existing lower-right physical mark; no new plotter motion.",
+          "used_for_fit": false
+        }
+      ]
+    },
+    {
+      "x": 0.0,
+      "y": -209.0,
+      "left_steps": -30312,
+      "right_steps": -29964,
+      "group": "fit",
+      "target": {
+        "x": 0,
+        "y": -212
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -30312,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -29964,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": 0.0,
+          "y": -212.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -33205,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -26814,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -60.0,
+          "y": -212.0
+        }
+      },
+      "reported_measurement": {
+        "down_mm": 209,
+        "sideways_mm": 0
+      },
+      "command_error_mm": 3.0
+    },
+    {
+      "x": -145.0,
+      "y": -211.0,
+      "left_steps": -36784,
+      "right_steps": -22016,
+      "group": "fit",
+      "target": {
+        "x": -144,
+        "y": -212
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -36784,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -22016,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -144.0,
+          "y": -212.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -38972,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -18339,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -204.0,
+          "y": -212.0
+        }
+      },
+      "reported_measurement": {
+        "down_mm": 211,
+        "left_mm": 145
+      },
+      "command_error_mm": 1.4142135623730951
+    },
+    {
+      "x": -145.0,
+      "y": 0.0,
+      "left_steps": -55861,
+      "right_steps": -38205,
+      "group": "validation",
+      "target": {
+        "x": -144,
+        "y": 0
+      },
+      "capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -55861,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -38205,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -144.0,
+          "y": 0.0
+        }
+      },
+      "parking_capture": {
+        "completed": true,
+        "connection_id": "c948be0b6a66c71ce201e62a",
+        "left_steps": -58592,
+        "pulse_counts_only": true,
+        "reference_epoch": 3,
+        "right_steps": -33936,
+        "session_id": "2a388cb321064b0b9e4eac376768d045",
+        "success": true,
+        "target": {
+          "x": -204.0,
+          "y": 0.0
+        }
+      },
+      "reported_measurement": {
+        "left_mm": 145,
+        "vertical_mm": 0,
+        "clarification": "Initially typed 45 mm; explicitly confirmed 145 mm before recording."
+      },
+      "command_error_mm": 1.0
+    }
+  ],
+  "measurement_method": {
+    "tool": "ruler and Sharpie",
+    "uncertainty_mm": null,
+    "note": "User reports difficulty with precision; quantify repeatability and marker placement before interpreting small residuals or applying a fit.",
+    "repeatability_status": "Lower-right stationary-mark repeats differ by 1 mm horizontally and 7 mm vertically; original downward reading was 202 mm. Measurement method must improve before fitting physical geometry.",
+    "observed_repeat_range_mm": {
+      "x": 1.0,
+      "y": 7.0,
+      "point": 5,
+      "includes_original": false,
+      "sample_count": 2
+    }
+  },
+  "collection_complete": true,
+  "final_parking_capture": {
+    "completed": true,
+    "connection_id": "c948be0b6a66c71ce201e62a",
+    "left_steps": -58592,
+    "pulse_counts_only": true,
+    "reference_epoch": 3,
+    "right_steps": -33936,
+    "session_id": "2a388cb321064b0b9e4eac376768d045",
+    "success": true,
+    "target": {
+      "x": -204.0,
+      "y": 0.0
+    }
+  },
+  "fit_decision": {
+    "apply": false,
+    "reason": "Initial candidate worsens held-out checks; repeat readings of unchanged mark show 7 mm vertical spread. No statistically justified uncertainty estimate yet."
+  }
+}

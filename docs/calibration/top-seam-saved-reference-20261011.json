@@ -1,0 +1,110 @@
+{
+  "profile": {
+    "accuracy_verified": false,
+    "controller_readback": {
+      "belts": [
+        1352.51,
+        1349.03
+      ],
+      "high": [
+        529.13,
+        694.23,
+        90.0
+      ],
+      "low": [
+        -529.13,
+        -723.9,
+        40.0
+      ],
+      "steps": [
+        100.0,
+        100.0
+      ]
+    },
+    "controller_readback_verified": true,
+    "datum": "standard-cover-top-seam-v2",
+    "eeprom_readback_verified": true,
+    "geometry": {
+      "anchor_center_x": 0.0,
+      "anchor_left_x": -529.1298511156899,
+      "anchor_right_x": 529.1298511156899,
+      "anchor_y": 694.2298511156899,
+      "datum_bottom": -723.9,
+      "datum_height_mm": 1447.8,
+      "datum_profile": "standard-cover-top-seam-v2",
+      "left_offset_mm": 29.67014888431,
+      "motor_spacing": 1058.2597022313798,
+      "outside_cover_span_mm": 1117.6,
+      "reference_x": 0.0,
+      "reference_y": 0.0,
+      "right_offset_mm": 29.67014888431,
+      "top_offset_mm": 29.67014888431,
+      "verified": false
+    },
+    "home_belt_left": 1352.5080143075772,
+    "home_belt_right": 1349.0280143075772,
+    "home_counts": {
+      "left": 47962,
+      "right": 47614
+    },
+    "measurements": {
+      "datum_height_mm": 1447.8,
+      "outside_cover_span_mm": 1117.6
+    },
+    "persisted_controller_readback": {
+      "belts": [
+        1352.5,
+        1349.02
+      ],
+      "high": [
+        529.12,
+        694.22,
+        90.0
+      ],
+      "low": [
+        -529.12,
+        -723.9,
+        40.0
+      ],
+      "steps": [
+        100.0,
+        100.0
+      ]
+    },
+    "physical_clearance_verified": false,
+    "previous_controller": {
+      "belts": [
+        1354.51,
+        1350.57
+      ],
+      "high": [
+        530.3,
+        695.4,
+        90.0
+      ],
+      "low": [
+        -530.3,
+        -723.9,
+        40.0
+      ],
+      "steps": [
+        100.0,
+        100.0
+      ]
+    },
+    "reboot_persistence_verified": false,
+    "reference_verified": true,
+    "return_reported": true,
+    "session_id": "2a388cb321064b0b9e4eac376768d045",
+    "verified": false,
+    "work_area": {
+      "bottom": -325.6796993749999,
+      "left": -220.96727147516768,
+      "right": 220.96727147516768,
+      "top": 268.43119621895954
+    },
+    "work_area_note": "Proposed from frame and belt geometry; paper placement and mechanical clearances still require verification.",
+    "work_area_provisional": true
+  },
+  "success": true
+}

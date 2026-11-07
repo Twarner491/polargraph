@@ -1,0 +1,42 @@
+{
+  "recorded_on": "2026-10-10",
+  "machine": "Teddy / monalisa",
+  "status": "reference_saved_and_normal_home_verified",
+  "source": {
+    "width": "44 inches",
+    "height": "57 inches",
+    "measurement_uncertainty_mm": null
+  },
+  "datum_instructions": "W: straight outer rear cover seams nearest plywood; H: top rear seam to inner top edge of bottom rail. Interpretation follows the measurement guides; physical reference capture is pending.",
+  "outside_cover_span_mm": 1117.6,
+  "datum_height_mm": 1447.8,
+  "reference_mark": {
+    "from_left_rear_seam_inches": 22,
+    "below_top_rear_seam_inches": 28.5,
+    "from_left_rear_seam_mm": 558.8,
+    "below_top_rear_seam_mm": 723.9
+  },
+  "derived_geometry": {
+    "motor_spacing": 1060.6,
+    "anchor_y": 695.4,
+    "anchor_left_x": -530.3,
+    "anchor_right_x": 530.3,
+    "anchor_center_x": 0.0,
+    "reference_x": 0.0,
+    "reference_y": 0.0,
+    "datum_bottom": -723.9,
+    "outside_cover_span_mm": 1117.6,
+    "datum_height_mm": 1447.8,
+    "left_offset_mm": 28.5,
+    "right_offset_mm": 28.5,
+    "top_offset_mm": 28.5,
+    "datum_profile": "rear-straight-cover-seam",
+    "verified": false
+  },
+  "reference_verified": true,
+  "accuracy_verified": false,
+  "physical_reference_aligned_by_user": true,
+  "firmware_and_host_installed_on": "2026-10-10",
+  "last_reference_session": "55aa476ffcc7463b842e14e3b284aed0",
+  "normal_home_return_verified_by_user": true
+}
