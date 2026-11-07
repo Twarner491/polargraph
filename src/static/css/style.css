@@ -1968,3 +1968,166 @@ html, body {
     color: var(--text-mid);
     margin-top: 2px;
 }
+
+/* ============================================================
+   Setup Wizard / calibration diagram / pen-swap / cap prompt
+   ============================================================ */
+
+.wizard-content { max-width: 440px; }
+
+.wizard-diagram {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+.wizard-diagram svg { width: 150px; height: auto; }
+
+/* polargraph diagram (monochrome, animates between calibration moves) */
+.pg-frame { fill: none; stroke: rgba(0,0,0,0.12); stroke-width: 1.5; }
+.pg-bar   { stroke: rgba(0,0,0,0.12); stroke-width: 1.5; }
+.pg-track { stroke: rgba(0,0,0,0.08); stroke-width: 1; }
+.pg-belt  { stroke: var(--text-light); stroke-width: 1; transition: all 0.5s ease; }
+.pg-cw    { fill: var(--text-mid); transition: y 0.5s ease; }
+.pg-motor { fill: var(--text-dark); }
+.pg-gondola { fill: var(--body-bg); stroke: var(--text-dark); stroke-width: 1.5; }
+.pg-pen   { fill: var(--text-dark); }
+#pgGondola { transition: transform 0.5s ease; }
+
+.wizard-steps-dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+.wizard-steps-dots .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background 0.2s;
+}
+.wizard-steps-dots .dot.active { background: var(--text-dark); }
+.wizard-steps-dots .dot.done { background: var(--text-light); }
+
+.wizard-lead {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dark);
+    margin: 0 0 8px;
+}
+.wizard-note {
+    font-size: 12px;
+    color: var(--text-light);
+    line-height: 1.5;
+    margin: 0 0 14px;
+}
+.wizard-list {
+    font-size: 12px;
+    color: var(--text-mid);
+    line-height: 1.7;
+    margin: 0 0 14px;
+    padding-left: 18px;
+}
+.wizard-actions {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.wizard-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.wizard-field label { font-size: 12px; color: var(--text-mid); }
+.wizard-field .input-num { width: 110px; }
+.wizard-field .input-select { flex: 0 0 150px; }
+.wizard-result {
+    font-size: 12px;
+    color: var(--success);
+    min-height: 16px;
+    margin: 10px 0 0;
+}
+.wizard-nav {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+.wizard-nav .btn { flex: 1; }
+
+/* cap prompt */
+.cap-content { max-width: 320px; text-align: center; }
+.cap-icon { font-size: 30px; margin: 8px 0 12px; color: var(--text-mid); }
+.cap-message { font-size: 13px; color: var(--text-dark); line-height: 1.5; margin: 0 0 16px; }
+
+
+/* Static CAD guides and measured setup. */
+.measured-calibration [hidden] { display: none !important; }
+.calibration-guide { height: 340px; margin: 0 0 16px; }
+.calibration-guide svg { display: block; width: 100%; height: 100%; }
+.calibration-guide [data-point].active .guide-ring { opacity: 1; }
+.measured-calibration .modal-body { font-size: 13px; }
+.measured-calibration section > h4 { font-size: 14px; font-weight: 450; line-height: 1.5; color: var(--text-dark); margin: 0 0 14px; }
+.measured-calibration .calibration-check { font-size: 13px; }
+#setupStepLabel { display: flex; align-items: baseline; gap: 10px; }
+#setupStepName { font-size: 15px; font-weight: 500; color: var(--text-dark); }
+#setupStepCount { font-size: 13px; color: var(--text-light); }
+
+/* Disclosure chevron: Font Awesome Free 6.5.2 chevron-right, CC BY 4.0, https://fontawesome.com/license/free */
+.measured-calibration summary { list-style: none; display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; color: var(--text-dark); padding: 4px 0; }
+.measured-calibration summary::-webkit-details-marker { display: none; }
+.measured-calibration summary::before { content: ''; flex: 0 0 10px; height: 10px; background: var(--text-light);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 512'%3E%3Cpath d='M310.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L242.7 256 73.4 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 512'%3E%3Cpath d='M310.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L242.7 256 73.4 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192z'/%3E%3C/svg%3E") center / contain no-repeat; transition: transform 0.15s ease; }
+.measured-calibration details[open] > summary::before { transform: rotate(90deg); }
+
+/* Actions share one row; the primary action takes the larger share. */
+.measured-calibration .calibration-actions { display: flex; gap: 8px; margin-top: 12px; }
+.measured-calibration .calibration-actions .btn { flex: 1; }
+.measured-calibration .calibration-actions .btn.primary { flex: 2; }
+
+/* Manual targets and fit settings */
+.manual-group { border: none; padding: 0; margin: 20px 0 0; min-width: 0; }
+.manual-group legend { padding: 0; float: left; width: 100%; }
+.manual-group legend + * { clear: both; }
+.manual-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; margin-bottom: 10px; }
+.manual-fields label { display: grid; grid-template-columns: 1fr 96px 52px; align-items: center; gap: 8px; font-size: 12px; color: var(--text-mid); }
+.manual-fields label span { font-size: 11px; color: var(--text-light); }
+.manual-fields .input-num { width: 100%; }
+.manual-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.manual-chips label { position: relative; cursor: pointer; }
+.manual-chips input { position: absolute; opacity: 0; pointer-events: none; }
+.manual-chips span { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.04); color: var(--text-mid); font-size: 12px; transition: background 0.15s, color 0.15s; }
+.manual-chips input:checked + span { background: var(--text-dark); color: #fff; }
+.manual-chips input:focus-visible + span { outline: 2px solid var(--text-dark); outline-offset: 2px; }
+.measured-calibration .calibration-table { table-layout: fixed; margin: 4px 0 0; }
+.measured-calibration .calibration-table th { font-size: 11px; font-weight: 500; color: var(--text-light); text-align: left; padding: 0 4px 6px; border-bottom: none; }
+.measured-calibration .calibration-table td { padding: 3px 4px; border-bottom: none; }
+.measured-calibration .calibration-table th:nth-child(-n+4) { width: 16%; }
+.measured-calibration .calibration-table th:nth-child(5) { width: 15%; }
+.measured-calibration .calibration-table input, .measured-calibration .calibration-table select { width: 100%; min-width: 0; height: 30px; }
+.measured-calibration .calibration-table td:last-child { white-space: nowrap; text-align: right; }
+.row-capture { height: 30px; padding: 0 10px; }
+.row-remove { height: 30px; width: 30px; padding: 0; margin-left: 4px; color: var(--text-light); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.setup-progress { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; font-size: 13px; }
+.setup-progress label { display: flex; align-items: center; gap: 8px; }
+.setup-progress .input-select { width: 90px; }
+.measurement-input { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 14px; }
+.measurement-input .input-num { width: 145px; }
+/* Anchor calibration dialogs to the top so content changes grow downward instead of re-centering. */
+#setupWizardModal, #advancedCalibrationModal { align-items: flex-start; padding-top: 5vh; }
+.calibration-method { margin-top: 20px; color: var(--text-mid); font-size: 12px; line-height: 1.6; }
+.measured-calibration summary { cursor: pointer; }
+#accuracyTarget { margin-top: 16px; }
+#accuracyRecord { margin-top: 12px; }
+#advancedManual { margin-bottom: 16px; }
+#advancedManual > h4 { margin-top: 16px; }
+.calibration-status:empty { display: none; }
+@media (max-width: 520px) {
+    .measured-calibration .modal-body { padding: 16px; }
+    .measurement-input { align-items: flex-start; flex-direction: column; gap: 8px; }
+    .measurement-input .input-num { width: 100%; }
+}

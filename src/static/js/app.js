@@ -1755,7 +1755,6 @@ function initEventListeners() {
     document.getElementById('clearUploads').addEventListener('click', clearUploads);
     
     // Calibration
-    initCalibrationWizard();
     
     // Grid type toggle
     const gridTypeSelect = document.getElementById('gridType');
@@ -2117,6 +2116,13 @@ if (socket) {
         }
     });
 
+    socket.on('plot_error', (data) => {
+        state.plotting = false;
+        state.paused = false;
+        updatePlotButtons();
+        logConsole(data.error || 'Plot stopped: completion was not verified.', 'msg-error');
+    });
+
     socket.on('plot_complete', (data) => {
         state.plotting = false;
         state.paused = false;
@@ -2173,6 +2179,15 @@ async function sendViaWebhook(endpoint, data = null) {
         '/api/send_gcode': 'gcode',
         '/api/pen_change': 'pen_change',
         '/api/settings': 'save_settings',
+        '/api/calibrate/spacing/solve': 'calibrate_spacing',
+        '/api/calibrate/apply': 'calibrate_apply',
+        '/api/calibrate/pen_pressure/test': 'pen_pressure_test',
+        '/api/calibrate/pen_pressure/save': 'pen_pressure_save',
+        '/api/calibrate/motion/test': 'motion_test',
+        '/api/calibrate/motion/save': 'motion_save',
+        '/api/pen/eject': 'pen_eject',
+        '/api/pen/retract': 'pen_retract',
+        '/api/pen/select_color': 'pen_select_color',
     };
     
     const command = commandMap[endpoint] || endpoint.replace('/api/', '');
@@ -2271,6 +2286,10 @@ async function setConnectionStatus(connected, port = null) {
     controls.forEach(btn => btn.disabled = !connected);
     
     document.querySelectorAll('.jog-btn').forEach(btn => btn.disabled = !connected);
+    ['openPenSwap'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = !connected;
+    });
     updatePlotButtons();
     
     // On connect: ensure pen is UP, sync settings, and update button state
@@ -2281,37 +2300,11 @@ async function setConnectionStatus(connected, port = null) {
         btn.classList.remove('active');
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Pen Up`;
         
-        // Load settings from localStorage first, then sync to firmware
+        // Connecting must not overwrite the controller's calibrated geometry.
         await loadSettings();
-        await syncMotorSpacingToFirmware();
     }
     
     // Update calibration button
-    updateCalibrationButton();
-}
-
-async function syncMotorSpacingToFirmware() {
-    // Get motor spacing and work area limits from settings
-    const motorSpacing = parseFloat(document.getElementById('machineWidth')?.value) || 1220;
-    const limitTop = parseFloat(document.getElementById('limitTop')?.value) || 500;
-    const limitBottom = parseFloat(document.getElementById('limitBottom')?.value) || -500;
-    
-    // For Makelangelo firmware, motor spacing is set via X axis limits (M101 A0)
-    // axies[0].limitMin = left motor X position (negative)
-    // axies[0].limitMax = right motor X position (positive)
-    // The IK uses: left = axies[0].limitMin, right = axies[0].limitMax
-    const halfSpacing = motorSpacing / 2;
-    
-    // M101 A0 T<max> B<min> - Set X axis (motor positions)
-    await sendCommand('/api/send_gcode', 'POST', { command: `M101 A0 T${halfSpacing.toFixed(2)} B${(-halfSpacing).toFixed(2)}` });
-    
-    // M101 A1 T<max> B<min> - Set Y axis (vertical limits)  
-    await sendCommand('/api/send_gcode', 'POST', { command: `M101 A1 T${limitTop.toFixed(2)} B${limitBottom.toFixed(2)}` });
-    
-    // Save to EEPROM
-    await sendCommand('/api/send_gcode', 'POST', { command: 'M500' });
-    
-    logConsole(`Synced to firmware: motor spacing ${motorSpacing.toFixed(1)}mm, Y limits [${limitBottom}, ${limitTop}]`, 'msg-info');
 }
 
 async function toggleMotors() {
@@ -2356,17 +2349,16 @@ async function jog(direction) {
     const d = state.jogDistance;
     let x = 0, y = 0;
 
-    // Note: X/Y are swapped for polargraph coordinate system
-    // UI "up/down" controls X, UI "left/right" controls Y
+    // Firmware coordinates are Cartesian: +X right, +Y up.
     switch (direction) {
-        case 'up': x = d; break;
-        case 'down': x = -d; break;
-        case 'left': y = -d; break;
-        case 'right': y = d; break;
-        case 'up-left': x = d; y = -d; break;
+        case 'up': y = d; break;
+        case 'down': y = -d; break;
+        case 'left': x = -d; break;
+        case 'right': x = d; break;
+        case 'up-left': x = -d; y = d; break;
         case 'up-right': x = d; y = d; break;
         case 'down-left': x = -d; y = -d; break;
-        case 'down-right': x = -d; y = d; break;
+        case 'down-right': x = d; y = -d; break;
         case 'center':
             if (_jogBusy) return;
             _jogBusy = true;
@@ -2407,6 +2399,19 @@ async function startPlot() {
         logConsole('Resume Plot', 'msg-out');
         await sendCommand('/api/plot/resume', 'POST');
     } else {
+        // Only visible layers are plotted. If everything is hidden, stop before
+        // prompting or homing rather than running a no-op job (an empty entity
+        // list still produces G-code headers, so guard on the visible count).
+        const visibleEntities = state.entities.filter(e => e.visible);
+        if (state.entities.length > 0 && visibleEntities.length === 0) {
+            logConsole('No visible layers to plot', 'msg-warn');
+            return;
+        }
+        // Never draw with the pen capped.
+        if (!(await promptCapOff('Remove the pen cap before plotting.'))) {
+            logConsole('Plot cancelled (pen still capped)', 'msg-info');
+            return;
+        }
         logConsole('Start Plot', 'msg-out');
         // Calculate and store ETA for progress tracking
         try {
@@ -2423,9 +2428,10 @@ async function startPlot() {
         
         // In client-side mode, generate G-code from entities and send with start command
         if (CLIENT_SIDE_MODE) {
-            // Generate G-code from entities
+            // Generate G-code from the VISIBLE layers only (hidden layers are
+            // never sent to the machine - this is what makes multi-color work).
             if (state.entities.length > 0) {
-                state.currentGcode = generateGcodeForEntities(state.entities);
+                state.currentGcode = generateGcodeForEntities(visibleEntities);
             }
             
             if (state.currentGcode && state.currentGcode.length > 0) {
@@ -2481,7 +2487,17 @@ async function startPlot() {
                 return;
             }
         } else {
-            await sendCommand('/api/plot/start', 'POST', { home: homeBeforePlot });
+            // Direct connection (plotter.local): generate from the visible
+            // layers only and send. Hidden layers are never plotted.
+            if (state.entities.length > 0) {
+                state.currentGcode = generateGcodeForEntities(visibleEntities);
+            }
+            if (!state.currentGcode || state.currentGcode.length === 0) {
+                logConsole('No visible layers to plot', 'msg-warn');
+                return;
+            }
+            logConsole(`Sending ${state.currentGcode.length} G-code lines (visible layers)`, 'msg-out');
+            await sendCommand('/api/plot/start', 'POST', { gcode: state.currentGcode, home: homeBeforePlot });
         }
     }
     state.plotting = true;
@@ -3019,8 +3035,8 @@ function generateGcodeForEntities(entities, colorId = null) {
     const settings = {
         pen_angle_up: parseFloat(document.getElementById('penUpAngle')?.value) || 120,
         pen_angle_down: parseFloat(document.getElementById('penDownAngle')?.value) || 40,
-        feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 100,
-        feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 80,
+        feed_rate_travel: parseFloat(document.getElementById('feedTravel')?.value) || 2400,
+        feed_rate_draw: parseFloat(document.getElementById('feedDraw')?.value) || 2400,
         limit_left: parseFloat(document.getElementById('limitLeft')?.value) || -457.2,
         limit_right: parseFloat(document.getElementById('limitRight')?.value) || 457.2,
         limit_top: parseFloat(document.getElementById('limitTop')?.value) || 381,
@@ -4481,15 +4497,14 @@ function initLocationMap() {
         center: [lat, lng],
         zoom: 10,
         zoomControl: true,
-        attributionControl: false
+        attributionControl: true
     });
-    
-    // Add tile layer (Mapbox)
-    const mapboxToken = 'pk.eyJ1IjoidHdhcm5lcjQ5MSIsImEiOiJjbWlmanR0c3cwZmxiM2VvbGZ0NDU4OGkwIn0.GTX7iFPDIdbBzsxBZsN5ag';
-    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`, {
+    locationMap.attributionControl.setPrefix(false);
+
+    // OpenStreetMap tiles: no access token. Their tile policy requires this attribution.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(locationMap);
     
     // Create custom marker icon
@@ -5484,6 +5499,14 @@ function resetUploadUI() {
 
 async function loadSettings() {
     let settings = null;
+
+    if (!CLIENT_SIDE_MODE) {
+        const result = await sendCommand('/api/settings');
+        if (result && result.success !== false) {
+            applySettingsToUI(result);
+            return;
+        }
+    }
     
     // Always load from localStorage first (quick load)
     try {
@@ -5505,7 +5528,7 @@ async function loadSettings() {
 }
 
 function applySettingsToUI(settings) {
-    document.getElementById('machineWidth').value = settings.machine_width || 1057.1;
+    document.getElementById('machineWidth').value = settings.motor_spacing || settings.machine_width || 1057.1;
     document.getElementById('machineHeight').value = settings.machine_height || 962;
     document.getElementById('limitLeft').value = settings.limit_left || -457.2;
     document.getElementById('limitRight').value = settings.limit_right || 457.2;
@@ -5513,10 +5536,10 @@ function applySettingsToUI(settings) {
     document.getElementById('limitBottom').value = settings.limit_bottom || -381;
     state.penKerf = settings.pen_kerf || 0.45;
     document.getElementById('penKerf').value = state.penKerf;
-    document.getElementById('penUpAngle').value = settings.pen_angle_up || 120;
+    document.getElementById('penUpAngle').value = settings.pen_angle_up || 90;
     document.getElementById('penDownAngle').value = settings.pen_angle_down || 40;
-    document.getElementById('feedTravel').value = settings.feed_rate_travel || 100;
-    document.getElementById('feedDraw').value = settings.feed_rate_draw || 80;
+    document.getElementById('feedTravel').value = settings.feed_rate_travel || 2400;
+    document.getElementById('feedDraw').value = settings.feed_rate_draw || 2400;
     document.getElementById('penDwell').value = settings.pen_dwell || 150;
     
     // Update work area display
@@ -5525,7 +5548,6 @@ function applySettingsToUI(settings) {
 
 async function saveSettings() {
     const settings = {
-        machine_width: parseFloat(document.getElementById('machineWidth').value),
         machine_height: parseFloat(document.getElementById('machineHeight').value),
         limit_left: parseFloat(document.getElementById('limitLeft').value),
         limit_right: parseFloat(document.getElementById('limitRight').value),
@@ -5548,16 +5570,16 @@ async function saveSettings() {
         console.warn('Failed to save to localStorage:', e);
     }
     
-    // If connected remotely via console access key, also save to server
-    if (state.useRemote && state.connected) {
+    // Local saves have a verified response; relay submissions remain unverified.
+    if (!CLIENT_SIDE_MODE || (state.useRemote && state.connected)) {
         const result = await sendCommand('/api/settings', 'POST', settings);
         if (result.success) {
-            logConsole('Settings saved to plotter', 'msg-in');
+            logConsole(CLIENT_SIDE_MODE ? 'Settings submitted; relay cannot confirm persistence' : 'Settings saved to plotter', 'msg-in');
         } else {
             logConsole('Settings saved locally (plotter save failed)', 'msg-warn');
         }
     } else {
-        logConsole('Settings saved', 'msg-in');
+        logConsole('Settings saved in this browser only', 'msg-info');
     }
     
     // Always update work area display
@@ -5572,326 +5594,6 @@ async function clearUploads() {
         elements.convertSection.style.display = 'none';
         elements.uploadZone.style.display = 'block'; // Show drop zone again
         state.currentImagePath = null;
-    }
-}
-
-// ============================================================================
-// Calibration Wizard
-// ============================================================================
-
-const calibration = {
-    step: 0,
-    positions: {
-        center: { x: 0, y: 0 },
-        topLeft: { x: 0, y: 0 },
-        topRight: { x: 0, y: 0 },
-        bottom: { x: 0, y: 0 }
-    },
-    // Track cumulative movement from center
-    currentOffset: { x: 0, y: 0 }
-};
-
-function initCalibrationWizard() {
-    const startBtn = document.getElementById('startCalibration');
-    const closeBtn = document.getElementById('closeCalibration');
-    const modal = document.getElementById('calibrationModal');
-    
-    if (!startBtn || !modal) return;
-    
-    // Enable button when connected
-    startBtn.addEventListener('click', () => {
-        if (state.connected) {
-            openCalibrationWizard();
-        }
-    });
-    
-    closeBtn?.addEventListener('click', closeCalibrationWizard);
-    
-    // Close on background click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeCalibrationWizard();
-    });
-    
-    // Mode selection buttons
-    document.getElementById('calibModeManual')?.addEventListener('click', () => {
-        document.getElementById('calibrationModeSelect').style.display = 'none';
-        document.getElementById('calibrationManual').style.display = 'block';
-    });
-    
-    document.getElementById('calibModeJog')?.addEventListener('click', () => {
-        document.getElementById('calibrationModeSelect').style.display = 'none';
-        document.getElementById('calibrationStep1').style.display = 'block';
-        calibration.step = 1;
-    });
-    
-    document.getElementById('calibManualBack')?.addEventListener('click', () => {
-        document.getElementById('calibrationManual').style.display = 'none';
-        document.getElementById('calibrationModeSelect').style.display = 'block';
-    });
-    
-    document.getElementById('calibJogBack')?.addEventListener('click', () => {
-        document.getElementById('calibrationStep1').style.display = 'none';
-        document.getElementById('calibrationModeSelect').style.display = 'block';
-    });
-    
-    // Manual calibration apply
-    document.getElementById('calibManualApply')?.addEventListener('click', applyManualCalibration);
-    
-    // Step buttons
-    document.getElementById('calibRecordCenter')?.addEventListener('click', () => recordCalibrationPoint('center'));
-    document.getElementById('calibRecordTopLeft')?.addEventListener('click', () => recordCalibrationPoint('topLeft'));
-    document.getElementById('calibRecordTopRight')?.addEventListener('click', () => recordCalibrationPoint('topRight'));
-    document.getElementById('calibRecordBottom')?.addEventListener('click', () => recordCalibrationPoint('bottom'));
-    document.getElementById('calibApplySettings')?.addEventListener('click', applyCalibrationSettings);
-    document.getElementById('calibClose')?.addEventListener('click', closeCalibrationWizard);
-    
-    // Jog buttons in calibration modal
-    document.querySelectorAll('#calibrationModal .jog-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const dir = btn.dataset.dir;
-            if (dir === 'disable') {
-                // Disable motors for manual movement
-                sendCommand('/api/motors', 'POST', { enable: false });
-                logConsole('Motors disabled for manual movement', 'msg-info');
-            } else {
-                calibrationJog(dir);
-            }
-        });
-    });
-}
-
-function openCalibrationWizard() {
-    const modal = document.getElementById('calibrationModal');
-    modal.style.display = 'flex';
-    
-    // Reset state
-    calibration.step = 1;
-    calibration.currentOffset = { x: 0, y: 0 };
-    calibration.positions = {
-        center: { x: 0, y: 0 },
-        topLeft: { x: 0, y: 0 },
-        topRight: { x: 0, y: 0 },
-        bottom: { x: 0, y: 0 }
-    };
-    
-    // Hide all steps, show mode selection
-    document.getElementById('calibrationModeSelect').style.display = 'block';
-    document.getElementById('calibrationManual').style.display = 'none';
-    document.getElementById('calibrationStep1').style.display = 'none';
-    document.getElementById('calibrationStep2')?.style && (document.getElementById('calibrationStep2').style.display = 'none');
-    document.getElementById('calibrationStep3')?.style && (document.getElementById('calibrationStep3').style.display = 'none');
-    document.getElementById('calibrationStep4')?.style && (document.getElementById('calibrationStep4').style.display = 'none');
-    document.getElementById('calibrationResults')?.style && (document.getElementById('calibrationResults').style.display = 'none');
-    
-    logConsole('Calibration wizard started', 'msg-info');
-}
-
-async function applyManualCalibration() {
-    const width = parseFloat(document.getElementById('calibManualWidth').value) || 840;
-    const height = parseFloat(document.getElementById('calibManualHeight').value) || 1200;
-    const motorSpacing = parseFloat(document.getElementById('calibManualMotorSpacing').value) || 1220;
-    
-    // Calculate limits (centered at 0,0)
-    const limitLeft = -width / 2;
-    const limitRight = width / 2;
-    const limitTop = height / 2;
-    const limitBottom = -height / 2;
-    
-    // Apply to settings form - update all fields
-    const machineWidthEl = document.getElementById('machineWidth');
-    const machineHeightEl = document.getElementById('machineHeight');
-    const limitLeftEl = document.getElementById('limitLeft');
-    const limitRightEl = document.getElementById('limitRight');
-    const limitTopEl = document.getElementById('limitTop');
-    const limitBottomEl = document.getElementById('limitBottom');
-    
-    if (machineWidthEl) machineWidthEl.value = motorSpacing.toFixed(1);
-    if (machineHeightEl) machineHeightEl.value = (height + 200).toFixed(1);
-    if (limitLeftEl) limitLeftEl.value = limitLeft.toFixed(1);
-    if (limitRightEl) limitRightEl.value = limitRight.toFixed(1);
-    if (limitTopEl) limitTopEl.value = limitTop.toFixed(1);
-    if (limitBottomEl) limitBottomEl.value = limitBottom.toFixed(1);
-    
-    logConsole(`Applied calibration: ${width}mm x ${height}mm work area, motor spacing: ${motorSpacing}mm`, 'msg-info');
-    
-    // Sync motor spacing and limits to firmware via M101 commands
-    if (state.connected) {
-        await syncMotorSpacingToFirmware();
-    }
-    
-    closeCalibrationWizard();
-    
-    // Automatically save settings
-    await saveSettings();
-    
-    // Redraw canvas with new work area
-    drawCanvas();
-}
-
-function closeCalibrationWizard() {
-    document.getElementById('calibrationModal').style.display = 'none';
-}
-
-function showCalibrationStep(step) {
-    // Hide all steps
-    for (let i = 1; i <= 4; i++) {
-        const stepEl = document.getElementById(`calibrationStep${i}`);
-        if (stepEl) stepEl.style.display = 'none';
-    }
-    document.getElementById('calibrationResults').style.display = 'none';
-    
-    // Show current step
-    if (step <= 4) {
-        const stepEl = document.getElementById(`calibrationStep${step}`);
-        if (stepEl) stepEl.style.display = 'block';
-    } else {
-        document.getElementById('calibrationResults').style.display = 'block';
-    }
-    
-    calibration.step = step;
-}
-
-let _calibJogBusy = false;
-let _calibJogPending = null;
-async function calibrationJog(direction) {
-    // Get step size from the current step's select
-    const stepSelect = document.querySelector(`#calibrationStep${calibration.step} select`)
-                    || document.getElementById('calibJogStep');
-    const stepSize = parseFloat(stepSelect?.value || 10);
-
-    let x = 0, y = 0;
-
-    // Note: X/Y are swapped for polargraph coordinate system
-    // UI "up/down" controls X, UI "left/right" controls Y
-    switch (direction) {
-        case 'up': x = stepSize; break;
-        case 'down': x = -stepSize; break;
-        case 'left': y = -stepSize; break;
-        case 'right': y = stepSize; break;
-        case 'up-left': x = stepSize; y = -stepSize; break;
-        case 'up-right': x = stepSize; y = stepSize; break;
-        case 'down-left': x = -stepSize; y = -stepSize; break;
-        case 'down-right': x = -stepSize; y = stepSize; break;
-    }
-
-    // Always track offset immediately for responsive UI
-    calibration.currentOffset.x += x;
-    calibration.currentOffset.y += y;
-    updateCalibrationDistance();
-
-    // Accumulate if a jog is already in flight
-    if (_calibJogBusy) {
-        if (!_calibJogPending) _calibJogPending = { x: 0, y: 0 };
-        _calibJogPending.x += x;
-        _calibJogPending.y += y;
-        return;
-    }
-
-    _calibJogBusy = true;
-    await sendCommand('/api/jog', 'POST', { x, y });
-
-    while (_calibJogPending) {
-        const p = _calibJogPending;
-        _calibJogPending = null;
-        await sendCommand('/api/jog', 'POST', p);
-    }
-    _calibJogBusy = false;
-}
-
-function updateCalibrationDistance() {
-    const dist = Math.sqrt(
-        calibration.currentOffset.x ** 2 + 
-        calibration.currentOffset.y ** 2
-    ).toFixed(1);
-    
-    const distEl = document.getElementById(`calibDist${calibration.step - 1}`);
-    if (distEl) {
-        distEl.textContent = `Distance from previous: ${dist}mm (X: ${calibration.currentOffset.x.toFixed(1)}, Y: ${calibration.currentOffset.y.toFixed(1)})`;
-    }
-}
-
-function recordCalibrationPoint(point) {
-    // Store current offset
-    calibration.positions[point] = { ...calibration.currentOffset };
-    
-    const stepNames = { center: 1, topLeft: 2, topRight: 3, bottom: 4 };
-    const step = stepNames[point];
-    
-    logConsole(`Recorded ${point}: X=${calibration.currentOffset.x.toFixed(1)}, Y=${calibration.currentOffset.y.toFixed(1)}`, 'msg-info');
-    
-    // Reset offset for next measurement (relative to this point)
-    calibration.currentOffset = { x: 0, y: 0 };
-    
-    // Move to next step
-    if (step < 4) {
-        showCalibrationStep(step + 1);
-    } else {
-        calculateCalibrationResults();
-        showCalibrationStep(5); // Show results
-    }
-}
-
-function calculateCalibrationResults() {
-    const { topLeft, topRight, bottom } = calibration.positions;
-    
-    // Calculate work area dimensions
-    // Width: horizontal distance from top-left to top-right
-    // Note: This is cumulative, so topRight is relative to topLeft
-    const width = Math.abs(topRight.y) + Math.abs(topLeft.y);
-    
-    // Height: vertical distance from top corners to bottom
-    // bottom is relative to topRight
-    const height = Math.abs(bottom.x) + Math.abs(topLeft.x);
-    
-    // Store results
-    calibration.results = {
-        width: width,
-        height: height,
-        limitLeft: -width / 2,
-        limitRight: width / 2,
-        limitTop: height * 0.4,
-        limitBottom: -height * 0.6
-    };
-    
-    // Update display
-    document.getElementById('calibResultWidth').textContent = width.toFixed(1);
-    document.getElementById('calibResultHeight').textContent = height.toFixed(1);
-    document.getElementById('calibResultLeft').textContent = calibration.results.limitLeft.toFixed(1);
-    document.getElementById('calibResultRight').textContent = calibration.results.limitRight.toFixed(1);
-    document.getElementById('calibResultTop').textContent = calibration.results.limitTop.toFixed(1);
-    document.getElementById('calibResultBottom').textContent = calibration.results.limitBottom.toFixed(1);
-    
-    logConsole(`Calibration complete: ${width.toFixed(0)}mm x ${height.toFixed(0)}mm`, 'msg-info');
-}
-
-function applyCalibrationSettings() {
-    if (!calibration.results) return;
-    
-    // Update settings fields
-    document.getElementById('limitLeft').value = calibration.results.limitLeft.toFixed(1);
-    document.getElementById('limitRight').value = calibration.results.limitRight.toFixed(1);
-    document.getElementById('limitTop').value = calibration.results.limitTop.toFixed(1);
-    document.getElementById('limitBottom').value = calibration.results.limitBottom.toFixed(1);
-    
-    // Update machine dimensions too
-    const motorSpacing = calibration.results.width * 1.2;
-    document.getElementById('machineWidth').value = motorSpacing.toFixed(1);
-    document.getElementById('machineHeight').value = (calibration.results.height + 200).toFixed(1);
-    
-    logConsole('Calibration settings applied to form', 'msg-info');
-    logConsole('Click "Save Settings" to persist', 'msg-info');
-    
-    closeCalibrationWizard();
-    
-    // Switch to settings panel
-    document.querySelector('[data-panel="settings"]')?.click();
-}
-
-// Update calibration button state based on connection
-function updateCalibrationButton() {
-    const btn = document.getElementById('startCalibration');
-    if (btn) {
-        btn.disabled = !state.connected;
     }
 }
 
@@ -6466,6 +6168,90 @@ function updatePreview(preview) {
     if (preview.stats) {
         elements.statLines.textContent = preview.stats.lines || 0;
     }
-    
+
     drawCanvas();
 }
+
+
+// ============================================================
+// Pen swap and cap prompts
+// ============================================================
+(function () {
+    let wizSettings = {};
+
+    const byId = (id) => document.getElementById(id);
+    const show = (id) => { const e = byId(id); if (e) e.style.display = 'flex'; };
+    const hide = (id) => { const e = byId(id); if (e) e.style.display = 'none'; };
+
+    async function loadWizSettings() {
+        try { wizSettings = await (await fetch('/api/settings')).json(); }
+        catch (e) { wizSettings = {}; }
+    }
+
+    function fillColorSelect(sel) {
+        if (!sel) return;
+        sel.innerHTML = '';
+        Object.keys(PEN_COLORS).forEach((key) => {
+            const o = document.createElement('option');
+            o.value = key;
+            o.textContent = PEN_COLORS[key].name;
+            sel.appendChild(o);
+        });
+        const active = wizSettings.active_color || state.activeColor || 'black';
+        if (PEN_COLORS[active]) sel.value = active;
+    }
+
+    // ---- cap prompt (promise-based, used here and by startPlot) ----
+    let capResolve = null;
+    function showCapPrompt(o) {
+        return new Promise((resolve) => {
+            if (wizSettings.cap_prompt_enabled === false) { resolve(true); return; }
+            byId('capMessage').textContent = o.message;
+            byId('capConfirm').textContent = o.confirmText || 'Continue';
+            byId('capCancel').style.display = o.showCancel === false ? 'none' : 'block';
+            capResolve = resolve;
+            show('capPromptModal');
+        });
+    }
+    function resolveCap(v) { hide('capPromptModal'); const r = capResolve; capResolve = null; if (r) r(v); }
+    window.promptCapOff = (m) => showCapPrompt({ message: m || 'Remove the pen cap before drawing.', confirmText: 'Cap is off — continue', showCancel: true });
+    window.promptRecap = (m) => showCapPrompt({ message: m || 'Done. Recap the pen so it doesn’t dry out.', confirmText: 'Recapped — done', showCancel: false });
+
+    // ---- pen swap ----
+    async function penSwapOpen() {
+        await loadWizSettings();
+        fillColorSelect(byId('swapColorSelect'));
+        byId('swapRetract').disabled = true;
+        show('penSwapModal');
+    }
+    async function penSwapEject() {
+        await sendCommand('/api/pen/eject', 'POST');
+        byId('swapRetract').disabled = false;
+        logConsole('Holder ejected - drop in the new color.', 'msg-info');
+    }
+    async function penSwapRetract() {
+        const color = byId('swapColorSelect').value;
+        await sendCommand('/api/pen/select_color', 'POST', { color: color });
+        await sendCommand('/api/pen/retract', 'POST');
+        state.activeColor = color;
+        hide('penSwapModal');
+        logConsole(`Pen color set to ${color}`, 'msg-in');
+    }
+
+    // ---- wiring ----
+    const wire = (id, ev, fn) => { const e = byId(id); if (e) e.addEventListener(ev, fn); };
+    function init() {
+        wire('openPenSwap', 'click', penSwapOpen);
+        wire('penSwapClose', 'click', () => hide('penSwapModal'));
+        wire('swapEject', 'click', penSwapEject);
+        wire('swapRetract', 'click', penSwapRetract);
+        wire('capConfirm', 'click', () => resolveCap(true));
+        wire('capCancel', 'click', () => resolveCap(false));
+        ['penSwapModal'].forEach((id) => {
+            const m = byId(id);
+            if (m) m.addEventListener('click', (e) => { if (e.target === m) hide(id); });
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+})();

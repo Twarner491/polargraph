@@ -329,8 +329,8 @@
                     <div class="panel-section">
                         <div class="section-title">Machine</div>
                         <div class="setting-row">
-                            <label>Width (mm)</label>
-                            <input type="number" id="machineWidth" class="input-num" value="1057.1">
+                            <label for="machineWidth">Motor spacing (mm)</label>
+                            <input type="number" id="machineWidth" class="input-num" value="1057.1" readonly title="Measured in Setup wizard">
                         </div>
                         <div class="setting-row">
                             <label>Height (mm)</label>
@@ -404,9 +404,17 @@
 
                     <div class="panel-section">
                         <div class="section-title">Calibration</div>
-                        <button class="btn full" id="startCalibration" disabled>Calibrate Machine</button>
-                        <small style="color: var(--text-muted); display: block; margin-top: 4px;">
-                            Measure actual machine dimensions by moving the gondola to corners
+                        <button class="btn full primary" id="openSetupWizard">Setup wizard</button>
+                        <small style="color: var(--text-light); display: block; margin: 4px 0 10px;">
+                            Measured geometry, homing reference, and a verified return.
+                        </small>
+                        <button class="btn full" id="openPenSwap" disabled>Swap Pen Color</button>
+                        <small style="color: var(--text-light); display: block; margin: 4px 0 10px;">
+                            Eject the holder, change the color, retract.
+                        </small>
+                        <button class="btn full" id="startCalibration">Advanced calibration</button>
+                        <small style="color: var(--text-light); display: block; margin-top: 4px;">
+                            Fit and validate geometry from independent measurements.
                         </small>
                     </div>
 
@@ -419,189 +427,169 @@
         </div>
     </div>
 
-    <!-- Calibration Wizard Modal -->
-    <div id="calibrationModal" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width: 500px;">
+    <!-- Measured calibration: machine actions require a verified local connection. -->
+    <style>
+        .measured-calibration { max-width: 760px; }
+        .measured-calibration .modal-body { max-height: 78vh; overflow: auto; }
+        .calibration-copy { line-height: 1.55; margin: 0 0 14px; }
+        .calibration-section { border-top: 1px solid var(--border, #ddd); padding-top: 16px; margin-top: 18px; }
+        .calibration-section h4 { margin: 0 0 10px; }
+        .calibration-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+        .calibration-fields label { display: block; margin-bottom: 5px; }
+        .calibration-fields input { width: 100%; box-sizing: border-box; }
+        .calibration-check { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0; line-height: 1.45; }
+        .calibration-check input { flex: 0 0 auto; margin-top: 4px; }
+        .calibration-status { padding: 12px; margin: 14px 0; border: 1px solid var(--border, #ddd); border-radius: 5px; line-height: 1.5; white-space: pre-line; }
+        .calibration-status:empty { display: none; }
+        .calibration-status[data-error="true"] { border-color: #af433b; }
+        .calibration-diagram { width: 100%; height: auto; border: 1px solid var(--border, #ddd); border-radius: 5px; margin: 8px 0 12px; background: #faf9f6; }
+        .calibration-table-wrap { overflow: auto; }
+        .calibration-table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        .calibration-table th, .calibration-table td { padding: 5px; text-align: left; border-bottom: 1px solid var(--border, #ddd); }
+        .calibration-table input { width: 88px; box-sizing: border-box; }
+        .calibration-table select { min-width: 90px; }
+        .calibration-details { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+        .calibration-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    </style>
+    <div id="setupWizardModal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="setupMeasuredTitle">
+        <div class="modal-content measured-calibration">
             <div class="modal-header">
-                <h3 id="calibrationTitle">Machine Calibration</h3>
-                <button class="modal-close" id="closeCalibration">&times;</button>
+                <h3 id="setupMeasuredTitle">Setup wizard</h3>
+                <button class="modal-close" id="setupMeasuredClose" aria-label="Close Setup wizard">&times;</button>
             </div>
             <div class="modal-body">
-                <!-- Mode Selection -->
-                <div id="calibrationModeSelect" class="calibration-step">
-                    <p><strong>Choose Calibration Method:</strong></p>
-                    <button class="btn full" id="calibModeManual" style="margin-bottom: 8px;">
-                        Manual Measurement (Recommended)
-                    </button>
-                    <p style="font-size: 11px; color: var(--text-light); margin-bottom: 12px;">
-                        Measure your work area with a tape measure and enter dimensions directly.
-                    </p>
-                    <button class="btn full" id="calibModeJog">
-                        Jog Calibration
-                    </button>
-                    <p style="font-size: 11px; color: var(--text-light);">
-                        Use jog controls to move gondola to corners. Can be unreliable over network.
-                    </p>
-                </div>
-                
-                <!-- Manual Measurement Mode -->
-                <div id="calibrationManual" class="calibration-step" style="display:none;">
-                    <p><strong>Enter Work Area Dimensions</strong></p>
-                    <p style="font-size: 12px; color: var(--text-light); margin-bottom: 12px;">
-                        Measure the drawable area on your surface. The coordinate system has (0,0) at the center.
-                    </p>
-                    <div class="calib-input-group">
-                        <label>Width (left to right, mm):</label>
-                        <input type="number" id="calibManualWidth" value="914.4" step="1">
-                    </div>
-                    <div class="calib-input-group">
-                        <label>Height (top to bottom, mm):</label>
-                        <input type="number" id="calibManualHeight" value="762" step="1">
-                    </div>
-                    <div class="calib-input-group">
-                        <label>Motor spacing (mm):</label>
-                        <input type="number" id="calibManualMotorSpacing" value="1057.1" step="1">
-                        <p style="font-size: 10px; color: var(--text-light);">Distance between the two motor shafts. If plots drift left/right during vertical movement, adjust this value.</p>
-                    </div>
-                    <button class="btn primary full" id="calibManualApply" style="margin-top: 12px;">Apply Settings</button>
-                    <button class="btn full" id="calibManualBack" style="margin-top: 8px;">Back</button>
-                </div>
-                
-                <div id="calibrationStep1" class="calibration-step" style="display:none;">
-                    <p><strong>Step 1: Move to Center</strong></p>
-                    <p>Use the jog controls below to move the gondola to the <strong>center</strong> of your work area. This is your reference point.</p>
-                    <div class="calibration-jog">
-                        <div class="jog-grid mini">
-                            <button class="jog-btn" data-dir="up-left">↖</button>
-                            <button class="jog-btn" data-dir="up">↑</button>
-                            <button class="jog-btn" data-dir="up-right">↗</button>
-                            <button class="jog-btn" data-dir="left">←</button>
-                            <button class="jog-btn jog-home" data-dir="disable">M</button>
-                            <button class="jog-btn" data-dir="right">→</button>
-                            <button class="jog-btn" data-dir="down-left">↙</button>
-                            <button class="jog-btn" data-dir="down">↓</button>
-                            <button class="jog-btn" data-dir="down-right">↘</button>
+                <div class="setup-progress" aria-label="Setup progress"><span id="setupStepLabel"><span id="setupStepName">Width</span><span id="setupStepCount">1 of 4</span></span><label for="setupUnits">Units <select id="setupUnits" class="input-select"><option value="mm">mm</option><option value="in">inches</option></select></label></div>
+                <p class="wizard-note" id="setupConnectionNote" hidden></p>
+                <section data-setup-step="0" aria-labelledby="setupWidthTitle">
+                    <div class="calibration-guide" data-guide="width"></div>
+                    <h4 id="setupWidthTitle" tabindex="-1">Hook the tape on the outside edge of each motor cover, above the bulge.</h4>
+                    <label class="measurement-input" for="setupSpan">W <input id="setupSpan" type="number" class="input-num" min="0" step="any" inputmode="decimal" placeholder="Width"></label>
+                    <label class="calibration-check"><input id="setupStandard" type="checkbox"><span>Stock covers, seated and level.</span></label>
+                </section>
+                <section data-setup-step="1" hidden aria-labelledby="setupHeightTitle">
+                    <div class="calibration-guide" data-guide="height"></div>
+                    <h4 id="setupHeightTitle" tabindex="-1">From the top of a motor cover to the inner top edge of the bottom rail.</h4>
+                    <label class="measurement-input" for="setupHeight">H <input id="setupHeight" type="number" class="input-num" min="0" step="any" inputmode="decimal" placeholder="Height"></label>
+                </section>
+                <section data-setup-step="2" hidden aria-labelledby="setupMarkTitle">
+                    <div class="calibration-guide" data-guide="mark"></div>
+                    <h4 id="setupMarkTitle" tabindex="-1">Mark the center. With the motors off and the pen out, set the pen hole on it.</h4>
+                    <label class="calibration-check"><input id="setupAligned" type="checkbox"><span>Pen hole on the mark, powered on without moving it.</span></label>
+                </section>
+                <section data-setup-step="3" hidden aria-labelledby="setupReferenceHeading">
+                    <div class="calibration-guide" data-guide="home"></div>
+                    <h4 id="setupReferenceHeading" tabindex="-1">It homes, then returns to your mark. Stay by the power switch.</h4>
+                    <label class="calibration-check"><input id="setupClear" type="checkbox"><span>Pen out, paths clear, watching.</span></label>
+                    <button class="btn primary full" id="setupReference" disabled>Home and return</button>
+                    <div class="calibration-status" id="setupStatus" role="status" aria-live="polite"></div>
+                    <section id="setupReturnSection" hidden aria-labelledby="setupReturnHeading">
+                        <label class="calibration-check" id="setupReturnHeading"><input id="setupReturned" type="checkbox"><span>The pen hole is back on the mark.</span></label>
+                        <button class="btn primary full" id="setupFinish" disabled>Save</button>
+                    </section>
+                    <button class="btn full" id="setupToAccuracy" type="button" hidden>Measure accuracy</button>
+                </section>
+                <div class="calibration-status" id="setupPreviewResult" role="status" aria-live="polite"></div>
+                <div class="wizard-nav"><button class="btn" id="setupBack" type="button" hidden>Back</button><button class="btn primary" id="setupPreview" type="button">Continue</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="advancedCalibrationModal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="advancedCalibrationTitle">
+        <div class="modal-content measured-calibration">
+            <div class="modal-header">
+                <h3 id="advancedCalibrationTitle">Advanced calibration</h3>
+                <button class="modal-close" id="advancedCalibrationClose" aria-label="Close Advanced calibration">&times;</button>
+            </div>
+            <div class="modal-body">
+                <section aria-labelledby="accuracyGuidedTitle">
+                    <div class="calibration-guide" data-guide="accuracy"></div>
+                    <h4 id="accuracyGuidedTitle">Measure eight points from your center mark. Six fit the geometry, two check it. Nothing is saved.</h4>
+                    <label class="calibration-check"><input id="accuracyClear" type="checkbox"><span>Homed, back on the mark, paths clear, watching.</span></label>
+                    <div class="calibration-actions"><button class="btn primary" id="accuracyPrepare" type="button">Prepare points</button><button class="btn" id="accuracyExport" type="button" disabled>Download</button></div>
+                    <div id="accuracyTarget" hidden>
+                        <p id="accuracyProgress" class="calibration-copy" aria-live="polite"></p>
+                        <button class="btn primary full" id="accuracyMove" type="button">Move to this point</button>
+                        <button class="btn full" id="accuracyMoveAside" type="button" disabled>Marked, move aside</button>
+                        <p id="accuracyMoveStatus" class="calibration-status" role="status" aria-live="polite"></p>
+                        <div class="calibration-fields">
+                            <div><label for="accuracyX">Measured X (mm)</label><input id="accuracyX" class="input-num" type="number" step="any" inputmode="decimal"></div>
+                            <div><label for="accuracyY">Measured Y (mm)</label><input id="accuracyY" class="input-num" type="number" step="any" inputmode="decimal"></div>
                         </div>
-                        <div class="jog-step-select">
-                            <label>Step:</label>
-                            <select id="calibJogStep">
-                                <option value="1">1mm</option>
-                                <option value="5">5mm</option>
-                                <option value="10">10mm</option>
-                                <option value="50" selected>50mm</option>
-                                <option value="100">100mm</option>
-                            </select>
-                        </div>
+                        <button class="btn full" id="accuracyRecord" type="button" disabled>Record measurement and continue</button>
                     </div>
-                    <button class="btn primary full" id="calibRecordCenter">Record Center Position</button>
-                    <button class="btn full" id="calibJogBack" style="margin-top: 8px;">Back</button>
-                </div>
-                
-                <div id="calibrationStep2" class="calibration-step" style="display:none;">
-                    <p><strong>Step 2: Move to Top-Left Corner</strong></p>
-                    <p>Move the gondola to the <strong>top-left corner</strong> of your desired work area.</p>
-                    <div class="calibration-jog">
-                        <div class="jog-grid mini">
-                            <button class="jog-btn" data-dir="up-left">↖</button>
-                            <button class="jog-btn" data-dir="up">↑</button>
-                            <button class="jog-btn" data-dir="up-right">↗</button>
-                            <button class="jog-btn" data-dir="left">←</button>
-                            <button class="jog-btn jog-home" data-dir="disable">M</button>
-                            <button class="jog-btn" data-dir="right">→</button>
-                            <button class="jog-btn" data-dir="down-left">↙</button>
-                            <button class="jog-btn" data-dir="down">↓</button>
-                            <button class="jog-btn" data-dir="down-right">↘</button>
+                    <p id="accuracySummary" class="calibration-status" role="status" aria-live="polite"></p>
+                </section>
+                <details class="calibration-section" id="advancedManual"><summary>Manual targets and fit settings</summary>
+                    <div class="manual-group">
+                        <div class="section-title">Starting geometry</div>
+                        <div class="manual-fields">
+                            <label for="fitSpacing">Shaft spacing<input id="fitSpacing" class="input-num" type="number" step="any"><span>mm</span></label>
+                            <label for="fitAnchorY">Shaft height<input id="fitAnchorY" class="input-num" type="number" step="any"><span>mm</span></label>
+                            <label for="fitHomeLeft">Left home belt<input id="fitHomeLeft" class="input-num" type="number" step="any"><span>mm</span></label>
+                            <label for="fitHomeRight">Right home belt<input id="fitHomeRight" class="input-num" type="number" step="any"><span>mm</span></label>
+                            <label for="fitScaleLeft">Left scale<input id="fitScaleLeft" class="input-num" type="number" step="any"><span>steps/mm</span></label>
+                            <label for="fitScaleRight">Right scale<input id="fitScaleRight" class="input-num" type="number" step="any"><span>steps/mm</span></label>
                         </div>
-                        <div class="jog-step-select">
-                            <label>Step:</label>
-                            <select id="calibJogStep2">
-                                <option value="1">1mm</option>
-                                <option value="5">5mm</option>
-                                <option value="10">10mm</option>
-                                <option value="50" selected>50mm</option>
-                                <option value="100">100mm</option>
-                            </select>
-                        </div>
+                        <button class="btn full" id="advancedLoadProfile" type="button">Load saved geometry</button>
                     </div>
-                    <p class="calib-distance" id="calibDist1"></p>
-                    <button class="btn primary full" id="calibRecordTopLeft">Record Top-Left</button>
-                </div>
-                
-                <div id="calibrationStep3" class="calibration-step" style="display:none;">
-                    <p><strong>Step 3: Move to Top-Right Corner</strong></p>
-                    <p>Move the gondola to the <strong>top-right corner</strong> of your desired work area.</p>
-                    <div class="calibration-jog">
-                        <div class="jog-grid mini">
-                            <button class="jog-btn" data-dir="up-left">↖</button>
-                            <button class="jog-btn" data-dir="up">↑</button>
-                            <button class="jog-btn" data-dir="up-right">↗</button>
-                            <button class="jog-btn" data-dir="left">←</button>
-                            <button class="jog-btn jog-home" data-dir="disable">M</button>
-                            <button class="jog-btn" data-dir="right">→</button>
-                            <button class="jog-btn" data-dir="down-left">↙</button>
-                            <button class="jog-btn" data-dir="down">↓</button>
-                            <button class="jog-btn" data-dir="down-right">↘</button>
+                    <fieldset class="manual-group">
+                        <legend class="section-title">Parameters to fit</legend>
+                        <div class="manual-chips">
+                            <label><input type="checkbox" name="fitParameter" value="motor_spacing" checked><span>Shaft spacing</span></label>
+                            <label><input type="checkbox" name="fitParameter" value="anchor_y" checked><span>Shaft height</span></label>
+                            <label><input type="checkbox" name="fitParameter" value="home_belt_left" checked><span>Left home belt</span></label>
+                            <label><input type="checkbox" name="fitParameter" value="home_belt_right" checked><span>Right home belt</span></label>
+                            <label><input type="checkbox" name="fitParameter" value="steps_per_mm_left"><span>Left scale</span></label>
+                            <label><input type="checkbox" name="fitParameter" value="steps_per_mm_right"><span>Right scale</span></label>
                         </div>
-                        <div class="jog-step-select">
-                            <label>Step:</label>
-                            <select id="calibJogStep3">
-                                <option value="1">1mm</option>
-                                <option value="5">5mm</option>
-                                <option value="10">10mm</option>
-                                <option value="50" selected>50mm</option>
-                                <option value="100">100mm</option>
-                            </select>
+                    </fieldset>
+                    <section class="manual-group" aria-labelledby="advancedTargetsHeading">
+                        <div class="section-title" id="advancedTargetsHeading">Measured targets</div>
+                        <p class="wizard-note">Tape X and Y, motor counts from one home. Fitting both scales needs six fit points.</p>
+                        <div class="calibration-table-wrap"><table class="calibration-table"><thead><tr><th scope="col">X mm</th><th scope="col">Y mm</th><th scope="col">Left steps</th><th scope="col">Right steps</th><th scope="col">Use</th><th scope="col"><span class="visually-hidden">Remove</span></th></tr></thead><tbody id="advancedTargets"></tbody></table></div>
+                        <div class="calibration-actions"><button class="btn" id="advancedAddTarget" type="button">Add target</button><button class="btn" id="advancedClearTargets" type="button">Clear</button></div>
+                    </section>
+                </details>
+                    <label class="calibration-check"><input id="advancedIndependent" type="checkbox"><span>All points measured by tape, from one home.</span></label>
+                    <button class="btn primary full" id="advancedFit">Compare accuracy and fit</button>
+                <div class="calibration-status" id="advancedResult" role="status" aria-live="polite"></div>
+                <div id="advancedResiduals" class="calibration-table-wrap"></div>
+                <details id="advancedCandidateDetails" hidden><summary>Candidate parameters and diagnostics</summary><pre id="advancedCandidate" class="calibration-details"></pre></details>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pen Swap Modal -->
+    <div id="penSwapModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3>Swap Pen Color</h3>
+                <button class="modal-close" id="penSwapClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <ol class="wizard-actions">
+                    <li><button class="btn full" id="swapEject">1 &middot; Eject holder</button></li>
+                    <li>
+                        <div class="wizard-field">
+                            <label>2 &middot; New color</label>
+                            <select id="swapColorSelect" class="input-select"></select>
                         </div>
-                    </div>
-                    <p class="calib-distance" id="calibDist2"></p>
-                    <button class="btn primary full" id="calibRecordTopRight">Record Top-Right</button>
-                </div>
-                
-                <div id="calibrationStep4" class="calibration-step" style="display:none;">
-                    <p><strong>Step 4: Move to Bottom-Center</strong></p>
-                    <p>Move the gondola to the <strong>bottom center</strong> of your desired work area.</p>
-                    <div class="calibration-jog">
-                        <div class="jog-grid mini">
-                            <button class="jog-btn" data-dir="up-left">↖</button>
-                            <button class="jog-btn" data-dir="up">↑</button>
-                            <button class="jog-btn" data-dir="up-right">↗</button>
-                            <button class="jog-btn" data-dir="left">←</button>
-                            <button class="jog-btn jog-home" data-dir="disable">M</button>
-                            <button class="jog-btn" data-dir="right">→</button>
-                            <button class="jog-btn" data-dir="down-left">↙</button>
-                            <button class="jog-btn" data-dir="down">↓</button>
-                            <button class="jog-btn" data-dir="down-right">↘</button>
-                        </div>
-                        <div class="jog-step-select">
-                            <label>Step:</label>
-                            <select id="calibJogStep4">
-                                <option value="1">1mm</option>
-                                <option value="5">5mm</option>
-                                <option value="10">10mm</option>
-                                <option value="50" selected>50mm</option>
-                                <option value="100">100mm</option>
-                            </select>
-                        </div>
-                    </div>
-                    <p class="calib-distance" id="calibDist3"></p>
-                    <button class="btn primary full" id="calibRecordBottom">Record Bottom-Center</button>
-                </div>
-                
-                <div id="calibrationResults" class="calibration-step" style="display:none;">
-                    <p><strong>Calibration Complete!</strong></p>
-                    <div class="calib-results">
-                        <p><strong>Measured Work Area:</strong></p>
-                        <p>Width: <span id="calibResultWidth">-</span> mm</p>
-                        <p>Height: <span id="calibResultHeight">-</span> mm</p>
-                        <p style="margin-top:12px;"><strong>Recommended Settings:</strong></p>
-                        <p>Left: <span id="calibResultLeft">-</span></p>
-                        <p>Right: <span id="calibResultRight">-</span></p>
-                        <p>Top: <span id="calibResultTop">-</span></p>
-                        <p>Bottom: <span id="calibResultBottom">-</span></p>
-                    </div>
-                    <button class="btn primary full" id="calibApplySettings">Apply Settings</button>
-                    <button class="btn full" id="calibClose" style="margin-top:8px;">Close</button>
-                </div>
+                    </li>
+                    <li><button class="btn primary full" id="swapRetract" disabled>3 &middot; Retract &amp; use</button></li>
+                </ol>
+                <p class="wizard-note">The servo ejects the holder so you can lift it out and drop in the new color. Pick the color, then retract.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cap Prompt Modal -->
+    <div id="capPromptModal" class="modal" style="display:none;">
+        <div class="modal-content cap-content">
+            <div class="modal-body">
+                <div class="cap-icon" id="capIcon">&#9998;</div>
+                <p class="cap-message" id="capMessage">Remove the pen cap before drawing.</p>
+                <button class="btn primary full" id="capConfirm">Cap is off &mdash; continue</button>
+                <button class="btn full" id="capCancel" style="margin-top:8px;">Cancel</button>
             </div>
         </div>
     </div>
@@ -613,6 +601,7 @@
     <script src="/static/js/image-converter-client.js"></script>
     <script src="/static/js/pattern-generator-client.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/calibration.js?v=guides-v9"></script>
+
 </body>
 </html>
-

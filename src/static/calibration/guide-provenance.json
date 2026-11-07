@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "source_mesh": "polargraph.3mf",
+  "sha256": "055b8c834fa4c71e46056494b515eb1ef2a78d7ad883825589f52d4b190cc00e",
+  "datum_offset_mm": 29.67014888431,
+  "datum": "standard-cover-top-seam-v2",
+  "projection": "orthographic XY, uniform scale",
+  "note": "Nominal CAD proportions. Dimension text is filled in by the interface."
+}
