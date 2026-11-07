@@ -4481,15 +4481,14 @@ function initLocationMap() {
         center: [lat, lng],
         zoom: 10,
         zoomControl: true,
-        attributionControl: false
+        attributionControl: true
     });
+    locationMap.attributionControl.setPrefix(false);
     
-    // Add tile layer (Mapbox)
-    const mapboxToken = 'pk.eyJ1IjoidHdhcm5lcjQ5MSIsImEiOiJjbWlmanR0c3cwZmxiM2VvbGZ0NDU4OGkwIn0.GTX7iFPDIdbBzsxBZsN5ag';
-    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`, {
+    // OpenStreetMap tiles: no access token. Their tile policy requires this attribution.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(locationMap);
     
     // Create custom marker icon
